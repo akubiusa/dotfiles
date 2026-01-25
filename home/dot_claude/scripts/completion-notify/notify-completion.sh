@@ -165,7 +165,7 @@ PAYLOAD=$(cat <<EOF_JSON
 EOF_JSON
 )
 
-webhook_url="${DISCORD_WEBHOOK_URL}"
+webhook_url="${DISCORD_WEBHOOK_URL:-${DISCORD_TOKEN:-}}"
 if [[ -n "${webhook_url}" ]]; then
   # Discord Webhookに送信
   curl -H "Content-Type: application/json" \

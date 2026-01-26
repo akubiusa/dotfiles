@@ -7,12 +7,12 @@
 
 ## 共通ルール
 - 会話は日本語で行う。
-- PR とコミットは Conventional Commits に従う。
+- PR とコミットは Conventional Commits に従う（description は日本語）。
 - 日本語と英数字の間には半角スペースを入れる。
 
 ## 技術スタック
 - ツール: chezmoi, git, tmux, age (暗号化)
-- 言語: Bash, Zsh, Vim script
+- 言語: Bash, Zsh
 - 設定形式: TOML (chezmoi), JSON (エージェント設定)
 
 ## コーディング規約
@@ -51,5 +51,5 @@ chezmoi status
 
 ## リポジトリ固有
 - `home/` 配下が chezmoi のソースディレクトリである。
-- `.env` は `dot_env.tmpl` を使用して動的に生成する。
+- `.env` 用のテンプレートとして `dot_env.tmpl` を将来的に作成し、必要に応じて動的生成に利用する。
 - テンプレートファイル (`.tmpl`) を編集する際は、chezmoi のテンプレート構文に注意する。

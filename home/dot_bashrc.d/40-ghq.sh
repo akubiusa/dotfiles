@@ -7,7 +7,7 @@ gcd() {
 
   local dir
   # fzfを使ってリポジトリを選択
-  dir="$(ghq list -p | fzf --prompt='Repo> ' --height=40% --reverse)" || return 1
+  dir="$(ghq list -p | fzf)" || return 1
   # 選択されたディレクトリが存在すれば移動
   [[ -n "$dir" ]] && cd "$dir"
 }
@@ -30,7 +30,7 @@ ghc() {
         repos+="$list"$'\n'
       fi
     done
-    repo="$(echo "$repos" | grep -v '^$' | sort -u | fzf --prompt='Repo> ' --height=40% --reverse)" || return 1
+    repo="$(echo "$repos" | grep -v '^$' | sort -u | fzf)" || return 1
   fi
 
   # URL形式の正規化

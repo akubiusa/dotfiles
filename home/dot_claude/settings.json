@@ -29,5 +29,6 @@
     "hookify@claude-plugins-official": true,
     "ask-codex@hiropon-plugins": true,
     "ask-gemini@hiropon-plugins": true
-  }
+  },
+  "model": "sonnet"
 }

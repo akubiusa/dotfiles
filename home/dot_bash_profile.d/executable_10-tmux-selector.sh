@@ -137,6 +137,7 @@ tmux_session_selector() {
   # --- fzf preview ---
   # クォート崩壊を避けるため、bash -c に {1}{2}{4} を引数で渡す
   local preview_cmd
+  # shellcheck disable=SC2016
   preview_cmd='bash -c '\''
   t="$1"; key="$2"; pane="$3";
   lines="${TMUX_FZF_PREVIEW_LINES:-15}"

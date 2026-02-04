@@ -10,22 +10,41 @@ FAILED=0
 # シェル断片 (shebang なし) を含む全スクリプトを検査
 # -print0 と while read でパス名の空白を安全に処理
 while IFS= read -r -d '' script; do
-  # シェバンの有無を確認
+  # シェバンの有無と種類を確認
   if head -n 1 "$script" | grep -qE '^#!(.*/)?(bash|sh)'; then
-    # シェバンがある場合は通常の shellcheck
+    # bash / sh の shebang がある場合
     if ! shellcheck "$script"; then
       echo "❌ Shellcheck failed: $script"
       FAILED=1
     else
       echo "✅ Shellcheck passed: $script"
     fi
-  else
-    # シェバンがない場合は bash として明示的に解析
-    if ! shellcheck -s bash "$script"; then
-      echo "❌ Shellcheck failed (as bash): $script"
+  elif head -n 1 "$script" | grep -qE '^#!(.*/)?zsh'; then
+    # zsh の shebang がある場合
+    if ! shellcheck -s zsh "$script"; then
+      echo "❌ Shellcheck failed: $script"
       FAILED=1
     else
-      echo "✅ Shellcheck passed (as bash): $script"
+      echo "✅ Shellcheck passed: $script"
+    fi
+  else
+    # シェバンがない場合は拡張子で判定
+    if [[ "$script" == *.zsh ]]; then
+      # .zsh 拡張子のファイルは zsh として解析
+      if ! shellcheck -s zsh "$script"; then
+        echo "❌ Shellcheck failed (as zsh): $script"
+        FAILED=1
+      else
+        echo "✅ Shellcheck passed (as zsh): $script"
+      fi
+    else
+      # それ以外は bash として明示的に解析
+      if ! shellcheck -s bash "$script"; then
+        echo "❌ Shellcheck failed (as bash): $script"
+        FAILED=1
+      else
+        echo "✅ Shellcheck passed (as bash): $script"
+      fi
     fi
   fi
 done < <(find . -type f \( -name "*.sh" -o -name "executable_*" \) \

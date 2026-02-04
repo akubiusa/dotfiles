@@ -1,0 +1,26 @@
+name: Unit Tests
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+jobs:
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run install.sh unit test
+        run: bash tests/unit/test_install.sh
+
+      - name: Run notification unit test
+        run: bash tests/unit/test_notifications.sh
+
+      - name: Run hooks unit test
+        run: bash tests/unit/test_hooks.sh

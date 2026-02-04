@@ -1,0 +1,84 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shellcheck with action
+        uses: reviewdog/action-shellcheck@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          path: |
+            .
+          pattern: |
+            *.sh
+            **/executable_*
+          exclude: |
+            ./.bare/**
+            ./bin/**
+          shellcheck_flags: '-s bash'
+
+      - name: Run custom shellcheck tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          bash tests/syntax/test_shellcheck.sh
+
+  syntax:
+    name: Bash Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install zsh for syntax checking
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Check bash syntax
+        run: bash tests/syntax/test_bash_syntax.sh
+
+  json-schema:
+    name: JSON Schema Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install check-jsonschema
+        run: pip install check-jsonschema
+
+      - name: Run JSON Schema validation
+        run: bash tests/syntax/test_json_schema.sh
+
+  chezmoi-verify:
+    name: Chezmoi Configuration Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install chezmoi
+        run: |
+          curl -sfL https://git.io/chezmoi | sh -s -- -b "$HOME/bin"
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Verify chezmoi apply dry-run
+        run: |
+          export HOME=$(mktemp -d)
+          export XDG_CONFIG_HOME="$HOME/.config"
+          chezmoi init --source="$(pwd)"
+          chezmoi apply --dry-run

@@ -10,11 +10,99 @@
 #
 #   ワンライナー (自己責任):
 #     curl -fsSL https://raw.githubusercontent.com/book000/dotfiles/master/install.sh | bash
+#
+#   オプション:
+#     --dry-run          実際のコマンドを実行せず、ログのみ出力
+#     --skip-apt         apt-get によるパッケージインストールをスキップ
+#     --skip-gh          gh CLI のインストールをスキップ
+#     --skip-ghq         ghq のインストールをスキップ
+#     --skip-mkwork      mkwork のインストールをスキップ
+#     --skip-interactive 対話的な確認をスキップ (CI 用)
+#     --help             ヘルプを表示
 # ==============================================================================
 
 set -e
 set -u
 set -o pipefail
+
+# パラメータ変数
+DRY_RUN=0
+SKIP_APT=0
+SKIP_GH=0
+SKIP_GHQ=0
+SKIP_MKWORK=0
+SKIP_INTERACTIVE=0
+
+# ヘルプメッセージを表示する関数
+# このスクリプトの使用方法とオプションの説明を出力する
+show_help() {
+  cat <<EOF
+使用方法: $0 [OPTIONS]
+
+OPTIONS:
+  --dry-run          実際のコマンドを実行せず、ログのみ出力
+  --skip-apt         apt-get によるパッケージインストールをスキップ
+  --skip-gh          gh CLI のインストールをスキップ
+  --skip-ghq         ghq のインストールをスキップ
+  --skip-mkwork      mkwork のインストールをスキップ
+  --skip-interactive 対話的な確認をスキップ (CI 用)
+  --help             このヘルプを表示
+
+例:
+  # 通常のインストール
+  bash install.sh
+
+  # CI 用の非対話モード (apt インストールのみスキップ)
+  bash install.sh --skip-interactive --skip-apt --skip-gh --skip-ghq --skip-mkwork
+
+  # ドライラン
+  bash install.sh --dry-run
+EOF
+}
+
+# パラメータパース
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --skip-apt)
+      SKIP_APT=1
+      shift
+      ;;
+    --skip-gh)
+      SKIP_GH=1
+      shift
+      ;;
+    --skip-ghq)
+      SKIP_GHQ=1
+      shift
+      ;;
+    --skip-mkwork)
+      SKIP_MKWORK=1
+      shift
+      ;;
+    --skip-interactive)
+      SKIP_INTERACTIVE=1
+      shift
+      ;;
+    --help)
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "❌ Unknown option: $1"
+      show_help
+      exit 1
+      ;;
+  esac
+done
+
+# 非対話モードのための環境変数を設定 (後方互換性のため)
+if [[ "$SKIP_INTERACTIVE" == "1" ]]; then
+  NO_INTERACTIVE=1
+fi
 
 # カラー出力用の定数
 readonly RED='\033[0;31m'
@@ -38,6 +126,18 @@ log_warn() {
 
 log_error() {
   echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+# コマンドを実行する関数 (DRY_RUN モード対応)
+# DRY_RUN=1 の場合は実行せずログ出力のみ行う
+# それ以外の場合は渡された引数をそのままコマンドとして実行する
+# 引数: 実行するコマンドとその引数
+run_command() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log_info "[DRY RUN] $*"
+    return 0
+  fi
+  "$@"
 }
 
 # クリーンアップ処理
@@ -233,6 +333,11 @@ install_chezmoi() {
 
 # apt パッケージのインストール
 install_apt_packages() {
+  if [[ "$SKIP_APT" == "1" ]]; then
+    log_info "apt パッケージのインストールをスキップします (--skip-apt)"
+    return 0
+  fi
+
   log_info "apt パッケージをインストールしています..."
 
   # パッケージのリスト
@@ -251,15 +356,20 @@ install_apt_packages() {
 
   # apt update
   log_info "パッケージリストを更新しています..."
-  sudo apt update
+  run_command sudo apt update
 
   # パッケージのインストール
   log_info "パッケージをインストールしています: ${packages[*]}"
-  sudo apt install -y "${packages[@]}"
+  run_command sudo apt install -y "${packages[@]}"
 }
 
 # gh CLI のインストール
 install_gh_cli() {
+  if [[ "$SKIP_GH" == "1" ]]; then
+    log_info "gh CLI のインストールをスキップします (--skip-gh)"
+    return 0
+  fi
+
   log_info "GitHub CLI (gh) をインストールしています..."
 
   if command -v gh &> /dev/null; then
@@ -269,20 +379,35 @@ install_gh_cli() {
 
   # GitHub CLI 公式リポジトリの追加
   if ! command -v curl &> /dev/null; then
-    sudo apt update && sudo apt install curl -y
+    run_command sudo apt update
+    run_command sudo apt install curl -y
   fi
 
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-  sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-  sudo apt update
-  sudo apt install gh -y
+  run_command curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/githubcli-archive-keyring.gpg
+  run_command sudo dd if=/tmp/githubcli-archive-keyring.gpg of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+  run_command sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
 
-  log_info "gh が正常にインストールされました ($(gh --version | head -n1))"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log_info "[DRY RUN] echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list"
+  else
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+  fi
+
+  run_command sudo apt update
+  run_command sudo apt install gh -y
+
+  if [[ "$DRY_RUN" != "1" ]]; then
+    log_info "gh が正常にインストールされました ($(gh --version | head -n1))"
+  fi
 }
 
 # ghq のインストール
 install_ghq() {
+  if [[ "$SKIP_GHQ" == "1" ]]; then
+    log_info "ghq のインストールをスキップします (--skip-ghq)"
+    return 0
+  fi
+
   log_info "ghq をインストールしています..."
 
   if command -v ghq &> /dev/null; then
@@ -293,11 +418,15 @@ install_ghq() {
   # パッケージマネージャで試行
   if command -v apt &> /dev/null; then
     log_info "apt で ghq をインストールしています..."
-    if sudo apt install -y ghq 2>/dev/null; then
-      log_info "ghq が apt からインストールされました"
-      return 0
+    if [[ "$DRY_RUN" == "1" ]]; then
+      log_info "[DRY RUN] apt で ghq のインストールをスキップし、GitHub Release からのインストールに進みます"
     else
-      log_warn "apt で ghq が見つかりませんでした。GitHub Release からダウンロードします"
+      if run_command sudo apt install -y ghq 2>/dev/null; then
+        log_info "ghq が apt からインストールされました"
+        return 0
+      else
+        log_warn "apt で ghq が見つかりませんでした。GitHub Release からダウンロードします"
+      fi
     fi
   fi
 
@@ -384,6 +513,11 @@ install_ghq() {
 
 # mkwork のインストール
 install_mkwork() {
+  if [[ "$SKIP_MKWORK" == "1" ]]; then
+    log_info "mkwork のインストールをスキップします (--skip-mkwork)"
+    return 0
+  fi
+
   log_info "mkwork をインストールしています..."
 
   local mkwork_script="$HOME/.local/share/mkwork/mkwork.sh"
@@ -636,7 +770,7 @@ apply_chezmoi() {
   fi
 
   log_info "chezmoi の設定を適用しています..."
-  chezmoi apply
+  run_command chezmoi apply
   log_info "chezmoi の設定が正常に適用されました"
 
   # chezmoi apply 後にパーミッションを再設定

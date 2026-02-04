@@ -55,6 +55,7 @@ ghc() {
   fi
 
   # write 権限チェック（owner/repo 形式の場合のみ）
+  local original_repo_name=""
   if [[ -n "$repo_name" ]]; then
     echo "Checking write permission for $repo_name..."
     local permission
@@ -94,6 +95,9 @@ ghc() {
         return 1
       fi
 
+      # 元のリポジトリ名を保存（upstream 登録用）
+      original_repo_name="$repo_name"
+
       # Fork のリポジトリに変更
       repo_name="$current_user/${repo_name#*/}"
       echo "Using fork: $repo_name"
@@ -109,8 +113,43 @@ ghc() {
     repo="git@github.com:${repo_name}.git"
   fi
 
-  # リポジトリを取得し、そのディレクトリ内のシェルを起動（または移動）
-  ghq get --look "$repo"
+  # リポジトリを取得
+  if ! ghq get "$repo"; then
+    echo "Failed to clone repository. Please check if ghq is properly configured." >&2
+    return 1
+  fi
+
+  # クローン先のディレクトリパスを取得
+  local repo_path
+  if [[ -n "$repo_name" ]]; then
+    repo_path=$(ghq list -p -e "$repo_name")
+  else
+    # URL 形式の場合は ghq list で検索（複数マッチの可能性に注意）
+    repo_path=$(ghq list -p "$repo" | head -n1)
+    if [[ -z "$repo_path" ]]; then
+      echo "Failed to find repository in ghq list." >&2
+      return 1
+    fi
+  fi
+
+  if [[ -z "$repo_path" ]]; then
+    echo "Failed to get repository path. Please check if the repository was cloned successfully." >&2
+    return 1
+  fi
+
+  # ディレクトリに移動
+  cd "$repo_path" || return 1
+
+  # Fork した場合は upstream を登録
+  if [[ -n "$original_repo_name" ]]; then
+    echo "Adding upstream remote..."
+    if git remote get-url upstream &>/dev/null; then
+      echo "Upstream remote already exists."
+    else
+      git remote add upstream "git@github.com:${original_repo_name}.git"
+      echo "Upstream remote added: $original_repo_name"
+    fi
+  fi
 }
 
 alias gcl='ghc'

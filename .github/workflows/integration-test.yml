@@ -1,0 +1,37 @@
+name: Integration Test
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+
+jobs:
+  integration-test:
+    name: Test chezmoi apply
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run integration test
+        run: bash tests/integration/test_chezmoi_apply.sh
+
+  docker-integration-test:
+    name: Test chezmoi apply in Docker
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl git
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run integration test in container
+        run: bash tests/integration/test_chezmoi_apply.sh

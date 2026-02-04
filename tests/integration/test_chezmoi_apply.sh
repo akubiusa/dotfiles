@@ -1,0 +1,87 @@
+#!/bin/bash
+# chezmoi apply の統合テスト
+
+set -euo pipefail
+
+echo "Testing chezmoi apply..."
+
+# テスト用の HOME ディレクトリを作成
+TEST_HOME=$(mktemp -d)
+export HOME=$TEST_HOME
+export XDG_CONFIG_HOME="$TEST_HOME/.config"
+
+# テスト終了時にクリーンアップ
+cleanup() {
+  rm -rf "$TEST_HOME"
+}
+trap cleanup EXIT
+
+# chezmoi バイナリの場所を確認
+CHEZMOI_BIN="./bin/chezmoi"
+if [ ! -x "$CHEZMOI_BIN" ]; then
+  # リポジトリに含まれていない場合は chezmoi をインストール
+  echo "chezmoi not found in ./bin/, installing..."
+  curl -sfL https://git.io/chezmoi | sh -s -- -b "$TEST_HOME/bin"
+  CHEZMOI_BIN="$TEST_HOME/bin/chezmoi"
+fi
+
+# chezmoi を初期化 (--apply なしで初期化のみ)
+mkdir -p "$HOME/.local/share/chezmoi"
+cp -r "$(pwd)/home/"* "$HOME/.local/share/chezmoi/"
+
+# chezmoi apply を実行 (dry-run)
+if ! "$CHEZMOI_BIN" apply --dry-run; then
+  echo "❌ chezmoi apply dry-run failed"
+  exit 1
+fi
+
+echo "✅ chezmoi apply dry-run passed"
+
+# 実際に apply
+if ! "$CHEZMOI_BIN" apply; then
+  echo "❌ chezmoi apply failed"
+  exit 1
+fi
+
+echo "✅ chezmoi apply passed"
+
+# 生成されたファイルの検証
+if [ ! -f "$HOME/.bashrc" ]; then
+  echo "❌ .bashrc not generated"
+  exit 1
+fi
+
+if [ ! -d "$HOME/.bashrc.d" ]; then
+  echo "❌ .bashrc.d directory not generated"
+  exit 1
+fi
+
+echo "✅ Basic files generated successfully"
+
+# Idempotency テスト: 2 回目の apply で差分がないことを確認
+echo "Testing idempotency..."
+DIFF_OUTPUT=$("$CHEZMOI_BIN" diff 2>&1)
+if [ -n "$DIFF_OUTPUT" ]; then
+  echo "❌ Idempotency test failed: chezmoi diff showed changes after apply"
+  echo "$DIFF_OUTPUT"
+  exit 1
+fi
+
+echo "✅ Idempotency test passed"
+
+# シンボリックリンクの整合性確認 (例: Claude Code フックのシンボリックリンク)
+if [ -L "$HOME/.claude/hooks/PostToolUse" ]; then
+  TARGET=$(readlink "$HOME/.claude/hooks/PostToolUse")
+  if [ ! -f "$HOME/.claude/hooks/$TARGET" ]; then
+    echo "❌ Symlink broken: PostToolUse -> $TARGET"
+    exit 1
+  fi
+  echo "✅ Symlink integrity verified"
+fi
+
+# 環境変数テンプレートの検証
+if [ -f "$HOME/.env.example" ] && [ ! -f "$HOME/.env" ]; then
+  echo "✅ Template files correctly generated (not applied)"
+fi
+
+echo "✅ All integration tests passed"

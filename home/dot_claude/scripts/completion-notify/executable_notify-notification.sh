@@ -142,6 +142,7 @@ if [[ "$NOTIFICATION_TYPE" == "idle_prompt" ]]; then
     else
       # ロック取得に失敗した場合は別プロセスが処理中なのでスキップ
       echo "⏸️ Another process is checking idle_prompt cooldown, skipping" >&2
+      exit 0
     fi
   fi
 fi

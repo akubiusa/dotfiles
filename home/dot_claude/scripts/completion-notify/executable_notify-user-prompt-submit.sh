@@ -41,4 +41,10 @@ if [[ -n "$SESSION_ID" ]]; then
   fi
 fi
 
+# 古い idle_prompt クールダウンファイルをクリーンアップ（7 日以上経過したファイル）
+# find コマンドが利用可能な場合のみ実行
+if command -v find >/dev/null 2>&1; then
+  find "$DATA_DIR" -name "last-idle-notify-*.txt" -type f -mtime +7 -delete 2>/dev/null || true
+fi
+
 exit 0

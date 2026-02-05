@@ -103,24 +103,29 @@ mkdir -p "$DATA_DIR"
 
 # idle_prompt の重複送信防止ロジック
 if [[ "$NOTIFICATION_TYPE" == "idle_prompt" ]]; then
-  # セッション ID ごとに最後の通知タイムスタンプを記録
-  LAST_IDLE_NOTIFY_FILE="$DATA_DIR/last-idle-notify-${SESSION_ID}.txt"
-  COOLDOWN_SECONDS=60  # 60 秒以内の重複通知をスキップ
+  # SESSION_ID が空の場合はスキップ（セッション単位の管理ができない）
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "⚠️ SESSION_ID is empty, skipping cooldown check" >&2
+  else
+    # セッション ID ごとに最後の通知タイムスタンプを記録
+    LAST_IDLE_NOTIFY_FILE="$DATA_DIR/last-idle-notify-${SESSION_ID}.txt"
+    COOLDOWN_SECONDS=60  # 60 秒以内の重複通知をスキップ
 
-  # 最後の通知時刻を取得
-  if [[ -f "$LAST_IDLE_NOTIFY_FILE" ]]; then
-    LAST_NOTIFY_TIME=$(cat "$LAST_IDLE_NOTIFY_FILE")
-    CURRENT_TIME=$(date +%s)
-    ELAPSED=$((CURRENT_TIME - LAST_NOTIFY_TIME))
+    # 最後の通知時刻を取得
+    if [[ -f "$LAST_IDLE_NOTIFY_FILE" ]]; then
+      LAST_NOTIFY_TIME=$(cat "$LAST_IDLE_NOTIFY_FILE")
+      CURRENT_TIME=$(date +%s)
+      ELAPSED=$((CURRENT_TIME - LAST_NOTIFY_TIME))
 
-    if [[ $ELAPSED -lt $COOLDOWN_SECONDS ]]; then
-      echo "⏱️ Skipping idle_prompt notification (cooldown: ${ELAPSED}s < ${COOLDOWN_SECONDS}s)" >&2
-      exit 0
+      if [[ $ELAPSED -lt $COOLDOWN_SECONDS ]]; then
+        echo "⏱️ Skipping idle_prompt notification (cooldown: ${ELAPSED}s < ${COOLDOWN_SECONDS}s)" >&2
+        exit 0
+      fi
     fi
-  fi
 
-  # 現在時刻を記録
-  date +%s > "$LAST_IDLE_NOTIFY_FILE"
+    # 現在時刻を記録
+    date +%s > "$LAST_IDLE_NOTIFY_FILE"
+  fi
 fi
 
 # 現在時刻の取得

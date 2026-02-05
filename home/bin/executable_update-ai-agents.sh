@@ -66,6 +66,12 @@ check_timestamp() {
 
 # ネットワーク接続チェック
 check_network() {
+    # curl コマンドの存在確認
+    if ! command -v curl >/dev/null 2>&1; then
+        log "⚠️  curl not found, skipping network check"
+        return 0  # curl がない場合は更新を続行
+    fi
+
     # 複数のエンドポイントを試行
     local targets=(
         "https://www.google.com"

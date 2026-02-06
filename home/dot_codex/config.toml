@@ -1,0 +1,28 @@
+# Codex CLI 設定ファイル
+# chezmoi により ~/.codex/config.toml に適用されます
+
+# Web 検索設定（トップレベル）
+web_search = "live"
+
+# モデル設定
+model_reasoning_effort = "high"
+model_reasoning_summary = "auto"
+
+# プロジェクト設定
+project_doc_fallback_filenames = ["AGENTS.local.md"]
+
+# 通知設定
+notify = ["codex-wakatime"]
+
+# パーソナリティ設定
+personality = "pragmatic"
+
+# サンドボックス設定
+[sandbox_workspace_write]
+network_access = true
+
+# 機能フラグ
+[features]
+unified_exec = true
+shell_snapshot = true
+# 注: web_search_request は廃止されたため削除

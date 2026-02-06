@@ -72,9 +72,10 @@ is_team_lead() {
     fi
 
     # config.json から members 配列を取得し、session_id と agentId を照合
+    # 複数のマッチがある場合は最初のマッチのみを使用
     local agent_type
     agent_type=$(jq -r --arg sid "$session_id" \
-      '.members[]? | select(.agentId == $sid) | .agentType // empty' \
+      '[.members[]? | select(.agentId == $sid) | .agentType // empty] | first' \
       "$config_file" 2>/dev/null)
 
     # agentType が取得できた場合

@@ -218,7 +218,15 @@ PAYLOAD=$(jq -n \
 
 webhook_url="${DISCORD_WEBHOOK_URL}"
 if [[ -n "${webhook_url}" ]]; then
-  # バックグラウンドで通知処理を実行
   SCRIPT_DIR="$(dirname "$0")"
+
+  # idle_prompt の場合は待機時間を調整
+  if [[ "$NOTIFICATION_TYPE" == "idle_prompt" ]]; then
+    # idle_prompt は既に 60 秒待機しているため、即座に通知
+    # 環境変数で待機時間を 0 秒に設定
+    export NOTIFICATION_DELAY=0
+  fi
+
+  # バックグラウンドで通知処理を実行
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi

@@ -18,6 +18,9 @@ PAYLOAD=$(cat)
 # この通知プロセスの開始時刻を記録（キャンセルフラグの検証に使用）
 START_TIME=$(date +%s)
 
+# 環境変数からセッション ID を取得（呼び出し元で設定される）
+SESSION_ID="${NOTIFICATION_SESSION_ID:-}"
+
 # 待機時間を環境変数から取得（デフォルト: 60 秒）
 DELAY="${NOTIFICATION_DELAY:-60}"
 if ! [[ "$DELAY" =~ ^[0-9]+$ ]]; then
@@ -31,10 +34,18 @@ while [[ $ELAPSED -lt $DELAY ]]; do
     sleep 1
     ELAPSED=$((ELAPSED + 1))
 
+    # セッション固有のキャンセルフラグを優先的にチェック
+    CHECKED_FLAG=""
+    if [[ -n "$SESSION_ID" && -f "$DATA_DIR/cancel-notify-${SESSION_ID}.flag" ]]; then
+        CHECKED_FLAG="$DATA_DIR/cancel-notify-${SESSION_ID}.flag"
+    elif [[ -f "$CANCEL_FLAG" ]]; then
+        CHECKED_FLAG="$CANCEL_FLAG"
+    fi
+
     # キャンセルフラグのチェック
-    if [[ -f "$CANCEL_FLAG" ]]; then
+    if [[ -n "$CHECKED_FLAG" ]]; then
         # キャンセルフラグの更新時刻を取得し、このプロセス開始後に立ったキャンセルかを判定する
-        CANCEL_MTIME=$(stat -c %Y "$CANCEL_FLAG" 2>/dev/null || stat -f %m "$CANCEL_FLAG" 2>/dev/null)
+        CANCEL_MTIME=$(stat -c %Y "$CHECKED_FLAG" 2>/dev/null || stat -f %m "$CHECKED_FLAG" 2>/dev/null)
 
         if [[ "$CANCEL_MTIME" =~ ^[0-9]+$ ]]; then
             # フラグの更新時刻がこのプロセス開始時刻以降ならキャンセル扱いとする

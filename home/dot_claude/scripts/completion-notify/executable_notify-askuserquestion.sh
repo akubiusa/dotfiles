@@ -152,7 +152,8 @@ if [[ -n "${webhook_url}" ]]; then
   # AskUserQuestion 表示中フラグを作成（idle_prompt 通知を抑制するため）
   touch "$DATA_DIR/askuserquestion-active-${SESSION_ID}.flag"
 
-  # バックグラウンドで通知処理を実行
+  # バックグラウンドで通知処理を実行（セッション ID を環境変数で渡す）
+  export NOTIFICATION_SESSION_ID="$SESSION_ID"
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi
 

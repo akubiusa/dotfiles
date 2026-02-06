@@ -14,6 +14,7 @@
 # }
 
 cd "$(dirname "$0")" || exit 1
+# shellcheck source=/dev/null
 source ./.env
 
 # Windows パスをシェル互換パスに変換する関数
@@ -33,10 +34,11 @@ convert_path() {
   if [[ "$path" =~ ^[A-Za-z]: ]]; then
     local third_char="${path:2:1}"
     # 3 文字目がスラッシュまたはバックスラッシュの場合のみ変換
-    if [[ "$third_char" == "/" ]] || [[ "$third_char" == '\' ]]; then
+    if [[ "$third_char" == "/" ]] || [[ "$third_char" == "\\" ]]; then
       local drive_letter="${path:0:1}"
       local rest="${path:2}"
       # バックスラッシュをスラッシュに変換 (tr を使用)
+      # shellcheck disable=SC1003
       rest=$(echo "$rest" | tr '\\' '/')
       # ドライブレターを小文字に変換
       drive_letter=$(echo "$drive_letter" | tr '[:upper:]' '[:lower:]')
@@ -139,7 +141,7 @@ LAST_MESSAGES=$(jq -r '
     ]
   | select(.[1] != "")
   | @tsv
-' $SESSION_PATH | tail -n 5)
+' "$SESSION_PATH" | tail -n 5)
 if [[ -n "$LAST_MESSAGES" ]]; then
   IFS=$'\n' read -r -d '' -a messages_array <<< "$LAST_MESSAGES"
   for message in "${messages_array[@]}"; do
@@ -183,7 +185,8 @@ PAYLOAD=$(jq -n \
 
 webhook_url="${DISCORD_WEBHOOK_URL}"
 if [[ -n "${webhook_url}" ]]; then
-  # バックグラウンドで通知処理を実行
+  # バックグラウンドで通知処理を実行（セッション ID を環境変数で渡す）
   SCRIPT_DIR="$(dirname "$0")"
+  export NOTIFICATION_SESSION_ID="$SESSION_ID"
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi

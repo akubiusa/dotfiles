@@ -237,6 +237,7 @@ if [[ -n "${webhook_url}" ]]; then
     export NOTIFICATION_DELAY=0
   fi
 
-  # バックグラウンドで通知処理を実行
+  # バックグラウンドで通知処理を実行（セッション ID を環境変数で渡す）
+  export NOTIFICATION_SESSION_ID="$SESSION_ID"
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi

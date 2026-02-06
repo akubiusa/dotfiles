@@ -5,3 +5,4 @@ alias claude='[ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --qu
 alias codex='[ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick; ~/.local/share/chezmoi/update.sh; codex --yolo'
 alias gemini='[ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick; ~/.local/share/chezmoi/update.sh; gemini --yolo'
 alias copilot='[ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick; ~/.local/share/chezmoi/update.sh; copilot --yolo'
+alias happy='[ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick; ~/.local/share/chezmoi/update.sh; happy --dangerously-skip-permissions'

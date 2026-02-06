@@ -19,39 +19,58 @@ PAYLOAD=$(cat)
 # この通知プロセスの開始時刻を記録（キャンセルフラグの検証に使用）
 START_TIME=$(date +%s)
 
-# 1 分待機
-sleep 60
+# 環境変数からセッション ID を取得（呼び出し元で設定される）
+SESSION_ID="${NOTIFICATION_SESSION_ID:-}"
 
-# キャンセルフラグのチェック
-if [[ -f "$CANCEL_FLAG" ]]; then
-    # キャンセルフラグの更新時刻を取得し、このプロセス開始後に立ったキャンセルかを判定する
-    CANCEL_MTIME=$(stat -c %Y "$CANCEL_FLAG" 2>/dev/null || stat -f %m "$CANCEL_FLAG" 2>/dev/null)
-
-    if [[ "$CANCEL_MTIME" =~ ^[0-9]+$ ]]; then
-        # フラグの更新時刻がこのプロセス開始時刻以降ならキャンセル扱いとする
-        if (( CANCEL_MTIME >= START_TIME )); then
-            # 他プロセスのためにフラグは削除しない
-            exit 0
-        fi
-    else
-        # stat で更新時刻が取得できない場合は、安全側に倒してキャンセル扱いとする
-        exit 0
-    fi
+# 待機時間を環境変数から取得（デフォルト: 60 秒）
+DELAY="${NOTIFICATION_DELAY:-60}"
+if ! [[ "$DELAY" =~ ^[0-9]+$ ]]; then
+  # 無効な値の場合はデフォルトを使用
+  DELAY=60
 fi
 
-# 最後のプロンプト送信時刻のチェック
-if [[ -f "$LAST_PROMPT_TIME_FILE" ]]; then
-    LAST_PROMPT_TIME=$(cat "$LAST_PROMPT_TIME_FILE" 2>/dev/null)
-    if [[ "$LAST_PROMPT_TIME" =~ ^[0-9]+$ ]]; then
-        CURRENT_TIME=$(date +%s)
-        TIME_DIFF=$((CURRENT_TIME - LAST_PROMPT_TIME))
+# キャンセル可能な待機ループ
+ELAPSED=0
+while [[ $ELAPSED -lt $DELAY ]]; do
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
 
-        # 60 秒未満の場合は通知をスキップ
-        if [[ $TIME_DIFF -lt 60 ]]; then
+    # セッション固有のキャンセルフラグを優先的にチェック
+    CHECKED_FLAG=""
+    if [[ -n "$SESSION_ID" && -f "$DATA_DIR/cancel-notify-${SESSION_ID}.flag" ]]; then
+        CHECKED_FLAG="$DATA_DIR/cancel-notify-${SESSION_ID}.flag"
+    elif [[ -f "$CANCEL_FLAG" ]]; then
+        CHECKED_FLAG="$CANCEL_FLAG"
+    fi
+
+    # キャンセルフラグのチェック
+    if [[ -n "$CHECKED_FLAG" ]]; then
+        # キャンセルフラグの更新時刻を取得し、このプロセス開始後に立ったキャンセルかを判定する
+        CANCEL_MTIME=$(stat -c %Y "$CHECKED_FLAG" 2>/dev/null || stat -f %m "$CHECKED_FLAG" 2>/dev/null)
+
+        if [[ "$CANCEL_MTIME" =~ ^[0-9]+$ ]]; then
+            # フラグの更新時刻がこのプロセス開始時刻以降ならキャンセル扱いとする
+            if (( CANCEL_MTIME >= START_TIME )); then
+                # 他プロセスのためにフラグは削除しない
+                exit 0
+            fi
+        else
+            # stat で更新時刻が取得できない場合は、安全側に倒してキャンセル扱いとする
             exit 0
         fi
     fi
-fi
+
+    # 最後のプロンプト送信時刻のチェック
+    if [[ -f "$LAST_PROMPT_TIME_FILE" ]]; then
+        LAST_PROMPT_TIME=$(cat "$LAST_PROMPT_TIME_FILE" 2>/dev/null)
+        if [[ "$LAST_PROMPT_TIME" =~ ^[0-9]+$ ]]; then
+            # LAST_PROMPT_TIME が START_TIME よりも新しい（このプロセス開始後に新しいユーザーアクションがあった）場合はキャンセル
+            if (( LAST_PROMPT_TIME > START_TIME )); then
+                exit 0
+            fi
+        fi
+    fi
+done
 
 # Discord 通知の送信
 webhook_url="${DISCORD_WEBHOOK_URL}"

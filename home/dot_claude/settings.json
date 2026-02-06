@@ -23,6 +23,17 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/completion-notify/notify-askuserquestion.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "",
@@ -30,6 +41,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/executable_code-review-immediate-fix.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/scripts/completion-notify/notify-post-tool-use.sh"
           }
         ]
       }
@@ -47,7 +62,7 @@
     ],
     "Notification": [
       {
-        "matcher": "permission_prompt|idle_prompt",
+        "matcher": "idle_prompt",
         "hooks": [
           {
             "type": "command",

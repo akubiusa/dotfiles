@@ -17,6 +17,10 @@ cd "$(dirname "$0")" || exit 1
 # shellcheck source=/dev/null
 source ./.env
 
+# データディレクトリの作成
+DATA_DIR="$HOME/.claude/scripts/completion-notify/data"
+mkdir -p "$DATA_DIR"
+
 # Windows パスをシェル互換パスに変換する関数
 # WSL: C:\Users\... → /mnt/c/Users/...
 # Git Bash/MSYS2: C:\Users\... → /c/Users/...
@@ -270,7 +274,21 @@ PAYLOAD=$(jq -n \
 
 webhook_url="${DISCORD_WEBHOOK_URL}"
 if [[ -n "${webhook_url}" ]]; then
-  # バックグラウンドで通知処理を実行
   SCRIPT_DIR="$(dirname "$0")"
+
+  # idle_prompt の場合は待機時間を調整
+  if [[ "$NOTIFICATION_TYPE" == "idle_prompt" ]]; then
+    # AskUserQuestion 表示中フラグが存在する場合は通知を送信しない
+    if [[ -f "$DATA_DIR/askuserquestion-active-${SESSION_ID}.flag" ]]; then
+      exit 0
+    fi
+
+    # idle_prompt は既に 60 秒待機しているため、即座に通知
+    # 環境変数で待機時間を 0 秒に設定
+    export NOTIFICATION_DELAY=0
+  fi
+
+  # バックグラウンドで通知処理を実行（セッション ID を環境変数で渡す）
+  export NOTIFICATION_SESSION_ID="$SESSION_ID"
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi

@@ -170,5 +170,17 @@ webhook_url="${DISCORD_WEBHOOK_URL}"
 if [[ -n "${webhook_url}" ]]; then
   # バックグラウンドで通知処理を実行
   SCRIPT_DIR="$(dirname "$0")"
+
+  # データディレクトリの作成
+  DATA_DIR="$HOME/.claude/scripts/completion-notify/data"
+  mkdir -p "$DATA_DIR"
+
+  # セッション終了時に askuserquestion-active フラグをクリーンアップ（問題 1 への対応）
+  if [[ -n "$SESSION_ID" ]]; then
+    rm -f "$DATA_DIR/askuserquestion-active-${SESSION_ID}.flag" 2>/dev/null
+  fi
+
+  # バックグラウンドで通知処理を実行（セッション ID を環境変数で渡す）
+  export NOTIFICATION_SESSION_ID="$SESSION_ID"
   printf '%s\n' "${PAYLOAD}" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1 &
 fi

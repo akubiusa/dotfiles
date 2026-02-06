@@ -1,5 +1,4 @@
 # Codex CLI 設定ファイル
-# chezmoi により ~/.codex/config.toml に適用されます
 
 # Web 検索設定（トップレベル）
 web_search = "live"
@@ -25,4 +24,3 @@ network_access = true
 [features]
 unified_exec = true
 shell_snapshot = true
-# 注: web_search_request は廃止されたため削除

@@ -52,6 +52,49 @@ convert_path() {
   echo "$path"
 }
 
+# Agent Teams のリーダーエージェントかどうかを判定する関数
+# 入力: session_id
+# 出力: "true" (リーダー), "false" (メンバー), "unknown" (判定不可)
+is_team_lead() {
+  local session_id="$1"
+
+  # ~/.claude/teams/ ディレクトリが存在しない場合は判定不可
+  if [[ ! -d "${HOME}/.claude/teams" ]]; then
+    echo "unknown"
+    return
+  fi
+
+  # ~/.claude/teams/*/config.json を検索
+  for config_file in "${HOME}/.claude/teams"/*/config.json; do
+    # ワイルドカードが展開されなかった場合（マッチなし）
+    if [[ ! -f "$config_file" ]]; then
+      continue
+    fi
+
+    # config.json から members 配列を取得し、session_id と agentId を照合
+    local agent_type
+    agent_type=$(jq -r --arg sid "$session_id" \
+      '.members[]? | select(.agentId == $sid) | .agentType // empty' \
+      "$config_file" 2>/dev/null)
+
+    # agentType が取得できた場合
+    if [[ -n "$agent_type" ]]; then
+      # agentType が "lead" または "team-lead" の場合はリーダー
+      if [[ "$agent_type" == "lead" ]] || [[ "$agent_type" == "team-lead" ]]; then
+        echo "true"
+        return
+      # agentType が "member" または "teammate" の場合はメンバー
+      elif [[ "$agent_type" == "member" ]] || [[ "$agent_type" == "teammate" ]]; then
+        echo "false"
+        return
+      fi
+    fi
+  done
+
+  # 判定不可
+  echo "unknown"
+}
+
 # JSON入力を読み取り
 INPUT_JSON=$(cat)
 
@@ -163,6 +206,19 @@ PAYLOAD=$(jq -n \
       fields: $fields
     }]
   }')
+
+# リーダーエージェントかどうかを判定
+AGENT_ROLE=$(is_team_lead "$SESSION_ID")
+
+# Discord 通知の条件分岐
+if [[ "$AGENT_ROLE" == "false" ]]; then
+  echo "⏭️ Teammate agent detected. Skipping Discord notification." >&2
+  exit 0
+elif [[ "$AGENT_ROLE" == "true" ]]; then
+  echo "✅ Lead agent detected. Sending Discord notification." >&2
+else
+  echo "⚠️ Agent role undetermined. Sending Discord notification as fallback." >&2
+fi
 
 webhook_url="${DISCORD_WEBHOOK_URL}"
 if [[ -n "${webhook_url}" ]]; then

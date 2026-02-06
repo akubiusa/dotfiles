@@ -4,6 +4,8 @@
 # marketplace と cache の両方に対して、threshold と autofix パッチを適用する
 # このスクリプトは chezmoi apply 時に毎回実行される（冪等性チェックあり）
 
+set -e
+
 THRESHOLD_PATCH_FILE="$HOME/.claude/patches/code-review-threshold.patch"
 AUTOFIX_PATCH_FILE="$HOME/.claude/patches/code-review-autofix.patch"
 

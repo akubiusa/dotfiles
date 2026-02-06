@@ -38,10 +38,12 @@ convert_path() {
   if [[ "$path" =~ ^[A-Za-z]: ]]; then
     local third_char="${path:2:1}"
     # 3 文字目がスラッシュまたはバックスラッシュの場合のみ変換
+    # shellcheck disable=SC1003
     if [[ "$third_char" == "/" ]] || [[ "$third_char" == '\' ]]; then
       local drive_letter="${path:0:1}"
       local rest="${path:2}"
       # バックスラッシュをスラッシュに変換 (tr を使用)
+      # shellcheck disable=SC1003
       rest=$(echo "$rest" | tr '\\' '/')
       # ドライブレターを小文字に変換
       drive_letter=$(echo "$drive_letter" | tr '[:upper:]' '[:lower:]')

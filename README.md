@@ -242,5 +242,3 @@ for f in ~/.claude/plugins/cache/claude-plugins-official/code-review/*/commands/
   grep "CHECK PR AUTHOR" "$f"
 done
 ```
-
-<!-- CI verification test -->

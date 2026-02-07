@@ -17,7 +17,7 @@
 #     --skip-gh          gh CLI のインストールをスキップ
 #     --skip-ghq         ghq のインストールをスキップ
 #     --skip-mkwork      mkwork のインストールをスキップ
-#     --skip-interactive 対話的な確認をスキップ (CI 用、/dev/tty が利用できない場合も自動的に非対話モードになります)
+#     --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
 #     --help             ヘルプを表示
 # ==============================================================================
 
@@ -45,7 +45,7 @@ OPTIONS:
   --skip-gh          gh CLI のインストールをスキップ
   --skip-ghq         ghq のインストールをスキップ
   --skip-mkwork      mkwork のインストールをスキップ
-  --skip-interactive 対話的な確認をスキップ (CI 用、/dev/tty が利用できない場合も自動的に非対話モードになります)
+  --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
   --help             このヘルプを表示
 
 例:

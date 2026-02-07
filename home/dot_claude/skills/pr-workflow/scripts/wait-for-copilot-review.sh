@@ -24,6 +24,12 @@ mkdir -p "$LOG_DIR" "$LOCK_DIR"
 LOG_FILE="$LOG_DIR/wait-copilot-review-${PR_NUMBER}.log"
 LOCK_FILE="$LOCK_DIR/wait-copilot-review-${PR_NUMBER}.lock"
 
+# ロックファイルのクリーンアップを設定
+cleanup() {
+  rm -f "$LOCK_FILE"
+}
+trap cleanup EXIT
+
 # ロック取得（既に実行中の場合はエラー）
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then

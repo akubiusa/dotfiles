@@ -77,16 +77,20 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
 JQ_FILTER='[.data.repository.pullRequest.reviews.nodes[] | select(.author.__typename == "Bot" and (.author.login | contains("copilot")) and (.state == "COMMENTED" or .state == "APPROVED") and .submittedAt != null)] | length'
 
 # PR 作成時のレビュー数を取得
-INITIAL_REVIEWS=$(gh api graphql \
+if ! INITIAL_REVIEWS=$(gh api graphql \
   -f owner="$OWNER" \
   -f repo="$REPO" \
   -F number="$PR_NUMBER" \
   -f query="$GRAPHQL_QUERY" \
-  --jq "$JQ_FILTER" 2>> "$LOG_FILE")
+  --jq "$JQ_FILTER" 2>> "$LOG_FILE"); then
+  echo "Error: Failed to get initial review count" >> "$LOG_FILE"
+  echo "Error: Failed to get initial review count" >&2
+  exit 1
+fi
 
 if [[ -z "$INITIAL_REVIEWS" ]]; then
   echo "Error: Failed to get initial review count" >> "$LOG_FILE"
-  echo "❌ エラー: 初期レビュー数の取得に失敗しました"
+  echo "Error: Failed to get initial review count" >&2
   exit 1
 fi
 
@@ -98,12 +102,15 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
   ELAPSED=$((ELAPSED + INTERVAL))
 
   # 現在のレビュー数を確認
-  CURRENT_REVIEWS=$(gh api graphql \
+  if ! CURRENT_REVIEWS=$(gh api graphql \
     -f owner="$OWNER" \
     -f repo="$REPO" \
     -F number="$PR_NUMBER" \
     -f query="$GRAPHQL_QUERY" \
-    --jq "$JQ_FILTER" 2>> "$LOG_FILE")
+    --jq "$JQ_FILTER" 2>> "$LOG_FILE"); then
+    echo "[$ELAPSED s] Warning: Failed to get current review count" >> "$LOG_FILE"
+    continue
+  fi
 
   if [[ -z "$CURRENT_REVIEWS" ]]; then
     echo "[$ELAPSED s] Warning: Failed to get current review count" >> "$LOG_FILE"

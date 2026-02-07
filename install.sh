@@ -195,7 +195,6 @@ read_from_terminal() {
       return 1
     fi
 
-    # shellcheck disable=SC2034
     if IFS= read -r input_value < /dev/tty 2>/dev/null; then
       # 読み込んだ値を指定された変数に代入
       # eval を使用せず printf -v で安全に代入する

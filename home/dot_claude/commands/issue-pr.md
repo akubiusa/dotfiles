@@ -549,12 +549,15 @@ request-review-copilot https://github.com/<OWNER>/<REPO>/pull/<PR_NUMBER>
 
 バックグラウンドで GitHub Copilot レビューを待機します（最大 30 分、30 秒ごとにチェック）：
 
-```bash
-# バックグラウンドで Copilot レビュー待機を開始
-# Skill を使用（推奨）
-/wait-for-copilot-review <PR_NUMBER>
+**Claude で実行（推奨）:**
 
-# または、直接スクリプトを実行
+```
+/wait-for-copilot-review <PR_NUMBER>
+```
+
+**または、シェルで直接実行:**
+
+```bash
 ~/.claude/skills/pr-workflow/scripts/wait-for-copilot-review.sh <PR_NUMBER> &
 ```
 

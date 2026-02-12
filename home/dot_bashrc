@@ -10,7 +10,7 @@ esac
 if [ -t 0 ] && [ -t 1 ]; then
   # 標準入力から不要なエスケープシーケンスを読み捨てる
   # タイムアウト 0.1 秒で読み取り可能なデータをクリア
-  read -t 0.1 -n 10000 _discard 2>/dev/null || true
+  read -r -t 0.1 -n 10000 _discard 2>/dev/null || true
 fi
 
 # Load extra config fragments.

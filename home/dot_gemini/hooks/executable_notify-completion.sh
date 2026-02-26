@@ -23,8 +23,8 @@ convert_path() {
   if [[ "$path" =~ ^[A-Za-z]:[/\\] ]]; then
     local drive_letter
     drive_letter=$(echo "${path:0:1}" | tr '[:upper:]' '[:lower:]')
-    # shellcheck disable=SC1003
     local rest
+    # shellcheck disable=SC1003
     rest=$(echo "${path:2}" | tr '\\' '/')
 
     # 環境を検出してパスを変換

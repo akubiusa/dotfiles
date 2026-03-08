@@ -25,8 +25,7 @@
     "previewFeatures": true,
     "sessionRetention": {
       "enabled": true,
-      "maxAge": "30d",
-      "warningAcknowledged": true
+      "maxAge": "30d"
     }
   },
   "ui": {

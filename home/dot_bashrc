@@ -19,7 +19,7 @@ esac
 export COLORFGBG="${COLORFGBG:-15;0}"
 
 # ターミナルエスケープシーケンス応答をドレインする関数
-# DA2・OSC 10/11（背景色クエリ）などのターミナル問い合わせ応答を破棄し、
+# DA1/DA2・OSC 10/11（背景色クエリ）などのターミナル問い合わせ応答を破棄し、
 # プロンプトへの混入を防ぐ
 #
 # 【以前の起動時ドレインを PROMPT_COMMAND に移行した理由】
@@ -30,9 +30,12 @@ export COLORFGBG="${COLORFGBG:-15;0}"
 if [ -t 0 ] && [ -t 1 ]; then
   _drain_esc_responses() {
     local _discard
-    # -t 0: タイムアウトなし（非ブロッキング）でバッファを読み捨て
-    # プロンプト表示に遅延を加えることなく、バッファ内の応答を消費する
-    read -r -t 0 -n 10000 _discard 2>/dev/null || true
+    # フェーズ1: 非ブロッキングで即座にチェック
+    # データがなければ即座にリターンし、プロンプト表示の遅延を防ぐ
+    IFS= read -r -t 0 -n 10000 _discard 2>/dev/null || return 0
+    # フェーズ2: データがあった場合、続けて届く応答も全て読み捨て
+    # -t 0.02（20ms）: 少し待ってバッファに残った応答を取り逃がさない
+    while IFS= read -r -t 0.02 -n 10000 _discard 2>/dev/null; do :; done
   }
   # PROMPT_COMMAND への登録は idempotent に行う
   if [[ "${PROMPT_COMMAND}" != *"_drain_esc_responses"* ]]; then
@@ -50,4 +53,13 @@ if [ -d "$HOME/.bashrc.d" ]; then
   done
   unset f __bashrc_files
   shopt -u nullglob
+fi
+
+# 起動時ドレイン（.bashrc.d/ 全ロード後）
+# 初期化中のツールが送信したターミナルクエリへの応答を破棄する
+# 最大100ms 待機してから非ブロッキングで全てのデータを読み捨てる
+if [ -t 0 ] && [ -t 1 ]; then
+  IFS= read -r -t 0.1 -n 10000 __drain_discard 2>/dev/null || true
+  while IFS= read -r -t 0 -n 10000 __drain_discard 2>/dev/null; do :; done
+  unset __drain_discard
 fi

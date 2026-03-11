@@ -1,14 +1,50 @@
+# Powerlevel10k instant prompt を有効化（.zshrc の最上部に配置する必要がある）
+# キャッシュファイルが存在する場合のみ有効化（初回実行時はスキップ）
+# instant_prompt が有効な場合、p10k が OSC 10/11 などのターミナルクエリを適切に
+# 処理するため、エスケープシーケンスの漏れを根本的に防止できる
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 # ユーザーローカルのbinディレクトリをPATHの先頭に追加
 export PATH="$HOME/.local/bin:$PATH"
 
-# エスケープシーケンスをフィルタリング
-# DA2（Device Attributes 2）などのターミナル問い合わせ応答を破棄
-# これにより、シェルプロンプトにエスケープシーケンスが表示される問題を回避
+# ターミナル背景色を環境変数で事前に宣言し、OSC 11 クエリを送信させない
+#
+# 【なぜこれが必要か】
+# p10k・vim・neovim などは「ターミナルの背景色が不明」な場合に
+# OSC 11 (`\e]11;?\a`) を送信してターミナルへ問い合わせる。
+# ターミナルはその応答 (`\e]11;rgb:cccc/cccc/cccc\a`) を stdin に書き込むが、
+# タイミングによってはシェルや自動化スクリプトの stdin に混入する。
+# これらの変数を事前に設定しておくと、ツールは問い合わせを省略する。
+# export により子プロセス（非インタラクティブな自動化スクリプト含む）にも継承される。
+#
+# 値: COLORFGBG=「前景色番号;背景色番号」（15=white, 0=black = ダーク背景）
+#   POWERLEVEL9K_TERM_BACKGROUND: 0=黒（ダーク背景）を p10k に明示指定
+# 既に設定済みの場合は上書きしない（ユーザー側の明示的な設定を尊重する）
+export COLORFGBG="${COLORFGBG:-15;0}"
+typeset -g POWERLEVEL9K_TERM_BACKGROUND="${POWERLEVEL9K_TERM_BACKGROUND:-0}"
+
+# ターミナルエスケープシーケンス応答をドレインする関数
+# DA2・OSC 10/11（背景色クエリ）などのターミナル問い合わせ応答を破棄し、
+# プロンプトへの混入を防ぐ
+#
+# 【以前の起動時ドレインを precmd に移行した理由】
+# 以前は .zshrc 先頭で read -t 0.1 を実行していたが、Powerlevel10k は
+# .zshrc.d/executable_90-p10k.zsh で末尾に読み込まれるため、p10k が
+# OSC 11 クエリを送信するのはドレイン実行後になっていた。
+# precmd 関数として登録することで、すべての初期化完了後かつプロンプト表示前に
+# 毎回実行されるため、あらゆるタイミングで発生する応答を確実に捕捉できる。
 if [[ -t 0 && -t 1 ]]; then
-  # 標準入力から不要なエスケープシーケンスを読み捨てる
-  # タイムアウト 0.1 秒で読み取り可能なデータをクリア
-  # zsh の read は -r オプションがないので、そのまま使用
-  read -t 0.1 -k 10000 _discard 2>/dev/null || true
+  function _drain_esc_responses() {
+    local _discard
+    # -t 0: タイムアウトなし（非ブロッキング）でバッファを読み捨て
+    # プロンプト表示に遅延を加えることなく、バッファ内の応答を消費する
+    read -t 0 -k 10000 _discard 2>/dev/null || true
+  }
+  # add-zsh-hook を用いて precmd フックに idempotent に登録する
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd _drain_esc_responses
 fi
 
 # 追加の設定ファイルを読み込む

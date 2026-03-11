@@ -4,13 +4,40 @@ case $- in
   *) return ;;
 esac
 
-# エスケープシーケンスをフィルタリング
-# DA2（Device Attributes 2）などのターミナル問い合わせ応答を破棄
-# これにより、シェルプロンプトにエスケープシーケンスが表示される問題を回避
+# ターミナル背景色を環境変数で事前に宣言し、OSC 11 クエリを送信させない
+#
+# 【なぜこれが必要か】
+# vim・neovim などは「ターミナルの背景色が不明」な場合に
+# OSC 11 (`\e]11;?\a`) を送信してターミナルへ問い合わせる。
+# ターミナルはその応答 (`\e]11;rgb:cccc/cccc/cccc\a`) を stdin に書き込むが、
+# タイミングによってはシェルや自動化スクリプトの stdin に混入する。
+# この変数を設定しておくと、ツールは問い合わせを省略する。
+# export により子プロセス（非インタラクティブな自動化スクリプト含む）にも継承される。
+#
+# 値: COLORFGBG=「前景色番号;背景色番号」（15=white, 0=black = ダーク背景）
+# 既に設定済みの場合は上書きしない（ユーザー側の明示的な設定を尊重する）
+export COLORFGBG="${COLORFGBG:-15;0}"
+
+# ターミナルエスケープシーケンス応答をドレインする関数
+# DA2・OSC 10/11（背景色クエリ）などのターミナル問い合わせ応答を破棄し、
+# プロンプトへの混入を防ぐ
+#
+# 【以前の起動時ドレインを PROMPT_COMMAND に移行した理由】
+# 以前は起動時に read -t 0.1 を実行していたが、一部のツールは bashrc の
+# 読み込み後にターミナルクエリを送信するため、応答が捕捉できていなかった。
+# PROMPT_COMMAND に登録することで、プロンプト表示前に毎回実行されるため、
+# あらゆるタイミングで発生する応答を確実に捕捉できる。
 if [ -t 0 ] && [ -t 1 ]; then
-  # 標準入力から不要なエスケープシーケンスを読み捨てる
-  # タイムアウト 0.1 秒で読み取り可能なデータをクリア
-  read -r -t 0.1 -n 10000 _discard 2>/dev/null || true
+  _drain_esc_responses() {
+    local _discard
+    # -t 0: タイムアウトなし（非ブロッキング）でバッファを読み捨て
+    # プロンプト表示に遅延を加えることなく、バッファ内の応答を消費する
+    read -r -t 0 -n 10000 _discard 2>/dev/null || true
+  }
+  # PROMPT_COMMAND への登録は idempotent に行う
+  if [[ "${PROMPT_COMMAND}" != *"_drain_esc_responses"* ]]; then
+    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }_drain_esc_responses"
+  fi
 fi
 
 # Load extra config fragments.

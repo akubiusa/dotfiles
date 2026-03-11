@@ -34,7 +34,10 @@ if [ -t 0 ] && [ -t 1 ]; then
     # プロンプト表示に遅延を加えることなく、バッファ内の応答を消費する
     read -r -t 0 -n 10000 _discard 2>/dev/null || true
   }
-  PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }_drain_esc_responses"
+  # PROMPT_COMMAND への登録は idempotent に行う
+  if [[ "${PROMPT_COMMAND}" != *"_drain_esc_responses"* ]]; then
+    PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND}; }_drain_esc_responses"
+  fi
 fi
 
 # Load extra config fragments.

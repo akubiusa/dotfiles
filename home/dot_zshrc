@@ -42,7 +42,9 @@ if [[ -t 0 && -t 1 ]]; then
     # プロンプト表示に遅延を加えることなく、バッファ内の応答を消費する
     read -t 0 -k 10000 _discard 2>/dev/null || true
   }
-  precmd_functions+=(_drain_esc_responses)
+  # add-zsh-hook を用いて precmd フックに idempotent に登録する
+  autoload -Uz add-zsh-hook
+  add-zsh-hook precmd _drain_esc_responses
 fi
 
 # 追加の設定ファイルを読み込む

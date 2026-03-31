@@ -49,3 +49,4 @@
 ## リポジトリ固有
 
 - `home/` 配下が chezmoi のソースであり、`dot_` プレフィックスでファイルを管理する。
+- Codex 用の skill は `home/dot_agents/skills/` に配置する。

@@ -15,6 +15,8 @@ NOTIFICATION_SCRIPTS=(
   "home/dot_claude/scripts/completion-notify/executable_notify-permission-request.sh"
   "home/dot_claude/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
   "home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+  "home/dot_codex/scripts/completion-notify/executable_send-discord-notification.sh"
+  "home/dot_codex/scripts/completion-notify/executable_notify-completion.sh"
 )
 
 # 各通知スクリプトの構文チェック

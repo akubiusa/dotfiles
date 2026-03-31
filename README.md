@@ -122,6 +122,93 @@ DISCORD_CLAUDE_WEBHOOK=https://discord.com/api/webhooks/...
 DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 ```
 
+## Codex CLI 設定
+
+Codex CLI 向けには、`~/.codex/config.toml` と `~/.codex/hooks.json` を dotfiles で管理します。
+
+- モデルは `gpt-5.4` を使用
+- Web 検索は `live` を有効化
+- `codex_hooks = true` を設定し、公式 hook 機能を有効化
+- tmux IPC は `SessionStart` / `UserPromptSubmit` / `PostToolUse` で取り込み
+
+## Codex CLI 通知機能
+
+Codex CLI では、Discord Webhook を使った完了通知を提供します。
+
+### 通知されるイベント
+
+1. **セッション完了通知 (Stop hook)**
+   - Codex が処理を完了した際に通知
+   - 実行ディレクトリ、セッション ID、モデル、最新応答を含む
+
+### 制限事項
+
+Codex の公式 hook 仕様に合わせ、現時点では Claude Code の `PermissionRequest` / `Notification` 相当は実装していません。
+そのため、この dotfiles で Codex 向けに提供する Discord 通知は Stop hook ベースのみです。
+
+### 設定方法
+
+```bash
+# Discord Webhook URL (必須)
+DISCORD_CODEX_WEBHOOK=https://discord.com/api/webhooks/...
+
+# メンション先のユーザー ID (オプション)
+DISCORD_CODEX_MENTION_USER_ID=123456789012345678
+```
+
+## Codex CLI Skills
+
+Codex CLI の公式仕様では、Claude Code のような任意の custom slash command は追加せず、skill を `~/.agents/skills` に配置して利用します。
+この dotfiles では以下の skill を提供します。
+
+### PR 作成先の自動解決
+
+PR 作成時に `origin` と `upstream` のどちらへ出すかを忘れないため、`gh-pr-target-repo.sh` を提供します。
+
+```bash
+gh-pr-target-repo.sh
+gh-pr-target-repo.sh --remote
+```
+
+- `upstream` remote が存在する場合は upstream を返します
+- `upstream` が無い場合は `origin` を返します
+- skills や今後の PR 作成フローでは、この結果を既定値として扱います
+
+### issue-pr
+
+Issue から実装、PR 作成、PR 後フロー開始までを一貫して進める skill です。
+
+```bash
+$issue-pr 49
+```
+
+### pr-health-monitor
+
+PR 作成後に、PR 本文更新、CI 監視、Codex レビュー、Copilot レビュー依頼と待機をまとめて進める skill です。
+
+```bash
+$pr-health-monitor 123
+```
+
+### handle-pr-reviews
+
+未解決レビュースレッドを GraphQL で取得し、修正、返信、resolve、再確認まで行う skill です。
+
+```bash
+$handle-pr-reviews https://github.com/owner/repo/pull/123
+```
+
+### Copilot レビュー待機スクリプト
+
+PR 作成後は、必要に応じて以下のバックグラウンド監視スクリプトも利用できます。
+
+```bash
+~/.agents/skills/pr-health-monitor/scripts/wait-for-copilot-review.sh 123 &
+~/.agents/skills/pr-health-monitor/scripts/wait-for-copilot-review.sh https://github.com/owner/repo/pull/123 &
+```
+
+検出時は、tmux セッションに `$handle-pr-reviews ...` を送信し、Codex がそのままレビュー対応へ進める前提です。
+
 ## Claude Code コマンド
 
 ### issue-pr

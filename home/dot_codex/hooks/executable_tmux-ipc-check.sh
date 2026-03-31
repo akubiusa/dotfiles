@@ -1,20 +1,20 @@
 #!/bin/bash
-# tmux IPC 受信フック (Codex CLI UserPromptSubmit)
+# tmux IPC 受信フック (Codex CLI SessionStart / UserPromptSubmit / PostToolUse)
 #
-# ユーザープロンプト送信時に inbox をスキャンし、受信メッセージを
-# additionalContext としてプロンプトに注入する。
+# Codex のフック実行時に inbox をスキャンし、受信メッセージを
+# additionalContext として注入する。
 # あわせてセッション登録を更新することで、レジストリの alive 状態を維持する。
 #
 # フック入力 (stdin):
-#   {"hookEventName": "UserPromptSubmit", "prompt": "...", ...}
+#   {"hook_event_name": "UserPromptSubmit", ...}
 #
 # フック出力:
-#   {"hookSpecificOutput": {"additionalContext": "<IPC メッセージ>"}}
+#   {"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext": "<IPC メッセージ>"}}
 #   メッセージがない場合は空出力
 #   ブロックする場合: exit 2 + stderr にブロック理由を書き込む
 
-# stdin を消費する（早期 exit の前に必ず実施する）
-cat > /dev/null
+INPUT_JSON=$(cat)
+HOOK_EVENT_NAME=$(echo "$INPUT_JSON" | jq -r '.hook_event_name // .hookEventName // "UserPromptSubmit"')
 
 IPC_DIR="/tmp/tmux-ipc"
 
@@ -110,6 +110,6 @@ ${IPC_SECTION}
 ---
 上記は他のエージェントから受信した IPC メッセージです。必要に応じて内容を確認・対応してください。"
 
-  jq -n --arg ctx "$ADDITIONAL_CONTEXT" \
-    '{"hookSpecificOutput": {"additionalContext": $ctx}}'
+  jq -n --arg event "$HOOK_EVENT_NAME" --arg ctx "$ADDITIONAL_CONTEXT" \
+    '{"hookSpecificOutput": {"hookEventName": $event, "additionalContext": $ctx}}'
 fi

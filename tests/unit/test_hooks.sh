@@ -1,9 +1,9 @@
 #!/bin/bash
-# Claude Code フックのユニットテスト
+# AI エージェント フックのユニットテスト
 
 set -euo pipefail
 
-echo "Testing Claude Code hooks..."
+echo "Testing AI agent hooks..."
 
 FAILED=0
 
@@ -12,6 +12,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_code-review-immediate-fix.sh"
   "home/dot_claude/hooks/executable_require-code-review-fixes.sh"
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
+  "home/dot_codex/hooks/executable_tmux-ipc-check.sh"
 )
 
 # 各フックの構文チェック

@@ -57,6 +57,8 @@ fi
 # プログレスバーを生成する（合計 20 文字分）
 BAR_WIDTH=20
 FILLED=$(( USED_INT * BAR_WIDTH / 100 ))
+# 使用率が 100% を超えた場合はバー幅を上限にクランプする
+if [ "$FILLED" -gt "$BAR_WIDTH" ]; then FILLED=$BAR_WIDTH; fi
 EMPTY=$(( BAR_WIDTH - FILLED ))
 
 BAR_FILLED=""

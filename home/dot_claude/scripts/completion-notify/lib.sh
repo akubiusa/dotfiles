@@ -24,9 +24,9 @@ convert_path() {
       local rest="${path:2}"
       # バックスラッシュをスラッシュに変換 (tr を使用)
       # shellcheck disable=SC1003
-      rest=$(echo "$rest" | tr '\\' '/')
+      rest=$(printf '%s' "$rest" | tr '\\' '/')
       # ドライブレターを小文字に変換
-      drive_letter=$(echo "$drive_letter" | tr '[:upper:]' '[:lower:]')
+      drive_letter=$(printf '%s' "$drive_letter" | tr '[:upper:]' '[:lower:]')
 
       # 環境を検出してパスを変換
       if [[ -f /proc/version ]] && grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
@@ -39,5 +39,5 @@ convert_path() {
     fi
   fi
 
-  echo "$path"
+  printf '%s\n' "$path"
 }

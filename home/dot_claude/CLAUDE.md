@@ -29,6 +29,11 @@
 
 Always use **SSH** (not HTTPS) for git push. Do not ask the user to fix git authentication manually. Handle it autonomously.
 
+If the environment variables GH_CONFIG_DIR, GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL, or GIT_SSH_COMMAND are set, they must not be modified without permission.  
+If you do not have access to the target repository, do not make assumptions; ask the user how to proceed.
+
+Furthermore, you must not use the git config command to change the username or email address.
+
 ## Git Worktree
 
 Some projects use Git Worktree. The directory structure must be:

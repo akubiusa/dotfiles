@@ -34,17 +34,6 @@ If you do not have access to the target repository, do not make assumptions; ask
 
 Furthermore, you must not use the git config command to change the username or email address.
 
-## Git Worktree
-
-Some projects use Git Worktree. The directory structure must be:
-
-```text
-.bare/
-<branch-name>
-```
-
-When creating a new branch, create a new Git Worktree after creating the branch.
-
 ## PR / Issue Workflow
 
 Use the following skills to run the workflow:
@@ -66,6 +55,7 @@ See each skill (`/handle-pr-reviews`, `/pr-health-monitor`) for detailed steps a
 - Search for and identify the Jira space by the project name. If the relevant space does not exist, confirm with the user
 - Jira ticket titles and descriptions must be written in Japanese. Also, please be careful, as there are many cases where the line break format in the description is incorrect
 - When starting implementation, please change the Jira ticket status to "In progres"s. Once the PR is created, there are no conflicts, CI has passed, Copilot Review is complete, and the PR is ready to be merged, please comment to that effect on the ticket and change the status to "Resolved".
+- When checking content or changing status, please also consider the child tickets.
 - Do not mention Jira on GitHub Issues or pull requests
 
 ## Must Do

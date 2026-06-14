@@ -37,8 +37,11 @@ Jira の課題タイプからブランチタイプを決定する:
 
 ## ワークフロー
 
+0. cloudId を解決する。
+   - 引数が URL（例: `https://company.atlassian.net/browse/PROJECT-123`）の場合: ホスト名（例: `company.atlassian.net`）を `cloudId` として使用する
+   - チケットキーのみの場合: `mcp__atlassian__getAccessibleAtlassianResources` で `cloudId` を取得する
 1. Jira チケット情報を取得する。
-   - `mcp__atlassian__getJiraIssue({ issueIdOrKey: "<key>" })`
+   - `mcp__atlassian__getJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>" })`
    - Done / Closed / Resolved 等のステータスのチケットには着手しない
 2. 要件と不確実性を整理する。
    - 変更対象
@@ -69,7 +72,7 @@ Jira の課題タイプからブランチタイプを決定する:
    - 更新履歴の羅列は含めない
    - **重要**: PR のタイトル・本文には Jira チケットキーや Jira への言及を含めない
 9. Jira チケットに完了コメントを投稿する。
-   - `mcp__atlassian__addCommentToJiraIssue` で PR URL を含む完了コメントを投稿
+   - `mcp__atlassian__addCommentToJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>", commentBody: "<PR URL を含む完了メッセージ>" })` で投稿
 10. PR 作成後は直ちに `$pr-health-monitor` を使う。
     - 例: `$pr-health-monitor 456`
 

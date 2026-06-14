@@ -62,6 +62,13 @@ Use the following skills to run the workflow:
 
 See each skill (`/handle-pr-reviews`, `/pr-health-monitor`) for detailed steps and GraphQL queries.
 
+## Issue / Ticket management
+
+- As a general rule, use GitHub Issues for issues and tickets. GitHub Issues should be managed using the gh command
+- If a user explicitly requests the use of Jira, interact with Jira via MCP
+- Search for and identify the Jira space by the project name. If the relevant space does not exist, confirm with the user
+- Do not mention Jira on GitHub Issues or pull requests
+
 ## Must Do
 
 Use the Todo tool to track all of the following without omission.

@@ -12,12 +12,12 @@
 ## Language
 
 - Final responses to the user must be in Japanese. For intermediate steps, use English except for key/important points, to reduce context size.
-- Code comments must be in Japanese. Error messages should be in English as a general rule.
+- Code comments: follow the project CLAUDE.md if it specifies one; otherwise Japanese. Error messages should be in English as a general rule.
 - Insert a half-width space between Japanese and alphanumeric characters.
 
 ## Environment Rules
 
-- Git commits must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). The `<description>` must be in Japanese.
+- Git commits must follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). The `<description>` language: follow the project CLAUDE.md if it specifies one; otherwise Japanese.
 - Branches must follow [Conventional Branch](https://conventional-branch.github.io). Use short-form `<type>` (feat, fix).
 - When researching a GitHub repository, clone it to a temporary directory and search there.
 - Keep CLAUDE.md up to date.
@@ -72,7 +72,7 @@ Use the Todo tool to track all of the following without omission.
 
 ### Before Commit/Push
 
-1. Commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). `<description>` must be in Japanese.
+1. Commit message follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). `<description>` language: follow the project CLAUDE.md if specified; otherwise Japanese.
 2. No sensitive information in the commit
 3. No Lint / Format errors
 4. Verify the change works as expected
@@ -89,7 +89,7 @@ Use the Todo tool to track all of the following without omission.
 Run `/pr-health-monitor <PR number>` to automate, or do the following manually:
 
 1. Verify no conflicts
-2. Update PR body with current state only (no history, in Japanese)
+2. Update PR body with current state only (no history). Language: follow the project CLAUDE.md if it specifies one; otherwise Japanese
 3. Confirm CI with `gh pr checks <PR number> --watch`
 4. Request Copilot review and wait (`/wait-for-copilot-review`)
 5. Address review comments (`/handle-pr-reviews`)

@@ -225,7 +225,7 @@ git add <files>
 git commit -m "<type>: <Japanese description>"
 ```
 
-Follow Conventional Commits, with `<description>` written in Japanese.
+Follow Conventional Commits. `<description>` language: follow the project CLAUDE.md if specified; otherwise Japanese.
 
 ### Create PR
 
@@ -238,23 +238,23 @@ gh pr create ${REPO:+--repo "$REPO"} --title "<title>" --body "<PR body>"
 ```
 
 **Important**: do not include the Jira ticket key or any reference to Jira in the PR title or body.
-PR body: in Japanese, current state only, no update history.
+PR body: follow the project CLAUDE.md language if specified; otherwise Japanese. Current state only, no update history.
 
-Example PR body structure:
+Example PR body structure (section headings in the project language; Japanese shown as default):
 ```markdown
 ## 概要
 
-[変更の概要を日本語で記載]
+[summary of changes]
 
 ## 変更内容
 
-- [変更点 1]
-- [変更点 2]
+- [change 1]
+- [change 2]
 
 ## 動作確認
 
-- [確認項目 1]
-- [確認項目 2]
+- [verification step 1]
+- [verification step 2]
 ```
 
 ### Completion Comment on Jira Ticket

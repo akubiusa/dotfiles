@@ -8,6 +8,28 @@
 #   コマンドディスパッチが失敗して "Unknown argument: remote-control" エラーが発生するため）
 # 既存セッションで旧エイリアスが残存している場合に備えて、関数定義前に unalias する。
 unalias claude 2>/dev/null
+# カレントディレクトリを Claude Code のワークスペース信頼済みディレクトリとして
+# ~/.claude.json に登録する。
+# --dangerously-skip-permissions 環境では Workspace Trust dialog が機能せず
+# hasTrustDialogAccepted が永続化されないため、statusLine や hooks が無音で
+# スキップされてしまう問題への対策。
+_claude_trust_cwd() {
+  local config="$HOME/.claude.json"
+  [ -f "$config" ] || return 0
+  command -v jq > /dev/null 2>&1 || return 0
+  if [ "$(jq -r --arg p "$PWD" '.projects[$p].hasTrustDialogAccepted // false' "$config" 2> /dev/null)" != "true" ]; then
+    local tmp perm
+    tmp=$(mktemp "${config}.XXXXXX") || return 0
+    # 元ファイルのパーミッションを一時ファイルに反映する (GNU stat / BSD stat の両方に対応)
+    perm=$(stat -c '%a' "$config" 2> /dev/null || stat -f '%Lp' "$config" 2> /dev/null)
+    [ -n "$perm" ] && chmod "$perm" "$tmp"
+    if jq --arg p "$PWD" '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})' "$config" > "$tmp"; then
+      mv "$tmp" "$config"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
 claude() {
   [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only claude
   ~/.local/share/chezmoi/update.sh
@@ -15,6 +37,7 @@ claude() {
     remote-control|rc)
       command claude "$@" ;;
     *)
+      _claude_trust_cwd
       command claude --dangerously-skip-permissions "$@" ;;
   esac
 }

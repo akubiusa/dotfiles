@@ -80,5 +80,12 @@ Maintain the following strict options:
 ## Toolchain
 
 - Package manager: **pnpm** (`only-allow pnpm` guard)
-- Test runner: **jest**
+- Test runner: **jest** or **vitest** (see "Test Runner Selection" below)
 - Node version: pinned in `.node-version`
+
+## Test Runner Selection
+
+- If the project already uses jest or vitest, follow the existing choice — no confirmation needed
+- If introducing a test runner for the first time, present the trade-offs below and confirm the choice with the user before adopting one
+  - **jest**: mature ecosystem, abundant references/examples; transpilation (e.g. `ts-jest`) and ESM setup can be fiddly
+  - **vitest**: native to Vite/ESM, fast, lightweight config; newer with a smaller ecosystem than jest

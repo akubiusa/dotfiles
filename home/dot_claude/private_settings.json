@@ -112,6 +112,8 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "showThinkingSummaries": true,
+  "agentPushNotifEnabled": true,
+  "remoteControlAtStartup": true,
   "statusLine": {
     "type": "command",
     "command": "npx -y ccstatusline@latest"

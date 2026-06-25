@@ -101,7 +101,7 @@
   "worktree": {
     "baseRef": "fresh"
   },
-  "enableWorkflows": true,
+  "enableWorkflows": false,
   "statusLine": {
     "type": "command",
     "command": "npx -y ccstatusline@latest"

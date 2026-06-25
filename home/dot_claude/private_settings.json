@@ -119,7 +119,7 @@
   "autoMemoryEnabled": false,
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
-  "verbose": true,
+  "verbose": false,
   "preferredNotifChannel": "auto",
   "teammateMode": "auto",
   "inputNeededNotifEnabled": true,

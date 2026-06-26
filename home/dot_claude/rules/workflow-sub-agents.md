@@ -15,8 +15,8 @@ Before delegating, assess task complexity:
 | Complexity | Characteristics | Recommended Approach |
 |------------|-----------------|---------------------|
 | **Simple** | 1-5 tool calls, single file/module, well-defined scope | Direct execution (grep/glob/view/edit/bash) |
-| **Medium** | 6-15 tool calls, multiple related files, requires investigation | Direct execution with structured approach |
-| **Complex** | 15+ tool calls, multiple independent areas, benefits from specialization | Consider sub-agent delegation |
+| **Medium** | 6-10 tool calls, multiple related files, requires investigation | Direct execution with structured approach |
+| **Complex** | 10+ tool calls, multiple independent areas, benefits from specialization | Consider sub-agent delegation |
 
 ### Complexity Indicators
 
@@ -205,8 +205,8 @@ Can I do this in ≤5 tool calls?
 | Simple edit | 2-3 | Direct (view + edit) |
 | Single search | 1-2 | Direct (grep/glob) |
 | Multi-file analysis | 5-10 | Direct with structured approach |
-| Cross-module investigation | 10-20 | Consider explore agent if parallel work exists |
-| Full feature implementation | 20+ | Consider general-purpose agent with planning |
+| Cross-module investigation | 10-15 | Consider explore agent if parallel work exists |
+| Full feature implementation | 15+ | Consider general-purpose agent with planning |
 | Security review | Any | Consider security-review agent (specialized) |
 | Code review of changes | Any | Consider code-review agent (high signal) |
 
@@ -239,7 +239,7 @@ Each delegation incurs:
 - Result aggregation
 
 **Rule of thumb:** Delegation overhead ≈ 3-5 tool calls equivalent.  
-Only delegate if the task is >10 tool calls AND benefits from specialization/parallelism.
+Only delegate if the task is 10+ tool calls AND benefits from specialization/parallelism.
 
 ---
 

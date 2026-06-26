@@ -109,7 +109,8 @@
   "enabledPlugins": {
     "context7@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true
+    "commit-commands@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
   },
   "language": "Use Japanese for interaction with humans and creating plans. Write the Markdown below .claude in English.",
   "feedbackSurveyRate": 0,

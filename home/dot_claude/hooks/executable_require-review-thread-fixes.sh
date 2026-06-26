@@ -15,7 +15,6 @@ STATE_FILE="$HOME/.claude/data/session-state.json"
 
 # stdin から JSON を読み込む
 INPUT=$(cat)
-SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)
 TRANSCRIPT_PATH=$(printf '%s' "$INPUT" | jq -r '.transcript_path // ""' 2>/dev/null)
 
 # --- PR URL 解決 ---

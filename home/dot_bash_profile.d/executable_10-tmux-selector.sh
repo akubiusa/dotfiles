@@ -87,20 +87,24 @@ tmux_session_selector() {
   local detailed_options=""
   if [[ -n "$sessions" ]]; then
     local sname sattached swindows screated
-    local created_fmt attach_status pane_id cwd cmd display
+    local attach_status pane_id cwd cmd display
 
     while IFS='|' read -r sname sattached swindows screated; do
       [[ -n "$sname" ]] || continue
 
-      # created整形（GNU date / BSD date fallback）
-      if [[ -n "$screated" && "$screated" != "0" ]]; then
-        created_fmt="$(
-          date -d "@$screated" "+%Y/%m/%d %H:%M:%S" 2>/dev/null \
-          || date -r "$screated" "+%Y/%m/%d %H:%M:%S" 2>/dev/null \
-          || echo "$screated"
-        )"
+      # 経過時間を短縮形で算出（例: 5s, 3m, 2h, 1d）
+      # 行末ではなくコマンドの直後に配置することでモバイル幅でも見切れを防ぐ
+      local now_ts age_str
+      now_ts="$(date +%s 2>/dev/null || echo 0)"
+      if [[ -n "$screated" && "$screated" != "0" && "$now_ts" -gt 0 ]]; then
+        local diff=$(( now_ts - screated ))
+        if   (( diff < 60     )); then age_str="${diff}s"
+        elif (( diff < 3600   )); then age_str="$(( diff / 60 ))m"
+        elif (( diff < 86400  )); then age_str="$(( diff / 3600 ))h"
+        else                           age_str="$(( diff / 86400 ))d"
+        fi
       else
-        created_fmt="unknown"
+        age_str="?"
       fi
 
       [[ "${sattached:-0}" -gt 0 ]] && attach_status=" (attached)" || attach_status=""
@@ -115,14 +119,27 @@ tmux_session_selector() {
       cwd="?"
       if [[ -n "$pane_id" ]]; then
         cmd="$(tmux display-message -p -t "$pane_id" '#{pane_current_command}' 2>/dev/null || echo "unknown")"
-        cwd="$(tmux display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || echo "?")"
+
+        # TMUX_PROJECT_DIR が設定されていれば優先する。
+        # pane_current_path はサブプロセスの影響で一時的に別ディレクトリを指すことがあるため信頼性が低い。
+        # 設定方法: tmux new-session -e TMUX_PROJECT_DIR="$(pwd)"
+        #           または tmux set-environment -t <session> TMUX_PROJECT_DIR "$(pwd)"
+        local project_dir
+        project_dir="$(tmux show-environment -t "${sname}" TMUX_PROJECT_DIR 2>/dev/null)"
+        if [[ "$project_dir" == TMUX_PROJECT_DIR=* ]]; then
+          cwd="${project_dir#TMUX_PROJECT_DIR=}"
+        else
+          cwd="$(tmux display-message -p -t "$pane_id" '#{pane_current_path}' 2>/dev/null || echo "?")"
+        fi
         [[ -n "${HOME:-}" ]] && cwd="${cwd/#$HOME/\~}"
         if [[ "${#cwd}" -gt "$TMUX_PATH_MAX" ]]; then
           cwd="…${cwd: -$TMUX_PATH_MAX}"
         fi
       fi
 
-      display="$sname: [$cmd] ($cwd) ${swindows}w (created $created_fmt)$attach_status"
+      # フォーマット: "NAME: [CMD|AGE] (PATH) Nw [(attached)]"
+      # AGE をコマンドの直後に入れることで、パスが長くても作成時期が見切れない
+      display="$sname: [$cmd|$age_str] ($cwd) ${swindows}w$attach_status"
       # タブ文字が含まれると TSV の区切りが崩れるため、スペースに置換する
       display="${display//$'\t'/ }"
       # KEY は session_name。tmux のターゲット指定は "${session_name}:" で厳密に扱う
@@ -174,6 +191,10 @@ tmux_session_selector() {
   '\'' _ {2} {3} {4}'
 
   # --- fzf ---
+  # --no-sort を付けない理由: --filter モードでは --no-sort + --with-nth の組み合わせで
+  # フィールドが剥ぎ取られる挙動が fzf 0.29 系で確認されているため、副作用を避けて外している。
+  # インタラクティブモードでは --no-sort の有無に関わらず選択結果は全フィールドを含む。
+  # クエリ未入力時は全アイテムのスコアが 0 で安定ソートされ入力順が保たれる。
   local selected
   if [[ "$terminal_width" -ge "$TMUX_MIN_WIDTH" ]]; then
     selected="$(
@@ -181,7 +202,6 @@ tmux_session_selector() {
         --height="$TMUX_FZF_HEIGHT" \
         --reverse \
         --border \
-        --no-sort \
         --delimiter=$'\t' \
         --with-nth=1 \
         --prompt='Select session/action: ' \
@@ -195,7 +215,6 @@ tmux_session_selector() {
         --height="$TMUX_FZF_HEIGHT" \
         --reverse \
         --border \
-        --no-sort \
         --delimiter=$'\t' \
         --with-nth=1 \
         --prompt='Select session/action: '
@@ -212,7 +231,9 @@ tmux_session_selector() {
   case "$sel_type" in
     NEW)
       sleep "$TMUX_SESSION_DELAY"
-      tmux new-session
+      # TMUX_PROJECT_DIR を現在のディレクトリで設定してセッションを作成する。
+      # 以降はセレクタが pane_current_path の代わりにこの値を使うため表示が安定する。
+      tmux new-session -e "TMUX_PROJECT_DIR=$(pwd)"
       ;;
     SESSION)
       # 重要: 数字名でも曖昧にならないよう session_name: で attach

@@ -1,150 +1,234 @@
 ---
 name: issue-pr
-description: Investigate a GitHub Issue, implement a fix, and create a PR end-to-end. For explicit /issue-pr invocations only.
+description: Use when the user explicitly runs `/issue-pr` to turn a GitHub Issue into a pull request.
 argument-hint: "[Issue number or URL]"
 disable-model-invocation: true
 ---
 
 # Create PR from Issue
 
-This skill operates in two modes: **plan mode** and **execution mode**.
+This skill is a GitHub-specific orchestrator on top of superpowers: it chains
+spec → plan → implementation → PR, with an explicit user-approval gate after
+the spec and after the plan, then runs implementation and testing without
+re-confirming every step. It does not reimplement spec/plan authoring,
+review, or Confluence upload — those stay in superpowers.
 
-## Mode Detection
+Approval here is done via **AskUserQuestion**, not Claude Code's native Plan
+Mode — Plan Mode only allows a single read-only-until-ExitPlanMode gate, and
+blocks the Write/Bash/MCP calls this skill needs starting at Phase 1.
 
-Detected by checking if the system-reminder contains "Plan mode is active" or "plan file".
-If present: plan mode. Otherwise: execution mode.
+**Do not call ExitPlanMode to work around this.** It exists to get sign-off
+on a concrete plan, not to escape Plan Mode. If Plan Mode is active when this
+skill starts, stop immediately and tell the user to exit it themselves and
+re-run `/issue-pr`. "I'll just exit once, it's harmless" is exactly the
+workaround this forbids. No exceptions.
 
----
+## Prerequisites
 
-## Plan Mode Workflow
+Check before Phase 1, not after something later fails because of it:
 
-### Phase 1: Analyze the Issue
+- `gh` and `jq` must be available (`which gh jq`)
+- Must be run inside a Git repository (`git rev-parse --is-inside-work-tree`)
 
-```bash
-gh issue view $ARGUMENTS --json title,state,body,comments,author
-```
+If any prerequisite is missing, stop and tell the user what to install —
+do not proceed and hit the failure several phases later.
 
-Analyze:
-1. Issue type (feat/fix/docs/refactor)
-2. Files to change and impact scope
-3. List of unknowns
+## Progress Tracking
 
-### Phase 2: Ask the User
+Before Phase 1, create one task per phase below (Phase 1 through Phase 17)
+with the Todo tool, subject = the phase title. This is a long, multi-phase
+flow spanning two approval gates and several delegated skills — track it
+explicitly so no phase gets skipped or forgotten mid-run, especially after a
+revise-and-repeat loop (Phase 5 or Phase 9) or a context compaction.
 
-Use the AskUserQuestion tool to clarify unknowns.
-Do not ask "Is this plan okay?" — that is ExitPlanMode's role.
+Mark each task `in_progress` immediately before starting that phase and
+`completed` immediately after finishing it — do not batch updates at the
+end. The task tool does not support reopening a completed task, so don't try
+to; if Phase 5 or Phase 9 sends you back to an earlier phase, create new
+tasks for the phases being repeated (e.g. "Phase 2: Write the Spec (revision
+2)") instead.
 
-### Phase 3: Check External Specs
-
-If external dependencies or latest specs are needed, check with WebSearch or official docs (Context7, etc.).
-(Do not consult other agents.)
-
-### Phase 4: Write the Requirements Document
-
-Create in the following format:
-
-```markdown
-# Issue #<number> Requirements
-
-## Overview
-- **Issue title**: [title]
-- **Issue number**: #[number]
-- **Issue type**: feat/fix/docs/refactor
-- **Impact scope**: [files/modules]
-
-## Requirements
-### Functional Requirements
-[detailed functional requirements]
-
-### Non-Functional Requirements
-- **Security**: [requirements]
-- **Performance**: [requirements]
-
-## Implementation Plan
-### Key Steps
-1. [step 1]
-2. [step 2]
-
-## Branch Name
-`<type>/<description>`
-
-## Decision Log
-1. Summary of the decision
-2. Alternatives considered
-3. Rejected alternatives and reasons
-4. Assumptions and uncertainties
-5. Whether other agents can review
-```
-
-### Phase 5: Upload to Confluence and Post Comment to Issue
-
-Upload the requirements document to Confluence following `rules/confluence.md`.
-
-Then post a short summary plus the Confluence URL as the Issue comment — not the full
-document body:
+## Phase 1: Fetch the Issue
 
 ```bash
-gh issue comment $ARGUMENTS --body "$(cat <<'EOF'
+gh issue view "$ARGUMENTS" --json title,state,body,comments,author
+```
+
+If this command fails (auth, network, issue doesn't exist) or the issue is
+not OPEN, stop here and report it to the user — do not guess at intent and
+continue. Turning a closed or nonexistent issue into a PR is not a warning-
+level situation, it's a reason to stop.
+
+## Phase 2: Write the Spec
+
+Invoke **superpowers:brainstorming** with the issue content as the starting
+problem. Relay any clarifying questions it raises to the user via
+AskUserQuestion. It produces a spec file under `docs/superpowers/specs/`.
+
+## Phase 3: Review the Spec
+
+`rules/superpowers.md` already requires a sub-agent review of every spec
+file before it is shown to the user — this fires automatically after Phase 2.
+Do not reimplement it here; just wait for it to finish and confirm the
+reported fixes (or resolved ambiguities) look correct before moving on.
+
+If you don't observe the review firing (e.g. it's genuinely not configured
+in this session), do not silently do the review yourself — stop and tell the
+user the automatic review didn't run, and ask how they want to proceed. "It
+didn't fire so I'll just do it myself" reintroduces the reimplementation this
+phase exists to avoid.
+
+## Phase 4: Upload the Spec to Confluence
+
+`rules/confluence.md` already requires uploading spec files to Confluence
+before presenting them to the user — this fires automatically once Phase 3's
+review is clean. Do not reimplement the upload procedure here; just capture
+the resulting Confluence URL, you need it for Phase 10.
+
+If this is a revision (you're back here after Phase 5 sent you to repeat
+Phases 2–5), `rules/confluence.md` requires updating the existing spec page
+via `updateConfluencePage`, not creating a new one — carry the page ID
+forward from the first pass.
+
+If Confluence/Atlassian resolution fails (no cloudId, no space configured,
+MCP unavailable), follow `rules/confluence.md`'s own fallback: report the
+error to the user and ask how to proceed. Don't treat Confluence as an
+unconditional hard gate you can't get past.
+
+## Phase 5: Approve the Spec
+
+Use **AskUserQuestion** to get explicit spec approval ("Approve this spec /
+revise it") before moving on to Phase 6. No exceptions — not for "the spec is
+obviously fine" and not for "ask forgiveness after Phase 6 instead." If the
+user asks for changes, go back to Phase 2 and repeat Phases 2–5 (Phase 4
+becomes a Confluence page update, not a new page).
+
+## Phase 6: Write the Plan
+
+Invoke **superpowers:writing-plans** against the approved spec to produce a
+plan file under `docs/superpowers/plans/`.
+
+## Phase 7: Review the Plan
+
+Same as Phase 3, for the plan file: `rules/superpowers.md`'s sub-agent review
+fires automatically. Wait for it and confirm the result before moving on. If
+it doesn't fire, same rule as Phase 3 — stop and ask the user, don't do the
+review yourself.
+
+## Phase 8: Upload the Plan to Confluence
+
+Same as Phase 4, for the plan file: `rules/confluence.md`'s upload fires
+automatically once the review is clean. Capture the resulting Confluence URL
+for Phase 10. Same revision rule as Phase 4: if this is a repeat after Phase
+9 sent you back, update the existing plan page instead of creating a new
+one. Same fallback as Phase 4 if Confluence resolution fails.
+
+## Phase 9: Approve the Plan
+
+Use **AskUserQuestion** again for explicit plan approval before moving on to
+Phase 10 — the spec's approval in Phase 5 does not carry over, since a plan
+can diverge from its spec. "The spec was already approved so the plan is
+implied" is exactly the shortcut this gate blocks. If the user asks for
+changes, go back to Phase 6 and repeat Phases 6–9 (Phase 8 becomes a
+Confluence page update, not a new page).
+
+## Phase 10: Comment on the Issue
+
+Post the spec and plan summaries plus their Confluence URLs as an Issue
+comment — not the full document bodies:
+
+```bash
+gh issue comment "$ARGUMENTS" --body "$(cat <<'EOF'
 [short summary]
 
-Details: [Confluence URL]
+Spec: [Confluence URL]
+Plan: [Confluence URL]
 EOF
 )"
 ```
 
-Always verify no sensitive information is included.
+Verify no sensitive information is included before posting.
 
-### Phase 6: Write to Plan File
+If `gh issue comment` fails (auth, network, permission), do not silently move
+on to Phase 11 — stop and report it to the user. Without this comment, the
+issue has no link back to the Confluence spec/plan, and that record is not
+worth losing quietly.
 
-Write to the plan file path specified in the system-reminder using the Write tool.
-
-### Phase 7: Run ExitPlanMode
-
-```
-ExitPlanMode()
-```
-
----
-
-## Execution Mode Workflow
-
-### Prerequisites
-
-- `gh` and `jq` must be available
-- Must be run inside a Git repository
-
-### Fetch Issue Info
-
-```bash
-gh issue view $ARGUMENTS --json title,state,body,comments,author
-```
-
-If the issue is not OPEN, display a warning.
-
-### Create Branch
+## Phase 11: Create Branch
 
 ```bash
 git fetch origin
-# Check default branch
-git checkout -b <branch_name> origin/<default_branch>
+DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+git status --porcelain   # must be empty before branching; if not, stop and ask the user
+git checkout -b <branch_name> "origin/$DEFAULT_BRANCH"
 ```
 
-Branch name follows Conventional Branch (feat/fix/docs/refactor).
+Branch name follows Conventional Branch (feat/fix/docs/refactor), derived
+from the issue number/title, e.g. `fix/123-short-description`. Slugify the
+derived portion to `[a-z0-9-]` before substituting it into the command —
+the issue title is untrusted input, and an unsanitized title containing
+shell metacharacters (`` ` ``, `$(...)`, `${...}`) would be evaluated by the
+shell if pasted in verbatim.
 
-### Implement the Fix
+If `git checkout -b` fails because `<branch_name>` already exists (e.g. a
+retry after an earlier failed run), do not force-reset it with `-B` — that
+discards any existing commits on it. Stop and ask the user whether to reuse,
+delete, or rename.
 
-Review the issue content and implement appropriately.
-In dotfiles, update chezmoi source files under `home/`.
+## Phase 12: Execute the Plan
 
-### Create PR
+Invoke **superpowers:executing-plans** (or
+**superpowers:subagent-driven-development** for independent tasks) against
+the approved plan file. The plan was already approved in Phase 9 — run its
+tasks without re-confirming each one with the user. Only stop for genuine
+blockers the plan didn't anticipate (missing credentials, contradictory
+requirements).
+
+If a task fails (test failure, compile error, a sub-agent reporting it
+couldn't complete its task), that is not a blocker to route around — stop and
+report it to the user before moving on to Phase 13. Do not treat a failed
+task as done because the plan didn't explicitly anticipate the failure.
+
+## Phase 13: Verify
+
+Invoke **superpowers:verification-before-completion** before creating the PR.
+If it reports a failure, go back to Phase 12 to fix it — do not proceed to
+Phase 14 with a known-failing verification.
+
+## Phase 14: Deep Review
+
+Run `/deep-review` (no arguments — local diff mode) per `rules/workflow.md`
+ADR-003 and this project's Pre-PR checklist. Fix every finding scored ≥ 50
+before moving on to Phase 15. This is a required gate, not an optional
+extra step — skipping it is what the Stop/PostToolUse hooks exist to catch.
+
+## Phase 15: Create PR
+
+Set `PR_TITLE` explicitly before calling `gh pr create` — derive it from the
+issue title / spec summary, e.g.:
 
 ```bash
-gh pr create --title "<title>" --body "<PR body>"
+PR_TITLE="<derived from the issue title / spec summary>"
+gh pr create --title "$PR_TITLE" --body "$(cat <<'EOF'
+<PR body>
+EOF
+)"
 ```
 
-PR body: follow the project CLAUDE.md language if specified; otherwise Japanese. Current state only, no update history.
+- `<PR body>`: summarize from the approved spec and plan; include
+  `Closes #<issue number>` so the issue auto-closes on merge.
+- Language: follow the project CLAUDE.md if specified, otherwise Japanese.
+  Current state only, no update history.
+- The issue title/body feeding `<title>`/`<PR body>` is untrusted input —
+  use a quoted heredoc (`<<'EOF'`, as above and in Phase 10) and a shell
+  variable for the title, not raw double-quote interpolation. Double quotes
+  let the shell evaluate any `` ` `` / `$(...)` / `${...}` embedded in
+  issue-derived text before `gh` ever sees it.
+- Before running this command, check the composed title/body for sensitive
+  information (tokens, internal URLs, credentials) the same way Phase 10
+  checks the Issue comment — the PR is also externally visible.
 
-### Write Session State
+## Phase 16: Write Session State
 
 After PR creation, write the PR URL to the session state file so hooks can reference it
 without parsing the transcript:
@@ -152,17 +236,44 @@ without parsing the transcript:
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
 PR_URL=$(gh pr view --json url -q .url)
-jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
+if [ -z "$PR_URL" ]; then
+  echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
+  exit 1
+fi
+if ! jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
     '{"pr_url": $pr_url, "timestamp": $timestamp}' \
-    > ~/.claude/data/session-state.json
+    > ~/.claude/data/session-state.json; then
+  echo "ERROR: failed to write session-state.json" >&2
+  exit 1
+fi
 chmod 600 ~/.claude/data/session-state.json
 ```
 
-### After PR Creation
+If `PR_URL` comes back empty or the `jq` write fails, stop and report it
+instead of leaving a stale/empty state file — hooks read this file without
+parsing the transcript, so a silently broken write here breaks them too.
 
-Immediately run `/pr-health-monitor <PR number>` when done.
+## Phase 17: After PR Creation
+
+Run `/pr-health-monitor <PR number>` immediately, without asking the user
+whether to run it.
+
+`pr-health-monitor` does not merge the PR, but it is not purely read-only
+either — on CI failure it commits/pushes fixes; on conflicts it merges the
+base branch in; it edits the PR body; and it can trigger
+`/handle-pr-reviews`, which itself commits, pushes, and resolves review
+threads. None of that is "merging," so the "don't merge PRs without
+instruction" guardrail doesn't apply. No separate confirmation is needed here
+because Phase 9 already approved the plan — this step just carries out the
+mechanical follow-through (fixing CI, resolving conflicts, addressing review
+feedback) without expanding scope beyond what was approved.
 
 ## Notes
 
-- Do not drift to other tasks while waiting for review or CI
-- Record decision log in the issue comment or PR body (not in Markdown files)
+- Do not drift to other tasks while waiting for review or CI.
+- Record the decision log in the superpowers spec/plan files (already
+  required by `rules/superpowers.md`) or in the Issue comment / PR body — not
+  in extra ad-hoc Markdown files.
+- `disable-model-invocation: true` is intentional: this skill ends in a
+  branch and a PR, which requires explicit invocation — not opportunistic
+  auto-trigger on an issue number appearing in conversation.

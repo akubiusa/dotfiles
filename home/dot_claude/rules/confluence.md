@@ -44,9 +44,13 @@ Git/GitHub artifacts — only to documents whose primary purpose is to be read b
 
 ## Interaction with Other Skills
 
-- **`issue-pr` (Phase 5) / `ticket-pr` (Phase 6)**: after uploading the requirements document
-  to Confluence, the GitHub Issue comment / Jira ticket comment must contain the Confluence
-  URL plus a short summary only — not the full document body.
+- **`issue-pr` / `ticket-pr`**: after uploading a deliverable document (spec/plan for
+  `issue-pr`, the requirements document for `ticket-pr`) to Confluence, the GitHub Issue
+  comment / Jira ticket comment must contain the Confluence URL plus a short summary only
+  — not the full document body. Phase numbers are deliberately not pinned here since both
+  skills renumber their own phases independently of this rule; see each skill's own
+  SKILL.md for its current phase numbers (`ticket-pr`'s upload+comment step is its
+  Phase 6 as of this writing).
 - **`rules/superpowers.md` spec/plan review workflow**: after the sub-agent review is
   complete, upload the reviewed document to Confluence before presenting it to the user, and
   give the user the Confluence URL alongside the local file path.

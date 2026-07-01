@@ -58,7 +58,7 @@ tasks for the phases being repeated (e.g. "Phase 2: Write the Spec (revision
 ## Phase 1: Fetch the Issue
 
 ```bash
-gh issue view $ARGUMENTS --json title,state,body,comments,author
+gh issue view "$ARGUMENTS" --json title,state,body,comments,author
 ```
 
 If this command fails (auth, network, issue doesn't exist) or the issue is
@@ -146,7 +146,7 @@ Post the spec and plan summaries plus their Confluence URLs as an Issue
 comment — not the full document bodies:
 
 ```bash
-gh issue comment $ARGUMENTS --body "$(cat <<'EOF'
+gh issue comment "$ARGUMENTS" --body "$(cat <<'EOF'
 [short summary]
 
 Spec: [Confluence URL]
@@ -212,7 +212,11 @@ extra step — skipping it is what the Stop/PostToolUse hooks exist to catch.
 
 ## Phase 15: Create PR
 
+Set `PR_TITLE` explicitly before calling `gh pr create` — derive it from the
+issue title / spec summary, e.g.:
+
 ```bash
+PR_TITLE="<derived from the issue title / spec summary>"
 gh pr create --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body>
 EOF
@@ -246,9 +250,12 @@ if [ -z "$PR_URL" ]; then
   echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
   exit 1
 fi
-jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
+if ! jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
     '{"pr_url": $pr_url, "timestamp": $timestamp}' \
-    > ~/.claude/data/session-state.json
+    > ~/.claude/data/session-state.json; then
+  echo "ERROR: failed to write session-state.json" >&2
+  exit 1
+fi
 chmod 600 ~/.claude/data/session-state.json
 ```
 

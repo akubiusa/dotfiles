@@ -265,7 +265,7 @@ Post the spec and plan summaries plus their Confluence URLs as an Issue
 comment — not the full document bodies:
 
 ```bash
-gh issue comment "$ARGUMENTS" --body "$(cat <<'EOF'
+gh issue comment "$ARGUMENTS" --repo "$ISSUE_OWNER/$ISSUE_REPO" --body "$(cat <<'EOF'
 [short summary]
 
 Spec: [Confluence URL]
@@ -273,6 +273,11 @@ Plan: [Confluence URL]
 EOF
 )"
 ```
+
+`--repo` is required here — without it, `gh issue comment` resolves the
+target repository from the local `origin`, which is wrong whenever
+`ISSUE_OWNER/ISSUE_REPO` (set in Phase 2) differs from `origin` (the fork
+scenario this Issue set targets).
 
 Verify no sensitive information is included before posting.
 
@@ -349,7 +354,7 @@ issue title / spec summary, e.g.:
 
 ```bash
 PR_TITLE="<derived from the issue title / spec summary>"
-gh pr create --title "$PR_TITLE" --body "$(cat <<'EOF'
+gh pr create --repo "$ISSUE_OWNER/$ISSUE_REPO" --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body>
 EOF
 )"
@@ -367,6 +372,12 @@ EOF
 - Before running this command, check the composed title/body for sensitive
   information (tokens, internal URLs, credentials) the same way Phase 11
   checks the Issue comment — the PR is also externally visible.
+- `--repo "$ISSUE_OWNER/$ISSUE_REPO"` is required: the PR must be created
+  against the repository the Issue actually lives in (set in Phase 2), not
+  wherever `gh`'s own fork/parent heuristic would default to. The head side
+  (the fork's branch) is resolved automatically by `gh`; if that resolution
+  fails, fall back to explicitly passing
+  `--head <origin-owner>:<branch>`.
 
 ## Phase 17: Write Session State
 
@@ -375,7 +386,7 @@ without parsing the transcript:
 
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
-PR_URL=$(gh pr view --json url -q .url)
+PR_URL=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json url -q .url)
 if [ -z "$PR_URL" ]; then
   echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
   exit 1

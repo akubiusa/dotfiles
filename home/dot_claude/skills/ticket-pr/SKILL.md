@@ -123,15 +123,18 @@ Create in the following format:
 5. Whether other agents can review
 ```
 
-### Phase 6: Post Comment to Jira Ticket
+### Phase 6: Upload to Confluence and Post Comment to Jira Ticket
 
-Post the requirements document as a comment with the MCP tool `mcp__atlassian__addCommentToJiraIssue`.
+Upload the requirements document to Confluence following `rules/confluence.md`.
+
+Then post a short summary plus the Confluence URL as the ticket comment — not the full
+document body — with the MCP tool `mcp__atlassian__addCommentToJiraIssue`.
 
 ```
 mcp__atlassian__addCommentToJiraIssue({
   cloudId: "<cloud-id>",
   issueIdOrKey: "<ticket-key>",
-  commentBody: "<requirements document content>",
+  commentBody: "<short summary>\n\n詳細: <Confluence URL>",
   contentFormat: "markdown"
 })
 ```

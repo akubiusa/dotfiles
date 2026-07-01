@@ -33,8 +33,9 @@ you MUST dispatch a sub-agent to review the document and apply fixes.
    changes look correct.
 4. If the sub-agent reports ambiguities, resolve them with the user via
    AskUserQuestion before proceeding.
-5. Only after all issues are resolved, present the file to the user for
-   review.
+5. Only after all issues are resolved, upload the document to Confluence
+   following `rules/confluence.md`, then present the user with the local
+   file path and the Confluence URL.
 
 ### Clarifying questions
 

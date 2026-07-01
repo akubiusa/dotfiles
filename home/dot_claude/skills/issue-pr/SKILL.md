@@ -76,11 +76,18 @@ Create in the following format:
 5. Whether other agents can review
 ```
 
-### Phase 5: Post Comment to Issue
+### Phase 5: Upload to Confluence and Post Comment to Issue
+
+Upload the requirements document to Confluence following `rules/confluence.md`.
+
+Then post a short summary plus the Confluence URL as the Issue comment — not the full
+document body:
 
 ```bash
 gh issue comment $ARGUMENTS --body "$(cat <<'EOF'
-[requirements document content]
+[short summary]
+
+Details: [Confluence URL]
 EOF
 )"
 ```

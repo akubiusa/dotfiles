@@ -51,3 +51,4 @@ Use the Todo tool for all multi-step work without omission.
 @CLAUDE.local.md
 @RTK.md
 @rules/superpowers.md
+@rules/confluence.md

@@ -87,7 +87,7 @@ document body:
 gh issue comment $ARGUMENTS --body "$(cat <<'EOF'
 [short summary]
 
-詳細: [Confluence URL]
+Details: [Confluence URL]
 EOF
 )"
 ```

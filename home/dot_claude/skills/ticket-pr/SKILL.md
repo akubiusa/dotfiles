@@ -134,10 +134,13 @@ document body — with the MCP tool `mcp__atlassian__addCommentToJiraIssue`.
 mcp__atlassian__addCommentToJiraIssue({
   cloudId: "<cloud-id>",
   issueIdOrKey: "<ticket-key>",
-  commentBody: "<short summary>\n\n詳細: <Confluence URL>",
+  commentBody: "<short summary>[newline][newline]Details: <Confluence URL>",
   contentFormat: "markdown"
 })
 ```
+
+`[newline]` above denotes an actual newline character, not the literal `\n` — see the
+line-break note below.
 
 Always verify no sensitive information is included.
 Explicitly set `contentFormat: "markdown"`, and write line breaks as actual newline

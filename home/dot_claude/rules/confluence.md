@@ -8,7 +8,7 @@ Rules for sharing user-facing Markdown deliverables via Confluence.
 
 Applies to Markdown documents created for the user to read or review as a deliverable:
 
-- Investigation results (調査結果)
+- Investigation results
 - Spec files (`docs/superpowers/specs/*.md`)
 - Plan files (`docs/superpowers/plans/*.md`)
 - Other standalone write-ups intended for the user, not for the codebase itself
@@ -30,8 +30,10 @@ Git/GitHub artifacts — only to documents whose primary purpose is to be read b
    before posting to GitHub Issues or Jira (see `rules/security.md`).
 4. **Create the page** with `mcp__atlassian__createConfluencePage`:
    - `cloudId`, `spaceId`, `parentId` (if any), `title`, `body`, `contentFormat: "markdown"`.
-   - Title convention: `<doc type> - <topic>`, e.g. `調査結果 - <topic>`,
-     `仕様書 - Issue #<number> <title>`, `プラン - Issue #<number> <title>`.
+   - Title convention: `<doc type> - <topic>`, e.g. `Investigation - <topic>`,
+     `Spec - Issue #<number> <title>`, `Plan - Issue #<number> <title>`. Use whatever
+     language the document itself is written in for `<topic>`/`<title>`; keep `<doc type>`
+     in English so the title convention stated here stays consistent with this rule file.
 5. **Update instead of duplicating**: if the document is revised later in the same session
    (e.g. after sub-agent review feedback or user comments), reuse the page created in step 4
    and call `mcp__atlassian__updateConfluencePage` with its `pageId` instead of creating a

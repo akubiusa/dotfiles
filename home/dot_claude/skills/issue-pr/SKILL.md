@@ -35,7 +35,7 @@ do not proceed and hit the failure several phases later.
 
 ## Progress Tracking
 
-Before Phase 1, create one task per phase below (Phase 1 through Phase 18)
+Before Phase 1, create one task per phase below (Phase 1 through Phase 19)
 with the Todo tool, subject = the phase title. This is a long, multi-phase
 flow spanning two approval gates and several delegated skills — track it
 explicitly so no phase gets skipped or forgotten mid-run, especially after a
@@ -418,6 +418,28 @@ instruction" guardrail doesn't apply. No separate confirmation is needed here
 because Phase 10 already approved the plan — this step just carries out the
 mechanical follow-through (fixing CI, resolving conflicts, addressing review
 feedback) without expanding scope beyond what was approved.
+
+## Phase 19: Launch Background Monitoring
+
+Immediately after Phase 18, launch the merge/close monitor in the
+background so cleanup happens even if the user merges or closes the PR
+outside this session:
+
+```bash
+PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
+~/.claude/skills/wait-for-pr-close/scripts/wait-for-pr-close.sh "$PR_NUMBER" --repo "$ISSUE_OWNER/$ISSUE_REPO" &
+```
+
+Always pass `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly here, even in the
+non-fork case — omitting it makes `wait-for-pr-close.sh` fall back to the
+local `origin`, which is wrong whenever the fork scenario from Issue #171
+applies (the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not `origin`).
+
+This is a fire-and-forget background launch, matching how
+`wait-for-copilot-review` is used elsewhere — the `issue-pr` flow is
+considered complete once this is launched. Detection and cleanup
+(`/pr-cleanup`) happen outside this session, in a fresh tmux prompt, once
+the monitor detects the PR closing.
 
 ## Notes
 

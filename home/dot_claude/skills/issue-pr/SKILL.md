@@ -148,6 +148,20 @@ Invoke **superpowers:brainstorming** with the issue content as the starting
 problem. Relay any clarifying questions it raises to the user via
 AskUserQuestion. It produces a spec file under `docs/superpowers/specs/`.
 
+When invoking it, explicitly instruct it to write the spec document's body
+in the language required by the target project's CLAUDE.md (for this
+repository, Japanese — `会話は日本語で行う`). Code blocks, commands, and
+identifiers may stay in their original form. This must be stated explicitly
+in the prompt every time — do not assume the sub-skill infers it from
+context, since roughly one run in five otherwise defaults to English.
+
+Do not ask a content-free "may I proceed" confirmation between Phase 2 and
+this phase (e.g. "spec を作成してよいですか？"). Genuine requirement-
+clarifying questions (where the Issue's request could be interpreted two or
+more ways) are fine and expected via AskUserQuestion — the distinction is
+whether the question surfaces a real ambiguity to resolve, versus asking
+permission to do the next scheduled step with no new information attached.
+
 ## Phase 4: Review the Spec
 
 `rules/superpowers.md` already requires a sub-agent review of every spec
@@ -190,6 +204,11 @@ becomes a Confluence page update, not a new page).
 
 Invoke **superpowers:writing-plans** against the approved spec to produce a
 plan file under `docs/superpowers/plans/`.
+
+Same language instruction as Phase 3: explicitly tell it to write the plan
+document's body in the language required by the target project's CLAUDE.md
+(Japanese for this repository), with code blocks/commands/identifiers left
+in their original form.
 
 ## Phase 8: Review the Plan
 

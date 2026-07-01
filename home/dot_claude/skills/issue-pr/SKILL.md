@@ -14,21 +14,14 @@ re-confirming every step. It does not reimplement spec/plan authoring,
 review, or Confluence upload — those stay in superpowers.
 
 Approval here is done via **AskUserQuestion**, not Claude Code's native Plan
-Mode. Native Plan Mode only allows a single read-only-until-ExitPlanMode
-gate, which cannot host writing a spec file, writing a plan file, dispatching
-sub-agent review, and uploading to Confluence — all of those require
-Write/Bash/MCP calls that Plan Mode blocks.
+Mode — Plan Mode only allows a single read-only-until-ExitPlanMode gate, and
+blocks the Write/Bash/MCP calls this skill needs starting at Phase 1.
 
-**Do not call ExitPlanMode to work around this.** ExitPlanMode exists to get
-the user's sign-off on a concrete implementation plan, not to silently escape
-Plan Mode. If the system-reminder shows native Plan Mode is active when this
-skill starts, stop immediately and tell the user this skill needs normal
-execution mode from the start (it writes files right away) — ask them to
-exit Plan Mode themselves and re-run `/issue-pr`. Do not proceed past Phase 1
-while Plan Mode is active. "I'll just exit once, it's harmless" is the exact
-workaround this paragraph forbids — exiting Plan Mode without a real plan to
-show the user is not harmless, it's the same bypass under a different name.
-No exceptions.
+**Do not call ExitPlanMode to work around this.** It exists to get sign-off
+on a concrete plan, not to escape Plan Mode. If Plan Mode is active when this
+skill starts, stop immediately and tell the user to exit it themselves and
+re-run `/issue-pr`. "I'll just exit once, it's harmless" is exactly the
+workaround this forbids. No exceptions.
 
 ## Prerequisites
 
@@ -105,11 +98,10 @@ unconditional hard gate you can't get past.
 ## Phase 5: Approve the Spec
 
 Use **AskUserQuestion** to get explicit spec approval ("Approve this spec /
-revise it"). Do not proceed to Phase 6 without it. No exceptions — not for
-"the spec is obviously fine," not for "the user is clearly in a hurry," not
-for "I'll ask forgiveness after Phase 6 instead." If the user asks for
-changes, go back to Phase 2 and repeat Phases 2–5 (Phase 4 becomes a
-Confluence page update, not a new page).
+revise it") before moving on to Phase 6. No exceptions — not for "the spec is
+obviously fine" and not for "ask forgiveness after Phase 6 instead." If the
+user asks for changes, go back to Phase 2 and repeat Phases 2–5 (Phase 4
+becomes a Confluence page update, not a new page).
 
 ## Phase 6: Write the Plan
 
@@ -134,11 +126,11 @@ one. Same fallback as Phase 4 if Confluence resolution fails.
 ## Phase 9: Approve the Plan
 
 Use **AskUserQuestion** again for explicit plan approval before moving on to
-Phase 10. No exceptions — approval of the spec in Phase 5 does not carry
-over to the plan; a plan can diverge from its spec, and "the spec was
-already approved so the plan is implied" is exactly the shortcut this gate
-exists to block. If the user asks for changes, go back to Phase 6 and repeat
-Phases 6–9 (Phase 8 becomes a Confluence page update, not a new page).
+Phase 10 — the spec's approval in Phase 5 does not carry over, since a plan
+can diverge from its spec. "The spec was already approved so the plan is
+implied" is exactly the shortcut this gate blocks. If the user asks for
+changes, go back to Phase 6 and repeat Phases 6–9 (Phase 8 becomes a
+Confluence page update, not a new page).
 
 ## Phase 10: Comment on the Issue
 
@@ -223,8 +215,6 @@ EOF
 )"
 ```
 
-- `<title>` (passed via `$PR_TITLE`, not inlined in double quotes): derived
-  from the issue title / spec summary.
 - `<PR body>`: summarize from the approved spec and plan; include
   `Closes #<issue number>` so the issue auto-closes on merge.
 - Language: follow the project CLAUDE.md if specified, otherwise Japanese.
@@ -268,18 +258,15 @@ parsing the transcript, so a silently broken write here breaks them too.
 Run `/pr-health-monitor <PR number>` immediately, without asking the user
 whether to run it.
 
-Be accurate about what this actually does before relying on that to skip
-confirmation: `pr-health-monitor` does not merge the PR, but it is not purely
-read-only either — on CI failure it autonomously fixes and commits/pushes;
-on conflicts it merges the base branch into the PR branch; it edits the PR
-body; and it can trigger `/handle-pr-reviews`, which itself commits, pushes,
-and resolves review threads. None of that is "merging," so the "don't merge
-PRs without instruction" guardrail doesn't apply — but it is mutation of the
-PR branch. The reason no separate confirmation is needed here is that Phase 9
-already approved the plan and this step only carries out the mechanical
-follow-through of shipping *that* approved change (fixing CI, resolving
-conflicts, addressing review feedback on it) — it does not expand scope
-beyond what was approved.
+`pr-health-monitor` does not merge the PR, but it is not purely read-only
+either — on CI failure it commits/pushes fixes; on conflicts it merges the
+base branch in; it edits the PR body; and it can trigger
+`/handle-pr-reviews`, which itself commits, pushes, and resolves review
+threads. None of that is "merging," so the "don't merge PRs without
+instruction" guardrail doesn't apply. No separate confirmation is needed here
+because Phase 9 already approved the plan — this step just carries out the
+mechanical follow-through (fixing CI, resolving conflicts, addressing review
+feedback) without expanding scope beyond what was approved.
 
 ## Notes
 

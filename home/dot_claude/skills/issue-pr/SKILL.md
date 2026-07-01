@@ -90,7 +90,7 @@ phase exists to avoid.
 `rules/confluence.md` already requires uploading spec files to Confluence
 before presenting them to the user — this fires automatically once Phase 3's
 review is clean. Do not reimplement the upload procedure here; just capture
-the resulting Confluence URL, you need it for Phase 8 and Phase 10.
+the resulting Confluence URL, you need it for Phase 10.
 
 If this is a revision (you're back here after Phase 5 sent you to repeat
 Phases 2–5), `rules/confluence.md` requires updating the existing spec page
@@ -157,6 +157,11 @@ EOF
 
 Verify no sensitive information is included before posting.
 
+If `gh issue comment` fails (auth, network, permission), do not silently move
+on to Phase 11 — stop and report it to the user. Without this comment, the
+issue has no link back to the Confluence spec/plan, and that record is not
+worth losing quietly.
+
 ## Phase 11: Create Branch
 
 ```bash
@@ -167,7 +172,11 @@ git checkout -b <branch_name> "origin/$DEFAULT_BRANCH"
 ```
 
 Branch name follows Conventional Branch (feat/fix/docs/refactor), derived
-from the issue number/title, e.g. `fix/123-short-description`.
+from the issue number/title, e.g. `fix/123-short-description`. Slugify the
+derived portion to `[a-z0-9-]` before substituting it into the command —
+the issue title is untrusted input, and an unsanitized title containing
+shell metacharacters (`` ` ``, `$(...)`, `${...}`) would be evaluated by the
+shell if pasted in verbatim.
 
 If `git checkout -b` fails because `<branch_name>` already exists (e.g. a
 retry after an earlier failed run), do not force-reset it with `-B` — that
@@ -183,9 +192,16 @@ tasks without re-confirming each one with the user. Only stop for genuine
 blockers the plan didn't anticipate (missing credentials, contradictory
 requirements).
 
+If a task fails (test failure, compile error, a sub-agent reporting it
+couldn't complete its task), that is not a blocker to route around — stop and
+report it to the user before moving on to Phase 13. Do not treat a failed
+task as done because the plan didn't explicitly anticipate the failure.
+
 ## Phase 13: Verify
 
 Invoke **superpowers:verification-before-completion** before creating the PR.
+If it reports a failure, go back to Phase 12 to fix it — do not proceed to
+Phase 14 with a known-failing verification.
 
 ## Phase 14: Deep Review
 
@@ -197,14 +213,23 @@ extra step — skipping it is what the Stop/PostToolUse hooks exist to catch.
 ## Phase 15: Create PR
 
 ```bash
-gh pr create --title "<title>" --body "<PR body>"
+gh pr create --title "$PR_TITLE" --body "$(cat <<'EOF'
+<PR body>
+EOF
+)"
 ```
 
-- `<title>`: derived from the issue title / spec summary.
+- `<title>` (passed via `$PR_TITLE`, not inlined in double quotes): derived
+  from the issue title / spec summary.
 - `<PR body>`: summarize from the approved spec and plan; include
   `Closes #<issue number>` so the issue auto-closes on merge.
 - Language: follow the project CLAUDE.md if specified, otherwise Japanese.
   Current state only, no update history.
+- The issue title/body feeding `<title>`/`<PR body>` is untrusted input —
+  use a quoted heredoc (`<<'EOF'`, as above and in Phase 10) and a shell
+  variable for the title, not raw double-quote interpolation. Double quotes
+  let the shell evaluate any `` ` `` / `$(...)` / `${...}` embedded in
+  issue-derived text before `gh` ever sees it.
 - Before running this command, check the composed title/body for sensitive
   information (tokens, internal URLs, credentials) the same way Phase 10
   checks the Issue comment — the PR is also externally visible.
@@ -217,11 +242,19 @@ without parsing the transcript:
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
 PR_URL=$(gh pr view --json url -q .url)
+if [ -z "$PR_URL" ]; then
+  echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
+  exit 1
+fi
 jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
     '{"pr_url": $pr_url, "timestamp": $timestamp}' \
     > ~/.claude/data/session-state.json
 chmod 600 ~/.claude/data/session-state.json
 ```
+
+If `PR_URL` comes back empty or the `jq` write fails, stop and report it
+instead of leaving a stale/empty state file — hooks read this file without
+parsing the transcript, so a silently broken write here breaks them too.
 
 ## Phase 17: After PR Creation
 

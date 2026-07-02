@@ -210,7 +210,10 @@ you must have already reported that to the user before reaching this phase
 — do not silently ask for approval without ever having surfaced the failure.
 
 Fix the options to exactly these two (plus AskUserQuestion's built-in
-"Other" free-text, which covers ad-hoc revision requests):
+"Other" free-text, which covers ad-hoc revision requests). Note:
+AskUserQuestion's `options` array requires at least 2 entries — passing
+only 1 fails with `Too small: expected array to have >=2 items`, so always
+pass both of the following, never just one:
 
 - "承認する" (Approve)
 - "ページコメントを参照して修正してほしい" (Revise based on page comments)
@@ -260,7 +263,8 @@ implied" is exactly the shortcut this gate blocks.
 Same requirements as Phase 6: the question text MUST include the Confluence
 URL captured in Phase 9 (report any upload failure to the user before this
 phase, per `rules/confluence.md`'s fallback), and the options are fixed to
-exactly:
+exactly (both entries required — AskUserQuestion rejects a single-entry
+`options` array):
 
 - "承認する" (Approve)
 - "ページコメントを参照して修正してほしい" (Revise based on page comments)

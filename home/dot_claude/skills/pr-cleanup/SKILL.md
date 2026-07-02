@@ -26,7 +26,7 @@ can be invoked manually for any PR, or automatically by `wait-for-pr-close`.
 ## Step 0: Resolve PR Info
 
 ```bash
-# grep -oP（PCRE）は macOS の BSD grep では動かないため sed -E で移植可能な形にする
+# grep -oP (PCRE) doesn't work on macOS's BSD grep, so use sed -E for a portable form
 PR_ARG="$ARGUMENTS"
 if echo "$PR_ARG" | grep -q 'github\.com'; then
   OWNER=$(echo "$PR_ARG" | sed -E 's#.*github\.com/([^/]+)/.*#\1#')
@@ -73,8 +73,8 @@ onward: any failure here is a warning, not a stop condition.
 2. Extract Confluence URLs from `Spec:` / `Plan:` lines:
 
    ```bash
-   # sed -n はマッチなしでも exit status 0 を返すため、set -e 環境でも
-   # Spec/Plan 行が存在しない場合に異常終了しない（grep はマッチなしで exit 1 になる）
+   # sed -n returns exit status 0 even with no match, so this won't abort
+   # under set -e when there's no Spec/Plan line (grep would exit 1 on no match)
    CONFLUENCE_URLS=$(printf '%s\n' "$PR_BODY" | sed -nE 's/^(Spec|Plan): (https?:\/\/.*)/\2/p')
    ```
 

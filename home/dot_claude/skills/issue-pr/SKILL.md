@@ -454,6 +454,16 @@ because Phase 10 already approved the plan — this step just carries out the
 mechanical follow-through (fixing CI, resolving conflicts, addressing review
 feedback) without expanding scope beyond what was approved.
 
+If `pr-health-monitor` (or `issue-pr` itself, in a fork scenario) launches
+`wait-for-copilot-review` in the background, verify the launch actually
+succeeded before reporting completion — do not state "Copilot レビューが届
+き次第自動的にトリガーされます" unconditionally. Check for the expected log
+file (`~/.claude/logs/wait-copilot-review-<PR番号>.log`) and that the
+process is still running (`ps aux | grep wait-for-copilot-review`). If
+either check fails, report that the background monitor failed to start and
+that manual re-invocation may be needed, instead of promising automation
+that didn't actually start.
+
 ## Phase 19: Launch Background Monitoring
 
 Immediately after Phase 18, launch the merge/close monitor in the

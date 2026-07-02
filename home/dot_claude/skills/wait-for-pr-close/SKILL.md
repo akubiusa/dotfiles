@@ -34,10 +34,15 @@ omitted, the script targets the local `origin`.
 ### Detection Logic
 
 - Polls `gh pr view <PR_NUMBER> [--repo <owner>/<repo>] --json state`
-- **Check interval**: 30 seconds
-- **Max wait time**: 30 minutes (60 checks). On timeout, notifies via tmux
-  and exits 0 (not an error) — the user can re-run this script later for a
-  PR that takes longer to merge.
+- **Check interval**: 30 seconds by default. Override with the
+  `WAIT_FOR_PR_CLOSE_INTERVAL` environment variable (seconds).
+- **Max wait time**: 24 hours (86400 seconds) by default. Override with the
+  `WAIT_FOR_PR_CLOSE_MAX_WAIT` environment variable (seconds). Both
+  variables must be positive decimal integers with no leading zero (e.g. `10`,
+  not `010`); invalid values cause the script to exit with an error. On
+  timeout, notifies via tmux and exits 0 (not an
+  error) — the user can re-run this script later for a PR that takes even
+  longer to merge.
 
 ### Detection Condition
 
@@ -61,8 +66,9 @@ Exits successfully as soon as `state` is `MERGED` or `CLOSED`.
 
 ## Notes
 
-- Maximum wait time is 30 minutes; re-run manually for a PR that takes
-  longer.
+- Maximum wait time is 24 hours by default (`WAIT_FOR_PR_CLOSE_MAX_WAIT`);
+  re-run manually or increase the environment variable for a PR that takes
+  even longer.
 - Multiple instances for the same PR number are prevented by flock.
 - Check the log file for execution status.
 

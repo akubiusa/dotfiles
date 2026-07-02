@@ -66,10 +66,25 @@ fi
 
 echo "Repository: ${OWNER}/${REPO}" >> "$LOG_FILE"
 
-# 待機パラメータ
-MAX_WAIT=1800  # 30 分
-INTERVAL=30    # 30 秒
+# 待機パラメータ（環境変数で上書き可能。未設定時のデフォルトは
+# WAIT_FOR_PR_CLOSE_MAX_WAIT=86400（24 時間）、WAIT_FOR_PR_CLOSE_INTERVAL=30（30 秒））
+MAX_WAIT="${WAIT_FOR_PR_CLOSE_MAX_WAIT:-86400}"
+INTERVAL="${WAIT_FOR_PR_CLOSE_INTERVAL:-30}"
 ELAPSED=0
+
+# 待機パラメータの妥当性チェック（不正値をサイレントに無視しない）
+# 先頭 0 埋めの値（例: 010）は後段の算術展開 $(( )) で 8 進数として解釈され、
+# 意図しない値やエラーになるため、10 進数として先頭 0 を持たない形式のみ許可する
+if ! [[ "$MAX_WAIT" =~ ^(0|[1-9][0-9]*)$ ]] || [[ "$MAX_WAIT" -le 0 ]]; then
+  echo "Error: WAIT_FOR_PR_CLOSE_MAX_WAIT must be a positive decimal integer with no leading zero, got: ${MAX_WAIT}" >> "$LOG_FILE"
+  echo "Error: WAIT_FOR_PR_CLOSE_MAX_WAIT must be a positive decimal integer with no leading zero, got: ${MAX_WAIT}" >&2
+  exit 1
+fi
+if ! [[ "$INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || [[ "$INTERVAL" -le 0 ]]; then
+  echo "Error: WAIT_FOR_PR_CLOSE_INTERVAL must be a positive decimal integer with no leading zero, got: ${INTERVAL}" >> "$LOG_FILE"
+  echo "Error: WAIT_FOR_PR_CLOSE_INTERVAL must be a positive decimal integer with no leading zero, got: ${INTERVAL}" >&2
+  exit 1
+fi
 
 # PR 状態を取得する関数
 get_pr_state() {
@@ -145,8 +160,8 @@ if [[ "$INITIAL_STATE" == "MERGED" || "$INITIAL_STATE" == "CLOSED" ]]; then
 fi
 
 # ポーリングループ
-while [ $ELAPSED -lt $MAX_WAIT ]; do
-  sleep $INTERVAL
+while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+  sleep "$INTERVAL"
   ELAPSED=$((ELAPSED + INTERVAL))
 
   if ! CURRENT_STATE=$(get_pr_state); then

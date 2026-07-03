@@ -20,7 +20,7 @@ Git/GitHub artifacts — only to documents whose primary purpose is to be read b
 
 1. **Resolve cloudId**: same approach as `ticket-pr`'s cloudId resolution — try the site
    hostname first, otherwise use `mcp__atlassian__getAccessibleAtlassianResources`.
-2. **Determine space and parent page automatically — do not ask the user.**
+2. **Determine space and parent page automatically — do not ask the user except in the fallback cases below.**
    - **Repository name source**: use `ISSUE_OWNER`/`ISSUE_REPO` as already resolved by the
      calling flow (`issue-pr`, `ticket-pr`, or the `rules/superpowers.md` spec/plan upload
      step) — the repository the Issue/ticket actually belongs to. Do not derive this from
@@ -40,8 +40,8 @@ Git/GitHub artifacts — only to documents whose primary purpose is to be read b
      space for subsequent uploads targeting the same repository in that session.
    - **Fallback to asking**: if the calling flow has no `ISSUE_OWNER`/`ISSUE_REPO` context
      (e.g. a standalone document upload not tied to an Issue/ticket), or if the
-     `getConfluenceSpaces` call itself fails, report this to the user and ask how to
-     proceed — do not guess or fabricate a space key or page ID in that case.
+     `mcp__atlassian__getConfluenceSpaces` call itself fails, report this to the user and
+     ask how to proceed — do not guess or fabricate a space key or page ID in that case.
 3. **Check for sensitive information**: verify the document contains no secrets (tokens,
    passwords, internal URLs, credentials) before uploading — same check already required
    before posting to GitHub Issues or Jira (see `rules/security.md`).

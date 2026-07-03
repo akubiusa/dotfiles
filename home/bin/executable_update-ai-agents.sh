@@ -5,7 +5,6 @@
 # - Claude Code (native install)
 # - GitHub Copilot CLI
 # - OpenAI Codex CLI (npm)
-# - Google Gemini CLI (npm)
 
 set -euo pipefail
 
@@ -205,32 +204,6 @@ update_codex() {
     fi
 }
 
-# Gemini CLI の更新
-update_gemini() {
-    if ! command -v gemini >/dev/null 2>&1; then
-        log "⏭️  Gemini CLI not installed, skipping"
-        return 0
-    fi
-
-    if is_running gemini; then
-        log "⏭️  Gemini CLI is running, skipping update"
-        return 0
-    fi
-
-    if ! command -v npm >/dev/null 2>&1; then
-        log "⚠️  npm not found, skipping Gemini CLI update"
-        return 1
-    fi
-
-    log "🔄 Updating Gemini CLI..."
-    if npm install -g @google/gemini-cli@latest 2>&1 | tee -a "$LOG_FILE"; then
-        log "✅ Gemini CLI updated successfully"
-    else
-        log "❌ Gemini CLI update failed"
-        return 1
-    fi
-}
-
 # メイン処理
 main() {
     # オプション解析
@@ -241,9 +214,16 @@ main() {
             --quick) quick=1 ;;
             --only)
                 if [[ -z "${2:-}" ]]; then
-                    echo "❌ --only requires an agent name (claude|copilot|codex|gemini)" >&2
+                    echo "❌ --only requires an agent name (claude|copilot|codex)" >&2
                     exit 1
                 fi
+                case "$2" in
+                    claude|copilot|codex) ;;
+                    *)
+                        echo "❌ Unknown agent for --only: $2 (claude|copilot|codex)" >&2
+                        exit 1
+                        ;;
+                esac
                 only_agent="$2"
                 shift
                 ;;
@@ -286,7 +266,6 @@ main() {
             claude)  update_claude  || exit_code=1 ;;
             copilot) update_copilot || exit_code=1 ;;
             codex)   update_codex   || exit_code=1 ;;
-            gemini)  update_gemini  || exit_code=1 ;;
             *) log "⏭️  No update function for: ${only_agent}" ;;
         esac
     else
@@ -294,7 +273,6 @@ main() {
         update_claude   || exit_code=1
         update_copilot  || exit_code=1
         update_codex    || exit_code=1
-        update_gemini   || exit_code=1
     fi
 
     # タイムスタンプ更新 (成功時のみ)

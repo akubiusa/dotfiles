@@ -30,15 +30,6 @@ DISCORD_CLAUDE_LIMIT_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/Y
 DISCORD_CLAUDE_LIMIT_MENTION_USER_ID=""
 
 # -----------------------------------------
-# Discord Webhooks - Gemini
-# -----------------------------------------
-# Gemini CLI の通知を送信する Webhook URL
-DISCORD_GEMINI_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
-
-# Discord でメンションするユーザー ID（オプション）
-DISCORD_GEMINI_MENTION_USER_ID=""
-
-# -----------------------------------------
 # Discord Webhooks - Codex CLI
 # -----------------------------------------
 # Codex CLI の Stop hook で通知を送信する Webhook URL

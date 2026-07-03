@@ -764,21 +764,6 @@ EOF
   echo "DISCORD_CLAUDE_LIMIT_MENTION_USER_ID=\"$mention_user_id\"" >> "$env_file"
   echo "" >> "$env_file"
 
-  # Gemini
-  echo "# -----------------------------------------" >> "$env_file"
-  echo "# Discord Webhooks - Gemini" >> "$env_file"
-  echo "# -----------------------------------------" >> "$env_file"
-
-  read_from_terminal "Gemini の Discord Webhook URL (空欄でスキップ): " webhook_url || webhook_url=""
-  if [[ -n "$webhook_url" ]]; then
-    echo "DISCORD_GEMINI_WEBHOOK=\"$webhook_url\"" >> "$env_file"
-  else
-    echo "DISCORD_GEMINI_WEBHOOK=\"\"" >> "$env_file"
-  fi
-
-  read_from_terminal "メンションする Discord ユーザー ID (空欄でスキップ): " mention_user_id || mention_user_id=""
-  echo "DISCORD_GEMINI_MENTION_USER_ID=\"$mention_user_id\"" >> "$env_file"
-
   # .env ファイルのパーミッションを 600 に設定（センシティブ情報を含むため）
   chmod 600 "$env_file"
 

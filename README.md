@@ -235,17 +235,37 @@ Jira チケットを確認し、対応のためのブランチを作成して PR
 
 ### レビュー観点
 
-| 観点 | 内容 |
-|---|---|
-| CLAUDE.md 準拠 | CLAUDE.md / rules の指示との整合性 |
-| バグ・正確性 | 変更差分中心の大きなバグの検出 |
-| git 履歴 | blame・log を踏まえた問題 |
-| 過去 PR コメント | 同ファイルへの過去の指摘との照合（PR モードのみ）|
-| コード内コメント整合 | docstring・コメントの指示との整合 |
-| セキュリティ | 入力検証・認可・シークレット漏洩・AI-PR 固有リスク |
-| パフォーマンス | 不要ループ・N+1・ホットパスへの影響 |
-| サイレント障害 | エラー握り潰し・不適切なフォールバック |
-| 型設計・テスト | 不変条件の表現・重要パスのテスト欠如 |
+固定レビュアー9件は `home/dot_claude/skills/deep-review/reviewers/*.md` に1ファイル1観点で定義されており、`chezmoi apply` で `~/.claude/skills/deep-review/reviewers/*.md` にデプロイされる。
+
+| 観点 | 内容 | 定義ファイル |
+|---|---|---|
+| CLAUDE.md 準拠 | CLAUDE.md / rules の指示との整合性 | `reviewers/a-claude-md-compliance.md` |
+| バグ・正確性 | 変更差分中心の大きなバグの検出 | `reviewers/b-bugs-correctness.md` |
+| git 履歴 | blame・log を踏まえた問題 | `reviewers/c-git-history.md` |
+| 過去 PR コメント | 同ファイルへの過去の指摘との照合（PR モードのみ）| `reviewers/d-past-pr-comments.md` |
+| コード内コメント整合 | docstring・コメントの指示との整合 | `reviewers/e-code-comment-quality.md` |
+| セキュリティ | 入力検証・認可・シークレット漏洩・AI-PR 固有リスク | `reviewers/f-security.md` |
+| パフォーマンス | 不要ループ・N+1・ホットパスへの影響 | `reviewers/g-performance.md` |
+| サイレント障害 | エラー握り潰し・不適切なフォールバック | `reviewers/h-error-handling.md` |
+| 型設計・テスト | 不変条件の表現・重要パスのテスト欠如 | `reviewers/i-type-design-tests.md` |
+
+### プロジェクト固有レビュアーの追加
+
+`deep-review` を使う各リポジトリは、固定9観点に加えて自リポジトリ独自のレビュー観点を追加できる。レビュー対象リポジトリのルート（`git rev-parse --show-toplevel` で解決）に `.claude/deep-review-reviewers/*.md` を配置すると、`/deep-review` 実行時に自動検出されて既存レビュアーと並列に起動される。
+
+```markdown
+---
+name: my-custom-rule
+title: 独自の観点
+applies_to: all        # all | pr-only（省略時は all）
+---
+
+## Scope
+
+このプロジェクト固有のレビュー観点をここに記述する。
+```
+
+追加数に厳密な上限はないが、目安として +3 程度を推奨する（4件以上検出された場合は `/deep-review` 実行時に一言案内が表示されるのみで、処理は継続する）。
 
 ### 強制対応フック
 

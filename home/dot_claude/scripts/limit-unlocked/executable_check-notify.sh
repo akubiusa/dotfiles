@@ -153,15 +153,21 @@ send_discord() {
 #
 # リミット到達時、 Claude Code は "/rate-limit-options"
 # （"What do you want to do?" 選択メニュー）を自動的に開く。このメニューが残った
-# ままだと通常のテキスト入力を送っても再開に失敗する既知の挙動があるため、先に
-# Escape を送ってメニューを閉じてから再開メッセージを送る（既知の挙動の詳細は
-# anthropics/claude-code の Issue Tracker を参照）。メニューが表示されていない
-# 場合、 Escape の送信は実行中の応答を一時停止させる可能性があるが、この関数は
-# リミット中（＝応答生成中ではない）にのみ呼ばれるため無害
+# ままだと通常のテキスト入力を送っても再開に失敗する既知の挙動があるため
+# （詳細は anthropics/claude-code の Issue Tracker を参照）、ペイン内容に選択
+# メニューのテキストが実際に見つかった場合のみ、先に Escape を送ってメニューを
+# 閉じてから再開メッセージを送る。この確認は resume 時の一度きりであり、ファイル
+# 冒頭で述べた「画面走査を主判定方式にしない」方針（定期ポーリングでの誤検出
+# 防止が目的）とは矛盾しない
 resume_session() {
-    local session="$1"
-    tmux send-keys -t "$session" Escape
-    sleep 0.5
+    local session="$1" pane_content
+
+    pane_content=$(tmux capture-pane -t "$session" -p 2>/dev/null)
+    if echo "$pane_content" | grep -q "What do you want to do"; then
+        tmux send-keys -t "$session" Escape
+        sleep 0.5
+    fi
+
     tmux send-keys -t "$session" "続けてください"
     sleep 1
     tmux send-keys -t "$session" Enter

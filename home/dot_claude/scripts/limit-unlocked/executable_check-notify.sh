@@ -151,14 +151,11 @@ send_discord() {
 # ウィンドウ/ペイン番号を固定せずセッション名のみを指定し、tmux の base-index 設定
 # （0 始まりとは限らない）に依存せず常にアクティブなウィンドウ・ペインへ送信する
 #
-# リミット到達時、 Claude Code は "/rate-limit-options"
-# （"What do you want to do?" 選択メニュー）を自動的に開く。このメニューが残った
-# ままだと通常のテキスト入力を送っても再開に失敗する既知の挙動があるため
-# （詳細は anthropics/claude-code の Issue Tracker を参照）、ペイン内容に選択
-# メニューのテキストが実際に見つかった場合のみ、先に Escape を送ってメニューを
-# 閉じてから再開メッセージを送る。この確認は resume 時の一度きりであり、ファイル
-# 冒頭で述べた「画面走査を主判定方式にしない」方針（定期ポーリングでの誤検出
-# 防止が目的）とは矛盾しない
+# リミット到達時、 Claude Code は "What do you want to do?" という選択メニュー
+# （"/rate-limit-options"）を自動的に開き、残ったままだと通常のテキスト入力が
+# 効かなくなる既知の挙動があるため（詳細は anthropics/claude-code の Issue
+# Tracker を参照）、ペイン内容にそのメニューが実際に出ている場合のみ Escape で
+# 閉じてから再開メッセージを送る
 resume_session() {
     local session="$1" pane_content
 

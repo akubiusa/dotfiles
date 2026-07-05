@@ -288,8 +288,8 @@ without parsing the transcript:
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
 PR_URL=$(gh pr view --json url -q .url)
-jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
-    '{"pr_url": $pr_url, "timestamp": $timestamp}' \
+jq -n --arg pr_url "$PR_URL" --arg session_id "${CLAUDE_CODE_SESSION_ID:-}" --argjson timestamp "$(date +%s)" \
+    '{"pr_url": $pr_url, "session_id": $session_id, "timestamp": $timestamp}' \
     > ~/.claude/data/session-state.json
 chmod 600 ~/.claude/data/session-state.json
 ```

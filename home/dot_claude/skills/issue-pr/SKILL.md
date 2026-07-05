@@ -426,8 +426,8 @@ if [ -z "$PR_URL" ]; then
   echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
   exit 1
 fi
-if ! jq -n --arg pr_url "$PR_URL" --argjson timestamp "$(date +%s)" \
-    '{"pr_url": $pr_url, "timestamp": $timestamp}' \
+if ! jq -n --arg pr_url "$PR_URL" --arg session_id "${CLAUDE_CODE_SESSION_ID:-}" --argjson timestamp "$(date +%s)" \
+    '{"pr_url": $pr_url, "session_id": $session_id, "timestamp": $timestamp}' \
     > ~/.claude/data/session-state.json; then
   echo "ERROR: failed to write session-state.json" >&2
   exit 1

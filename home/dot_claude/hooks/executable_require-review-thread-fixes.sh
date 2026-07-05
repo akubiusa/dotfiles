@@ -63,6 +63,16 @@ else
     exit 0
 fi
 
+# --- 「対応不要」メモリ機構のチェック ---
+# ユーザーが明示的に mark-review-declined.sh を実行済みの PR は再警告しない
+DECLINE_FILE="$HOME/.claude/data/review-declined-${SESSION_ID}.json"
+if [[ -n "$SESSION_ID" && -f "$DECLINE_FILE" ]]; then
+    IS_DECLINED=$(jq --argjson pr "$PR_NUMBER" '.declined_prs // [] | any(. == $pr)' "$DECLINE_FILE" 2>/dev/null)
+    if [[ "$IS_DECLINED" == "true" ]]; then
+        exit 0
+    fi
+fi
+
 # --- owner/repo 解決 ---
 
 REMOTE_URL=$(git remote get-url origin 2>/dev/null)
@@ -166,6 +176,14 @@ gh api graphql -f query='mutation { resolveReviewThread(input: { threadId: \"<TH
 
 - ❌ issue コメントとして投稿 → \`addPullRequestReviewThreadReply\` を使用してください
 - ❌ 返信後に resolve していない → 返信後は必ず \`resolveReviewThread\` を実行してください
+
+## このセッション内でこの PR の警告を今後表示しない場合
+
+\`\`\`bash
+bash ~/.claude/hooks/mark-review-declined.sh ${PR_NUMBER}
+\`\`\`
+
+（このセッションが終了するまで、この PR に限定して再警告を抑止します。全チェックを毎回スキップする \`SKIP_REVIEW_CHECK=1\` とは異なります）
 
 ## 緊急スキップ
 

@@ -29,12 +29,16 @@ STATE_TTL=86400
 CURRENT_TIME=$(date +%s)
 STATE_AGE=$(( CURRENT_TIME - STATE_TIMESTAMP ))
 
-# セッション ID が不一致かつ TTL 超過 → 別セッションの古いデータ → ブロックしない
-# セッション ID が一致する、または TTL 以内なら現在のセッションのデータとして扱う
-if [[ -n "$SESSION_ID" && -n "$STATE_SESSION" && "$SESSION_ID" != "$STATE_SESSION" ]]; then
-    if [[ "$STATE_AGE" -gt "$STATE_TTL" ]]; then
-        exit 0
-    fi
+# セッション ID が一致しない、または SESSION_ID はあるのに STATE_SESSION が
+# 空（旧形式ファイル、他セッション由来の可能性あり）の場合は信頼しない
+if [[ -n "$SESSION_ID" && "$SESSION_ID" != "$STATE_SESSION" ]]; then
+    exit 0
+fi
+
+# ここに到達するのは、SESSION_ID が一致した場合、または SESSION_ID 自体が
+# 空（stdin から取得できなかった後方互換ケース）の場合のみ。TTL で判定する
+if [[ "$STATE_AGE" -gt "$STATE_TTL" ]]; then
+    exit 0
 fi
 
 # スコア 50 以上の指摘が残っている場合はセッション終了をブロックする

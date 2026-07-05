@@ -16,6 +16,7 @@ STATE_FILE="$HOME/.claude/data/session-state.json"
 # stdin から JSON を読み込む
 INPUT=$(cat)
 TRANSCRIPT_PATH=$(printf '%s' "$INPUT" | jq -r '.transcript_path // ""' 2>/dev/null)
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)
 
 # --- PR URL 解決 ---
 
@@ -24,13 +25,20 @@ PR_URL=""
 STATE_TTL=86400
 
 # 優先 1: ステートファイル（スキルが書き出した構造化データ）
-# セッション ID が一致、またはタイムスタンプが TTL 以内であれば有効と見なす
+# TTL 以内かつ session_id が一致（または一方が空なら後方互換で許容）の場合のみ信頼する
 if [[ -f "$STATE_FILE" ]]; then
+    STATE_SESSION=$(jq -r '.session_id // ""' "$STATE_FILE" 2>/dev/null)
     STATE_TIMESTAMP=$(jq -r '.timestamp // 0' "$STATE_FILE" 2>/dev/null)
     CURRENT_TIME=$(date +%s)
     STATE_AGE=$(( CURRENT_TIME - STATE_TIMESTAMP ))
     if [[ "$STATE_AGE" -le "$STATE_TTL" ]]; then
-        PR_URL=$(jq -r '.pr_url // ""' "$STATE_FILE" 2>/dev/null)
+        # 双方が空（session_id 導入前の完全な後方互換ケース）、または値が一致する
+        # 場合のみ信頼する。SESSION_ID はあるのに STATE_SESSION が空（旧形式ファイル）
+        # の場合は他セッション由来の可能性があるため採用せず、transcript パースへ
+        # フォールバックする
+        if [[ ( -z "$SESSION_ID" && -z "$STATE_SESSION" ) || "$SESSION_ID" == "$STATE_SESSION" ]]; then
+            PR_URL=$(jq -r '.pr_url // ""' "$STATE_FILE" 2>/dev/null)
+        fi
     fi
 fi
 
@@ -55,6 +63,16 @@ if [[ "$PR_URL" =~ /pull/([0-9]+) ]]; then
     PR_NUMBER="${BASH_REMATCH[1]}"
 else
     exit 0
+fi
+
+# --- 「対応不要」メモリ機構のチェック ---
+# ユーザーが明示的に mark-review-declined.sh を実行済みの PR は再警告しない
+DECLINE_FILE="$HOME/.claude/data/review-declined-${SESSION_ID}.json"
+if [[ -n "$SESSION_ID" && -f "$DECLINE_FILE" ]]; then
+    IS_DECLINED=$(jq --argjson pr "$PR_NUMBER" '.declined_prs // [] | any(. == $pr)' "$DECLINE_FILE" 2>/dev/null)
+    if [[ "$IS_DECLINED" == "true" ]]; then
+        exit 0
+    fi
 fi
 
 # --- owner/repo 解決 ---
@@ -160,6 +178,14 @@ gh api graphql -f query='mutation { resolveReviewThread(input: { threadId: \"<TH
 
 - ❌ issue コメントとして投稿 → \`addPullRequestReviewThreadReply\` を使用してください
 - ❌ 返信後に resolve していない → 返信後は必ず \`resolveReviewThread\` を実行してください
+
+## このセッション内でこの PR の警告を今後表示しない場合
+
+\`\`\`bash
+bash ~/.claude/hooks/mark-review-declined.sh ${PR_NUMBER}
+\`\`\`
+
+（このセッションが終了するまで、この PR に限定して再警告を抑止します。全チェックを毎回スキップする \`SKIP_REVIEW_CHECK=1\` とは異なります）
 
 ## 緊急スキップ
 

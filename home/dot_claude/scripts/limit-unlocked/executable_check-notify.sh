@@ -77,7 +77,8 @@ check_limit_status() {
     # 通知文言としての可読性は保ったまま、区切り文字だけを空白に置き換える
     text=$(echo "$text" | tr '\t\n' '  ')
 
-    reset_time=$(echo "$text" | grep -oiE '[0-9]{1,2}:[0-9]{2}[ap]m' | head -1)
+    # "11:30am" のような分あり表記と "3pm" のような分なし表記の両方に対応する
+    reset_time=$(echo "$text" | grep -oiE '[0-9]{1,2}(:[0-9]{2})?[ap]m' | head -1)
     tz=$(echo "$text" | grep -oiE '\([^)]+\)' | head -1 | tr -d '()')
     reset_epoch=""
     if [ -n "$reset_time" ] && [ -n "$tz" ]; then
@@ -127,6 +128,15 @@ detect_limited_sessions() {
     done
 
     sort -u "$NEW_STATE_FILE" -o "$NEW_STATE_FILE"
+}
+
+# reset_epoch (UTC の epoch 秒) を JST の可読文字列に変換する。
+# 会話ログの文言はサービス側が UTC で埋め込むため、そのままでは日本語ユーザーには
+# 分かりにくい。数値でない・空の場合は "-" を返す
+format_jst() {
+    local epoch="$1"
+    [[ "$epoch" =~ ^[0-9]+$ ]] || { echo "-"; return; }
+    TZ="Asia/Tokyo" date -d "@${epoch}" "+%Y-%m-%d %H:%M JST" 2>/dev/null || echo "-"
 }
 
 # Discord Embed 通知を送信する
@@ -185,6 +195,7 @@ while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
     if ! session_recorded_in "$session" "$STATE_FILE"; then
         echo "Limit detected: $session ($cwd)"
         description="${cwd} (session: ${session}) が利用制限に達しました。"
+        description="${description}"$'\n'"再開予定: $(format_jst "$reset_epoch")"
         [ -n "$reset_text" ] && [ "$reset_text" != "-" ] && description="${description}"$'\n'"${reset_text}"
         send_discord \
             "Claude Code のリミット到達" \

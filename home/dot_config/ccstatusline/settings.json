@@ -33,6 +33,14 @@
         "metadata": {
           "hideNoGit": "true",
           "linkToRepo": "true"
+        },
+        "merge": "no-padding"
+      },
+      {
+        "id": "d208cab4-5994-4622-a0ac-3303e0b04100",
+        "type": "git-worktree",
+        "metadata": {
+          "hideNoGit": "true"
         }
       }
     ],

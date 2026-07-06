@@ -205,8 +205,8 @@ while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
 
     # 再開予定時刻を過ぎてもまだリミット中の場合は再開を試みる。
     # 再開に成功していれば、次回ポーリング時には会話ログの直近メッセージが
-    # 送信した system-reminder 形式の再開メッセージに置き換わり is_limited が
-    # 自然に 0 になるため、再開済みかどうかを別途記録しなくても二重送信にはならない
+    # 送信した system-reminder 形式の再開メッセージに置き換わり、
+    # is_limited が自然に 0 になるため、再開済みかどうかを別途記録しなくても二重送信にはならない
     if [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
         echo "Resuming: $session ($cwd)"
         resume_session "$session"

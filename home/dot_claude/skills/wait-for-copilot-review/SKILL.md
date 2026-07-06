@@ -19,6 +19,21 @@ Resolve `OWNER`, `REPO`, `PR_NUMBER` from the caller's context (always pass
 different repository than the local `origin` — the fork scenario from
 Issue #171).
 
+Validate the resolved values before using them below — they end up
+embedded directly in a script that `Monitor` executes, so an unvalidated
+value here is a shell-injection risk, not just a correctness one:
+
+```bash
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: PR_NUMBER must be numeric, got: $PR_NUMBER" >&2
+  exit 1
+fi
+if ! [[ "$OWNER" =~ ^[A-Za-z0-9_.-]+$ ]] || ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  echo "ERROR: OWNER/REPO contain characters outside GitHub's naming rules: $OWNER/$REPO" >&2
+  exit 1
+fi
+```
+
 ### Step 0: Skip if a review already exists
 
 Before starting the monitor, check once whether a Copilot review is
@@ -42,7 +57,8 @@ EXISTING=$(gh api graphql \
     | select(.author.__typename == "Bot"
         and (.author.login | contains("copilot"))
         and (.state == "COMMENTED" or .state == "APPROVED")
-        and .submittedAt != null)] | length')
+        and .submittedAt != null)] | length' 2>/dev/null || true)
+EXISTING="${EXISTING:-0}"
 ```
 
 If `EXISTING` is greater than 0, skip starting the monitor entirely and go
@@ -51,12 +67,20 @@ there.
 
 ### Step 1: Start the Monitor
 
+`$OWNER`, `$REPO`, `$PR_NUMBER`, and `$EXISTING` below are placeholders for
+this skill's own reasoning, not live shell variables — `Monitor` runs the
+`command` string in a fresh shell with none of this conversation's
+variables set, so substitute their actual resolved values into the string
+literally before calling `Monitor`, the same way `<PR_NUMBER>` in
+`description` below is filled in literally.
+
 ```bash
 Monitor({
   command: "
-    last_count=\"${EXISTING:-0}\"
+    last_count=\"$EXISTING\"
     fail_count=0
     while true; do
+      sleep 30
       count=$(gh api graphql \\
         -f owner=\"$OWNER\" -f repo=\"$REPO\" -F number=\"$PR_NUMBER\" \\
         -f query='query($owner: String!, $repo: String!, $number: Int!) {
@@ -72,31 +96,33 @@ Monitor({
           | select(.author.__typename == \"Bot\"
               and (.author.login | contains(\"copilot\"))
               and (.state == \"COMMENTED\" or .state == \"APPROVED\")
-              and .submittedAt != null)] | length' 2>/dev/null || true)
-      if [[ -z \"$count\" ]]; then
+              and .submittedAt != null)] | length' 2>/tmp/wait-copilot-review-err.$$)
+      rc=$?
+      if [[ $rc -ne 0 || -z \"$count\" ]]; then
+        err_msg=$(tail -c 200 /tmp/wait-copilot-review-err.$$ 2>/dev/null)
         fail_count=$((fail_count + 1))
         if [[ \"$fail_count\" -ge 5 ]]; then
-          echo \"WARNING: gh api graphql failed 5 times in a row (auth or network issue?)\"
+          echo \"WARNING: gh api graphql failed 5 times in a row - last error: ${err_msg:-unknown}\"
           fail_count=0
         fi
       else
         fail_count=0
       fi
+      rm -f /tmp/wait-copilot-review-err.$$
       if [[ -n \"$count\" && \"$count\" -gt \"$last_count\" ]]; then
         echo \"copilot_review_detected count=$count\"
-        # Discord 通知（既存のスクリプトと同等）
+        # Send a Discord notification, same as the old script did
         SCRIPT_DIR=\"$HOME/.claude/scripts/completion-notify\"
         if [[ -x \"$SCRIPT_DIR/send-discord-notification.sh\" ]]; then
           payload=$(jq -n \\
             --arg title \"GitHub Copilot Review Detected\" \\
-            --arg desc \"PR #${PR_NUMBER} に Copilot レビューが投稿されました。\" \\
+            --arg desc \"A Copilot review was posted on PR #${PR_NUMBER}.\" \\
             --arg url \"https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}\" \\
             '{embeds: [{title: $title, description: $desc, url: $url, color: 3447003}]}')
           printf '%s\\n' \"$payload\" | \"$SCRIPT_DIR/send-discord-notification.sh\"
         fi
       fi
       last_count=\"${count:-$last_count}\"
-      sleep 30
     done
   ",
   description: "Copilot review on PR #<PR_NUMBER>",
@@ -104,12 +130,18 @@ Monitor({
 })
 ```
 
-- `${EXISTING:-0}` により、Step 0 で既に確認済みの件数を初期値として渡す。
-- API 呼び出しは `|| true` で失敗時もループを継続する。
-- `sleep 30` — 30 秒間隔（GitHub API のレート制限を考慮）。
-- `fail_count` により、`gh api graphql` が5回連続（約2分半）で失敗した場合に
-  Monitor の標準出力へ警告を1行出力する（継続不能な失敗が連続する場合に無限に
-  沈黙しないための対応）。
+- `last_count` starts at `EXISTING` (already fetched in Step 0), and the
+  loop sleeps before its first query, so Step 0's query is never repeated
+  immediately.
+- Each `gh api graphql` failure is captured to a per-run temp file so the
+  eventual warning can quote the actual error instead of just guessing at
+  the cause.
+- Polls every 30 seconds, out of consideration for the GitHub API rate
+  limit.
+- After 5 consecutive failures (~2.5 minutes), emits one `WARNING` line —
+  including the last captured error — to the Monitor's stdout, so a
+  failure streak is never silent, then resets the counter and keeps
+  polling.
 
 ### Step 2: On Detection
 

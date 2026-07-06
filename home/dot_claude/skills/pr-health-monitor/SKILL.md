@@ -40,6 +40,21 @@ else
 fi
 ```
 
+Validate the resolved values — they end up embedded directly in scripts
+that `Monitor` executes below, so an unvalidated value here is a
+shell-injection risk, not just a correctness one:
+
+```bash
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: PR_NUMBER must be numeric, got: $PR_NUMBER" >&2
+  exit 1
+fi
+if ! [[ "$OWNER" =~ ^[A-Za-z0-9_.-]+$ ]] || ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  echo "ERROR: OWNER/REPO contain characters outside GitHub's naming rules: $OWNER/$REPO" >&2
+  exit 1
+fi
+```
+
 Confirm the PR URL:
 
 ```bash
@@ -69,28 +84,37 @@ tmux, no background process.
 
 ### Task B: CI Check (Monitor-Based)
 
+`$PR_NUMBER` below is a placeholder for this skill's own reasoning, not a
+live shell variable — `Monitor` runs the `command` string in a fresh shell
+with none of this conversation's variables set, so substitute its actual
+resolved value into the string literally before calling `Monitor`, the
+same way `<PR_NUMBER>` in `description` below is filled in literally.
+
 ```bash
 Monitor({
   command: "
     prev=\"\"
     fail_count=0
     while true; do
-      s=$(gh pr checks \"$PR_NUMBER\" --json name,bucket 2>/dev/null || true)
-      if [[ -z \"$s\" ]]; then
+      s=$(gh pr checks \"$PR_NUMBER\" --json name,bucket 2>/tmp/pr-health-ci-err.$$)
+      rc=$?
+      if [[ $rc -ne 0 || -z \"$s\" ]]; then
+        err_msg=$(tail -c 200 /tmp/pr-health-ci-err.$$ 2>/dev/null)
         fail_count=$((fail_count + 1))
         if [[ \"$fail_count\" -ge 5 ]]; then
-          echo \"WARNING: gh pr checks failed 5 times in a row (auth or network issue?)\"
+          echo \"WARNING: gh pr checks failed 5 times in a row - last error: ${err_msg:-unknown}\"
           fail_count=0
         fi
       else
         fail_count=0
       fi
+      rm -f /tmp/pr-health-ci-err.$$
       cur=$(jq -r '.[] | select(.bucket!=\"pending\") | \"\\(.name): \\(.bucket)\"' <<<\"$s\" 2>/dev/null | sort)
       if [[ -n \"$cur\" && \"$cur\" != \"$prev\" ]]; then
         comm -13 <(echo \"$prev\") <(echo \"$cur\")
       fi
-      prev=\"$cur\"
-      jq -e 'all(.bucket!=\"pending\")' <<<\"$s\" >/dev/null 2>&1 && { echo \"ci_complete\"; break; }
+      prev=\"${cur:-$prev}\"
+      jq -e '(length > 0) and all(.bucket!=\"pending\")' <<<\"$s\" >/dev/null 2>&1 && { echo \"ci_complete\"; break; }
       sleep 30
     done
   ",
@@ -99,8 +123,15 @@ Monitor({
 })
 ```
 
-`fail_count` により、`gh pr checks` が5回連続（約2分半）で失敗した場合に
-Monitor の標準出力へ警告を1行出力する（同上の要件への対応）。
+Each `gh pr checks` failure is captured to a per-run temp file so the
+eventual warning can quote the actual error instead of just guessing at
+the cause. After 5 consecutive failures (~2.5 minutes), this emits one
+`WARNING` line to the Monitor's stdout, then resets the counter and keeps
+polling — the same "don't go silent forever" mechanism used by
+`wait-for-copilot-review` and `wait-for-pr-close`. The completion check
+requires the checks array to be non-empty as well as all-non-pending, so a
+PR whose checks haven't registered yet is never mistaken for one whose
+checks have all finished.
 
 If any emitted line shows a `fail` bucket:
 1. Check logs with `gh run view <RUN_ID> --log-failed`

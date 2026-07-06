@@ -476,8 +476,8 @@ alive:
 PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
 ```
 
-Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 existence check,
-then `Monitor(..., persistent: true)`), always passing
+Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed
+state check, then `Monitor(..., persistent: true)`), always passing
 `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — this matters even in the
 non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not
 necessarily the local `origin` (the fork scenario from Issue #171).

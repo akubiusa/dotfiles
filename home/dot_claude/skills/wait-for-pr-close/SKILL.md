@@ -18,6 +18,21 @@ repository explicitly whenever the target PR lives in a different
 repository than the local `origin` (the fork scenario from Issue #171 —
 `issue-pr`'s Phase 18 always resolves this as `$ISSUE_OWNER/$ISSUE_REPO`).
 
+Validate the resolved values before using them below — they end up
+embedded directly in a script that `Monitor` executes, so an unvalidated
+value here is a shell-injection risk, not just a correctness one:
+
+```bash
+if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: PR_NUMBER must be numeric, got: $PR_NUMBER" >&2
+  exit 1
+fi
+if ! [[ "$OWNER" =~ ^[A-Za-z0-9_.-]+$ ]] || ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  echo "ERROR: OWNER/REPO contain characters outside GitHub's naming rules: $OWNER/$REPO" >&2
+  exit 1
+fi
+```
+
 ### Step 0: Skip if the PR is already closed
 
 ```bash
@@ -29,36 +44,46 @@ monitor and go straight to Step 2 (`/pr-cleanup`).
 
 ### Step 1: Start the Monitor
 
+`$OWNER`, `$REPO`, and `$PR_NUMBER` below are placeholders for this
+skill's own reasoning, not live shell variables — `Monitor` runs the
+`command` string in a fresh shell with none of this conversation's
+variables set, so substitute their actual resolved values into the string
+literally before calling `Monitor`, the same way `<PR_NUMBER>` in
+`description` below is filled in literally.
+
 ```bash
 Monitor({
   command: "
     fail_count=0
     while true; do
-      state=$(gh pr view \"$PR_NUMBER\" --repo \"$OWNER/$REPO\" --json state -q .state 2>/dev/null || true)
-      if [[ -z \"$state\" ]]; then
+      sleep 30
+      state=$(gh pr view \"$PR_NUMBER\" --repo \"$OWNER/$REPO\" --json state -q .state 2>/tmp/wait-pr-close-err.$$)
+      rc=$?
+      if [[ $rc -ne 0 || -z \"$state\" ]]; then
+        err_msg=$(tail -c 200 /tmp/wait-pr-close-err.$$ 2>/dev/null)
         fail_count=$((fail_count + 1))
         if [[ \"$fail_count\" -ge 5 ]]; then
-          echo \"WARNING: gh pr view failed 5 times in a row (auth or network issue?)\"
+          echo \"WARNING: gh pr view failed 5 times in a row - last error: ${err_msg:-unknown}\"
           fail_count=0
         fi
       else
         fail_count=0
       fi
+      rm -f /tmp/wait-pr-close-err.$$
       if [[ \"$state\" == \"MERGED\" || \"$state\" == \"CLOSED\" ]]; then
         echo \"pr_closed state=$state\"
-        # Discord 通知（既存のスクリプトと同等）
+        # Send a Discord notification, same as the old script did
         SCRIPT_DIR=\"$HOME/.claude/scripts/completion-notify\"
         if [[ -x \"$SCRIPT_DIR/send-discord-notification.sh\" ]]; then
           payload=$(jq -n \\
             --arg title \"PR ${state}\" \\
-            --arg desc \"PR #${PR_NUMBER} が ${state} されました。\" \\
+            --arg desc \"PR #${PR_NUMBER} was ${state}.\" \\
             --arg url \"https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}\" \\
             '{embeds: [{title: $title, description: $desc, url: $url, color: 3447003}]}')
           printf '%s\\n' \"$payload\" | \"$SCRIPT_DIR/send-discord-notification.sh\"
         fi
         break
       fi
-      sleep 30
     done
   ",
   description: "PR #<PR_NUMBER> merge/close",
@@ -66,11 +91,16 @@ Monitor({
 })
 ```
 
-- `sleep 30` — 30 秒間隔。固定の最大待機時間は設けない
-  （`persistent: true` によりセッション終了までポーリングを継続する）。
-- `fail_count` により、`gh pr view` が5回連続（約2分半）で失敗した場合に
-  Monitor の標準出力へ警告を1行出力する（継続不能な失敗が連続する場合に無限に
-  沈黙しないための対応）。
+- The loop sleeps before its first `gh pr view` call, so Step 0's check is
+  never immediately repeated. No fixed max wait is set —
+  `persistent: true` keeps polling until the session ends.
+- Each `gh pr view` failure is captured to a per-run temp file so the
+  eventual warning can quote the actual error instead of just guessing at
+  the cause.
+- After 5 consecutive failures (~2.5 minutes), emits one `WARNING` line —
+  including the last captured error — to the Monitor's stdout, so a
+  failure streak is never silent, then resets the counter and keeps
+  polling.
 
 ### Step 2: On Detection
 

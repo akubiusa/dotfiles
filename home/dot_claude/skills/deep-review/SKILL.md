@@ -27,13 +27,21 @@ Launch a Haiku sub-agent to verify the PR does not fall into any of these catego
 - Auto-generated (Renovate, dependabot, etc.) or trivially simple
 - The current GitHub user (run `gh api user --jq '.login'` to detect) has already posted a code-review comment
 
-### Step 2: Collect CLAUDE.md / rules paths
+### Step 2: Collect CLAUDE.md / rules content
 
-Launch a Haiku sub-agent to collect and return the following paths:
+Launch a Haiku sub-agent to collect the following files and return **both
+their paths and full file content** (not paths alone) — Step 5/6 sub-agents
+receive this content directly so they don't need to re-Read these files
+themselves:
 
 - Root `CLAUDE.md` of the repository
 - `CLAUDE.md` files in directories containing changed files
 - All `*.md` files under `~/.claude/rules/`
+
+Output format: for each file, its path followed by its full content (e.g. a
+`path: ...` / `content: ...` pair per file, or one Markdown section per
+file) — any format is fine as long as Step 5/6 can tell which content came
+from which path.
 
 ### Step 3: Summarise changes
 
@@ -41,6 +49,22 @@ Launch a Haiku sub-agent to retrieve and return:
 
 - **PR mode**: `gh pr view <PR> --json title,body,additions,deletions,files` and `gh pr diff <PR>`
 - **Local diff mode**: `git diff <base>..HEAD --stat` and `git diff <base>..HEAD`
+
+### Step 3.5: Lightweight precheck for docs-only changes
+
+Using the changed-file list already retrieved in Step 3, check whether
+every changed file path matches at least one of these patterns: `*.md`,
+`*.txt`, `docs/**`. Do this with plain pattern matching — do not launch an
+additional sub-agent for this check.
+
+- If **all** changed files match: in Step 5, run only
+  `a-claude-md-compliance` and `c-history-context`; skip
+  `b-bugs-correctness`, `e-code-comment-quality`, `f-security`,
+  `g-performance`, `h-error-handling`, `i-type-design-tests`.
+- If **any** changed file does not match: run all reviewers as usual (no
+  skipping).
+
+This applies in both PR mode and local diff mode.
 
 ### Step 4: Explore project and consider project-specific reviewers
 
@@ -52,7 +76,7 @@ Then, using the exploration results and the diff information, use a Haiku sub-ag
 
 **Load reviewer definitions, then launch one independent general-purpose sub-agent per loaded reviewer, all in parallel.**
 
-1. Read every file under `~/.claude/skills/deep-review/reviewers/*.md` (the fixed reviewers, one file per perspective).
+1. Read every file under `~/.claude/skills/deep-review/reviewers/*.md` (the fixed reviewers, one file per perspective), then apply Step 3.5's docs-only skip list if it triggered.
 2. Filter by mode: in Local diff mode, exclude any reviewer file whose frontmatter `applies_to` is `pr-only`.
 3. Each reviewer file uses this format:
 
@@ -71,7 +95,19 @@ Then, using the exploration results and the diff information, use a Haiku sub-ag
 
    If `applies_to` is missing, empty, or not one of `all`/`pr-only`, treat it as `all`.
 
-4. Pass each sub-agent: the diff, the change summary, the list of CLAUDE.md / rules paths, the shared false-positive suppression instructions below, and the `## Scope` body of its reviewer file.
+4. Pass each sub-agent: the shared false-positive suppression instructions
+   below, the `## Scope` body of its reviewer file, and the CLAUDE.md /
+   rules content collected in Step 2 (the full file content, not just
+   paths — tell the sub-agent explicitly: "The CLAUDE.md/rules files below
+   have already been read; do not re-Read them yourself"). Additionally,
+   depending on whether the reviewer's scope depends on diff content:
+   - **Diff-dependent reviewers** (all fixed reviewers except
+     `c-history-context`, and any project-specific reviewer): pass the full
+     diff and the change summary from Step 3.
+   - **`c-history-context`** (its scope reads git history / PR history via
+     commands, not diff text): pass only the list of changed file paths
+     (from the Step 3 change summary), not the full diff.
+
 Each agent returns findings as: *problem summary + evidence + file:line reference*.
 
 **Instructions passed to every agent (false-positive suppression):**
@@ -84,12 +120,17 @@ Do NOT report the following:
 - Functional changes that are clearly intentional given the broader context
 - Anything asserted without a concrete `file:line` citation
 
-**Fixed reviewers:** see `~/.claude/skills/deep-review/reviewers/*.md` for the full list and scope of each.
+**Fixed reviewers:** see `~/.claude/skills/deep-review/reviewers/*.md` for the full list and scope of each (`a-claude-md-compliance`, `b-bugs-correctness`, `c-history-context`, `e-code-comment-quality`, `f-security`, `g-performance`, `h-error-handling`, `i-type-design-tests`).
 
-### Step 6: Confidence scoring
+### Step 6: Confidence scoring (batched)
 
-For each finding returned by Step 5, **launch a parallel Haiku sub-agent** to assign a confidence score.
-Pass each agent: the issue description, the CLAUDE.md path list, and the relevant diff section.
+Launch a **single** Haiku sub-agent to score **all** findings returned by
+Step 5 in one call — do not launch one sub-agent per finding.
+
+Pass this agent: the full list of findings (each finding's problem summary
++ evidence + file:line), the CLAUDE.md/rules content from Step 2, and the
+diff sections relevant to each finding (not the full diff resend).
+
 Use the following rubric **verbatim**:
 
 Score the issue on a scale of 0-100 based on your level of confidence that it is a real issue:
@@ -104,12 +145,28 @@ For issues sourced from CLAUDE.md, double-check that the CLAUDE.md actually ment
 
 Findings from a reviewer's explicitly listed scope (e.g. the `e-code-comment-quality.md` reviewer's redundant/stale-comment checks) are not "unscoped stylistic nitpicks" for the purpose of the 25-point band above — score them on the same real-world-impact basis as any other finding (how likely the comment is to mislead a future reader or drift from the code it describes).
 
-Each agent must return the score in the format: `Score: <0-100>`
-(The Stop hook extracts scores using this exact format.)
+Instruct the agent to output one line per finding, in the format:
+`Finding <N>: Score: <0-100>` (where `<N>` is the finding's 1-based index
+in the order passed in). This preserves the `Score: <0-100>` substring the
+Stop hook extracts, while adding the `Finding <N>:` prefix so the batch
+output can be parsed back per-finding.
 
 ### Step 7: Score filtering
 
-Discard all findings with score < 50. If no findings remain, report "No issues found" and stop.
+Parse Step 6's batched output into individual `(finding index, score)`
+pairs (splitting on the `Finding <N>: Score: <0-100>` lines), matching each
+score back to its corresponding Step 5 finding by index. Discard all
+findings with score < 50. If no findings remain, report "No issues found"
+and stop.
+
+If the parsed indices don't cleanly cover every Step 5 finding exactly once
+(a missing index, a duplicate, an out-of-range index, or a parsed line count
+that doesn't match the input finding count), do not silently drop the
+unmatched findings as if they scored below 50. Re-dispatch a single Haiku
+sub-agent to re-score only the unmatched findings, using the same rubric.
+If a second parse also fails to cover them, treat each still-unmatched
+finding as score 50 (fail open into the report, not out of it) and note in
+the final report that its score could not be automatically confirmed.
 
 ### Step 8: Re-check eligibility (PR mode only)
 

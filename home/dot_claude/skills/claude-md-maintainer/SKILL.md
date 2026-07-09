@@ -9,8 +9,6 @@ disable-model-invocation: true
 
 Analyzes a project's `CLAUDE.md` against a static best-practices reference (`references/best-practices.md`) plus a live web-search delta on current trends, then either rewrites it wholesale or applies targeted edits depending on how far the existing content has drifted. If no `CLAUDE.md` exists, creates one from scratch.
 
-`disable-model-invocation: true` prevents accidental auto-invocation during ordinary conversation about an existing CLAUDE.md. It only runs on an explicit `/claude-md-maintainer` invocation.
-
 ## Determine the target directory
 
 If an argument is given, use that directory as the target. Otherwise, use the current directory.

@@ -2,10 +2,6 @@
 
 A static reference used by the `claude-md-maintainer` skill as the baseline for assessing drift and deciding whether to rewrite or append to a CLAUDE.md.
 
-Compiled from Issue #220's referenced [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) and Anthropic's official documentation (Claude Code memory files).
-
-This file is maintained by hand. At skill execution time, this content serves as the baseline, supplemented with a delta on current trends via WebSearch/WebFetch.
-
 ## Categories to cover
 
 A good CLAUDE.md covers the following categories, without gaps or excess. Categories that don't apply to the project (e.g. a "test commands" category for a project with no tests) may be omitted rather than force-filled.

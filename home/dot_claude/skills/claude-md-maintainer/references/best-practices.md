@@ -1,54 +1,55 @@
-# CLAUDE.md ベストプラクティス集
+# CLAUDE.md Best Practices
 
-`claude-md-maintainer` スキルが CLAUDE.md の乖離度評価・書き直し・追記の基準として参照する静的リファレンス。
-Issue #220 で参照されている [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) および Anthropic 公式ドキュメント（Claude Code memory files）の内容を踏まえてまとめている。
+A static reference used by the `claude-md-maintainer` skill as the baseline for assessing drift and deciding whether to rewrite or append to a CLAUDE.md.
 
-このファイルは人手でメンテナンスする。スキル実行時にはこの内容を土台に、WebSearch/WebFetch で最新動向の差分を補完する。
+Compiled from Issue #220's referenced [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) and Anthropic's official documentation (Claude Code memory files).
 
-## 書くべきカテゴリ
+This file is maintained by hand. At skill execution time, this content serves as the baseline, supplemented with a delta on current trends via WebSearch/WebFetch.
 
-良い CLAUDE.md は、以下のカテゴリを過不足なく含む。プロジェクトに存在しないカテゴリ（例: テストがないプロジェクトの「テストコマンド」）は無理に埋めず省略してよい。
+## Categories to cover
 
-1. **目的・プロジェクト概要**: 何をするプロジェクトか、主な機能を 2〜5 行程度で。
-2. **開発コマンド**: ビルド・テスト・Lint・フォーマット・起動などの実行コマンド。存在しないコマンド（例: `package.json` がないのに `npm test` と書く）は書かない。
-3. **アーキテクチャ・主要ファイル**: ディレクトリ構成の意味、主要なエントリーポイント、重要な設定ファイルの場所。
-4. **コーディング規約**: 推奨パターン・非推奨パターンを具体例つきで。抽象的な「良いコードを書く」のような指示は避ける。
-5. **テスト方針**: テストの実行方法、テストが存在しない場合はその旨と代替の確認手段（例: 手動確認手順）。
-6. **ドキュメント更新ルール**: どの変更でどのドキュメント（README・CLAUDE.md 自身など）を更新すべきか。
-7. **リポジトリ固有の運用ルール**: 秘密情報の管理方法、外部サービス連携、チーム固有の禁止事項など。
-8. **セキュリティ・禁止事項**: 秘密情報の平文コミット禁止など、破ると重大な問題になる規則。
+A good CLAUDE.md covers the following categories, without gaps or excess. Categories that don't apply to the project (e.g. a "test commands" category for a project with no tests) may be omitted rather than force-filled.
 
-## 良い CLAUDE.md の書き方
+1. **Purpose / project overview**: what the project does and its main features, in about 2-5 lines.
+2. **Development commands**: build, test, lint, format, run commands, etc. Do not list commands that don't exist (e.g. writing `npm test` when there is no `package.json`).
+3. **Architecture / key files**: the meaning of the directory layout, main entry points, and the location of important config files.
+4. **Coding conventions**: recommended vs. discouraged patterns, with concrete examples. Avoid abstract instructions like "write good code."
+5. **Testing approach**: how to run tests; if there are no tests, say so and note an alternative verification method (e.g. manual verification steps).
+6. **Documentation update rules**: which changes require updating which docs (README, CLAUDE.md itself, etc.).
+7. **Repository-specific operating rules**: how secrets are managed, external service integrations, team-specific prohibitions, etc.
+8. **Security / prohibitions**: rules whose violation causes serious problems, such as never committing secrets in plaintext.
 
-- **具体的であること**: 「適切にエラーハンドリングする」ではなく、「エラーは `Result<T, E>` 型で返し、`panic!` は使わない」のように、確認可能な具体的ルールを書く。
-- **実際に存在するコマンド・ファイルのみ記載する**: 存在しないコマンドや廃止されたファイルへの参照は、実行時に誤った行動を誘発する。
-- **簡潔である**: 冗長な説明・自明な内容（「Git はバージョン管理システムです」等）は書かない。エージェントが実際に迷う・間違えるポイントに絞る。
-- **推奨/非推奨を対で示す**: 「推奨: X」「非推奨: Y」のように対比すると、エージェントが判断しやすい。
-- **陳腐化を前提に更新経路を明記する**: 「ドキュメント更新ルール」セクションで、どのような変更が CLAUDE.md 自体の更新を要求するかを明記する。
-- **階層化する**: モノレポ等では、ルートの CLAUDE.md に全体方針を、サブディレクトリの CLAUDE.md に固有事項を書き分ける（該当する場合のみ）。
-- **見出し構成で整理する**: 箇条書きの羅列ではなく `##`/`###` の見出しでカテゴリ分けし、エージェントが必要な部分だけを拾い読みできるようにする。
+## How to write a good CLAUDE.md
 
-## アンチパターン（避けるべき書き方）
+- **Be concrete**: instead of "handle errors appropriately," write a verifiable, concrete rule such as "return errors as `Result<T, E>`; never use `panic!`."
+- **List only commands/files that actually exist**: references to nonexistent commands or removed files induce incorrect behavior at execution time.
+- **Be concise**: omit redundant explanations and obvious content (e.g. "Git is a version control system"). Focus on points where the agent actually gets confused or makes mistakes.
+- **Pair recommended/discouraged**: presenting "Recommended: X" / "Discouraged: Y" side by side makes it easier for the agent to decide.
+- **Assume staleness and document the update path**: in the "documentation update rules" section, spell out which kinds of changes require updating CLAUDE.md itself.
+- **Layer where applicable**: in monorepos, put overall policy in the root CLAUDE.md and directory-specific matters in subdirectory CLAUDE.md files (only where applicable).
+- **Organize with headings**: use `##`/`###` headings to group by category rather than a flat list of bullets, so the agent can skim only the sections it needs.
 
-- **TODO/TBD の放置**: 未確定の項目を残したまま運用しない。
-- **抽象的すぎる指示**: 「良いコードを書いてください」「ベストプラクティスに従ってください」のような、具体的な行動に落とし込めない指示。
-- **矛盾する記述**: 複数箇所で同じ対象について異なるルールを書かない。
-- **巨大な単一ファイルへの無秩序な追記**: カテゴリを無視して時系列に追記し続けると、後から読む際に構造が失われる。
-- **実装の詳細をそのまま貼り付ける**: コードの丸写しではなく、「なぜそうするか」「何を守るべきか」を書く。
-- **古い情報の放置**: リポジトリ構成やコマンドが変わったのに追従していない記述。
+## Anti-patterns (writing styles to avoid)
 
-## 良い例 / 悪い例
+- **Leaving TODO/TBD in place**: don't ship with unresolved placeholder items.
+- **Overly abstract instructions**: instructions that can't be turned into concrete action, like "write good code" or "follow best practices."
+- **Contradictory descriptions**: don't state different rules for the same subject in multiple places.
+- **Unstructured appending to one giant file**: continuously appending chronologically while ignoring categories destroys structure for later readers.
+- **Pasting raw implementation details**: don't just paste code; explain "why" and "what must be preserved."
+- **Leaving stale information**: descriptions that no longer track changes to the repository structure or commands.
 
-**悪い例:**
+## Good example / bad example
 
-> このプロジェクトはとても複雑なので、変更する際は注意してください。良いコードを書き、テストも書いてください。
+**Bad example:**
 
-**良い例:**
+> This project is very complex, so be careful when making changes. Write good code, and write tests too.
 
-> ## 開発コマンド
-> - `npm test`: Jest によるユニットテスト実行。
-> - `npm run lint`: ESLint によるチェック。CI でも実行される。
+**Good example:**
+
+> ## Development commands
+> - `npm test`: run unit tests with Jest.
+> - `npm run lint`: check with ESLint. Also runs in CI.
 >
-> ## コーディング規約
-> - 推奨: 非同期処理は `async/await` を使う。
-> - 非推奨: `.then()` チェーンの新規追加（既存コードとの一貫性のため）。
+> ## Coding conventions
+> - Recommended: use `async/await` for asynchronous code.
+> - Discouraged: adding new `.then()` chains (for consistency with existing code).

@@ -7,13 +7,13 @@ disable-model-invocation: true
 
 # claude-md-maintainer skill
 
-任意のプロジェクトの `CLAUDE.md` を、静的なベストプラクティス集（`references/best-practices.md`）と実行時の Web 検索による最新動向の差分を踏まえて分析し、既存内容との乖離度に応じて全面書き直しまたは部分修正を行う。既存の `CLAUDE.md` がない場合は新規作成する。
+Analyzes a project's `CLAUDE.md` against a static best-practices reference (`references/best-practices.md`) plus a live web-search delta on current trends, then either rewrites it wholesale or applies targeted edits depending on how far the existing content has drifted. If no `CLAUDE.md` exists, creates one from scratch.
 
-`disable-model-invocation: true` により、既存 CLAUDE.md についての通常の会話中に誤って自動起動しない。明示的な `/claude-md-maintainer` 実行時のみ動作する。
+`disable-model-invocation: true` prevents accidental auto-invocation during ordinary conversation about an existing CLAUDE.md. It only runs on an explicit `/claude-md-maintainer` invocation.
 
-## 対象ディレクトリの決定
+## Determine the target directory
 
-引数が指定されていればそのディレクトリを対象とする。省略時はカレントディレクトリを対象とする。
+If an argument is given, use that directory as the target. Otherwise, use the current directory.
 
 ```bash
 TARGET_DIR="${1:-.}"
@@ -27,71 +27,71 @@ if [ ! -r "$TARGET_DIR" ]; then
 fi
 ```
 
-対象ディレクトリが存在しない、または読み取り不可の場合はエラーを報告して中断する。
+If the target directory does not exist or is not readable, report the error and abort.
 
-## Step 1: 対象プロジェクトの探索
+## Step 1: Explore the target project
 
-- `$TARGET_DIR/CLAUDE.md` が存在するか確認し、あれば全文を `Read` する。
-- プロジェクトの言語・フレームワークを、`package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` 等の存在で判定する。
-- ディレクトリ構成、README、既存のテスト・Lint コマンド（`package.json` の `scripts` 等）を把握する。
-- git 管理下か確認する:
+- Check whether `$TARGET_DIR/CLAUDE.md` exists; if so, `Read` it in full.
+- Determine the project's language/framework from the presence of `package.json` / `pyproject.toml` / `Cargo.toml` / `go.mod` etc.
+- Understand the directory layout, README, and existing test/lint commands (e.g. `package.json`'s `scripts`).
+- Check whether the directory is under git:
 
 ```bash
 cd "$TARGET_DIR" && git rev-parse --is-inside-work-tree >/dev/null 2>&1
 ```
 
-管理下でなければ、「事後の差分確認ができない」旨を警告として記録し、続行する（書き込み自体は行う）。
+If not under git, record a warning that post-hoc diff review won't be possible, and continue (the write itself still happens).
 
-## Step 2: 静的リファレンスの読み込み
+## Step 2: Load the static reference
 
-`~/.claude/skills/claude-md-maintainer/references/best-practices.md` を `Read` する。
+`Read` `~/.claude/skills/claude-md-maintainer/references/best-practices.md`.
 
-## Step 3: 最新動向のライブ検索
+## Step 3: Live search for current trends
 
-WebSearch で以下のようなクエリを実行し、`references/best-practices.md` の内容に対する **差分**（新たに登場した推奨事項、非推奨になった慣習、公式ドキュメントの更新など）のみを抽出する:
+Run WebSearch with queries such as the following, and extract only the **delta** against `references/best-practices.md` (newly emerged recommendations, deprecated conventions, updates to official docs):
 
-- `CLAUDE.md best practices <現在の年>`
+- `CLAUDE.md best practices <current year>`
 - `Claude Code memory files guide`
 - `Anthropic Claude Code CLAUDE.md documentation`
 
-検索結果が有望であれば WebFetch で該当ページの詳細を取得する。
+If a search result looks promising, use WebFetch to retrieve the page in detail.
 
-検索が失敗した場合（ネットワークエラー等）は、静的リファレンスのみで Step 4 以降を続行し、その旨を最終報告（Step 6）に含める。
+If the search fails (network error, etc.), continue Step 4 onward using only the static reference, and note this in the final report (Step 6).
 
-## Step 4: プロジェクト固有情報の抽出
+## Step 4: Extract project-specific information
 
-既存の `CLAUDE.md`（あれば）から、プロジェクト固有で失ってはいけない情報を抽出する:
+From the existing `CLAUDE.md` (if any), extract project-specific information that must not be lost:
 
-- 具体的なコマンド（ビルド・テスト・デプロイ等）
-- 既知の落とし穴・注意事項
-- リポジトリ構造の事実
-- チーム固有の運用ルール
+- Concrete commands (build, test, deploy, etc.)
+- Known pitfalls and caveats
+- Facts about the repository structure
+- Team-specific operating rules
 
-Step 1 の探索結果と突き合わせ、既存記述が実態と乖離していないか（コマンドが実際に `package.json` 等に存在するか等）も確認する。乖離している記述（存在しないコマンドへの言及等）は Step 5 の判断材料として記録する。
+Cross-check these against Step 1's exploration results, and verify whether the existing description has drifted from reality (e.g. whether a referenced command actually exists in `package.json`). Record any drifted descriptions (references to nonexistent commands, etc.) as input for Step 5's decision.
 
-## Step 5: 乖離度の評価と反映方針の決定
+## Step 5: Assess drift and decide the update approach
 
-Step 2〜4 の結果をもとに、既存 `CLAUDE.md` とベストプラクティスとの乖離度を評価する。
+Using the results of Steps 2-4, assess how far the existing `CLAUDE.md` has drifted from the best practices.
 
-- **乖離が大きい**場合（以下のいずれかに該当）→ 全面的に書き直す。
-  - `references/best-practices.md` の「書くべきカテゴリ」のうち該当するもの（プロジェクトの性質上不要なカテゴリを除く）が半数以上欠落している。
-  - 見出し構成が崩れており、カテゴリ単位で整理されていない。
-  - 実態と乖離した記述（存在しないコマンド・廃止されたファイルへの言及等）が複数箇所ある。
-- **乖離が小さい**場合（該当カテゴリが概ね揃っており、部分的な追記・訂正で十分）→ 該当箇所のみを編集する。
-- 既存 `CLAUDE.md` が存在しない場合 → 新規作成（全面書き直しと同じ扱い）。
+- **Large drift** (any of the following applies) → rewrite wholesale.
+  - Half or more of the applicable categories in `references/best-practices.md`'s "Categories to cover" (excluding categories that don't apply to the project's nature) are missing.
+  - The heading structure is broken and not organized by category.
+  - There are multiple descriptions that have drifted from reality (references to nonexistent commands, removed files, etc.).
+- **Small drift** (applicable categories are largely present and partial additions/corrections suffice) → edit only the affected sections.
+- No existing `CLAUDE.md` → create from scratch (treated the same as a wholesale rewrite).
 
-判断結果（全面書き直し／部分修正／新規作成のいずれか）とその理由を記録する。
+Record the decision (wholesale rewrite / partial edit / new creation) and its rationale.
 
-## Step 6: 反映と報告
+## Step 6: Apply changes and report
 
-Step 5 の判断に従い、`$TARGET_DIR/CLAUDE.md` を `Write`（全面書き直し・新規作成の場合）または `Edit`（部分修正の場合）で書き換える。
+Following Step 5's decision, rewrite `$TARGET_DIR/CLAUDE.md` with `Write` (for a wholesale rewrite or new creation) or `Edit` (for a partial edit).
 
-書き込みが失敗した場合（権限不足等）はエラーを報告して中断する。
+If the write fails (e.g. insufficient permissions), report the error and abort.
 
-実行後、以下をユーザーに報告する:
+After the write, report the following to the user:
 
-- 全面書き直し／部分修正／新規作成のいずれを行ったか、その判断理由。
-- 主な変更点のサマリー。
-- 対象ディレクトリが git 管理下であれば、既存ファイルの変更は `git diff`、新規作成は `git status` で詳細を確認できる旨。
-- Step 3 のライブ検索が失敗していた場合はその旨。
-- 対象ディレクトリが git 管理下でなかった場合はその旨（Step 1 で記録した警告）。
+- Whether a wholesale rewrite, partial edit, or new creation was performed, and the rationale.
+- A summary of the main changes.
+- If the target directory is under git: note that `git diff` (for an edited existing file) or `git status` (for a newly created file) can be used to review the details.
+- If Step 3's live search failed, note that.
+- If the target directory was not under git, note that (the warning recorded in Step 1).

@@ -21,7 +21,7 @@ else
     STATE_FILE="$STATE_DIR/deep-review-state.json"
 fi
 
-# ステートファイルが存在しない → このセッションで deep-review 未実行 → ブロックしない
+# ステートファイルが存在しない → このセッションで deep-review / lite-review 未実行 → ブロックしない
 if [[ ! -f "$STATE_FILE" ]]; then
     exit 0
 fi

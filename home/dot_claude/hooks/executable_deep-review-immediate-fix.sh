@@ -68,7 +68,7 @@ if ! jq -n \
         high_score_count: $high_score_count,
         max_score: $max_score
     }' > "$STATE_FILE"; then
-    echo "ERROR: Failed to write deep-review state to $STATE_FILE" >&2
+    echo "ERROR: Failed to write $SKILL state to $STATE_FILE" >&2
     # PostToolUse ブロックは機能しているため続行する。Stop hook での再検証はスキップされる。
 fi
 # ステートファイルはオーナーのみ読み書き可能 (600) にする

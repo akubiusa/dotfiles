@@ -120,10 +120,15 @@ Do NOT report the following:
 
 **Project-specific reviewers:** any repository can add up to roughly 3 additional reviewer files (soft guideline, not enforced) under `.claude/deep-review-reviewers/*.md` in its own repo root, using the same frontmatter format as above (`id` may be omitted for project-specific reviewers).
 
-### Step 5: Confidence scoring
+### Step 5: Confidence scoring (batched)
 
-For each finding returned by Step 4, **launch a parallel Haiku sub-agent** to assign a confidence score.
-Pass each agent: the issue description, the CLAUDE.md path list, and the relevant diff section.
+Launch a **single** Haiku sub-agent to score **all** findings returned by
+Step 4 in one call — do not launch one sub-agent per finding.
+
+Pass this agent: the full list of findings (each finding's problem summary
++ evidence + file:line), the CLAUDE.md/rules content from Step 2, and the
+diff sections relevant to each finding (not the full diff resend).
+
 Use the following rubric **verbatim**:
 
 Score the issue on a scale of 0-100 based on your level of confidence that it is a real issue:
@@ -138,12 +143,19 @@ For issues sourced from CLAUDE.md, double-check that the CLAUDE.md actually ment
 
 Findings from a reviewer's explicitly listed scope (e.g. the `e-code-comment-quality.md` reviewer's redundant/stale-comment checks) are not "unscoped stylistic nitpicks" for the purpose of the 25-point band above — score them on the same real-world-impact basis as any other finding (how likely the comment is to mislead a future reader or drift from the code it describes).
 
-Each agent must return the score in the format: `Score: <0-100>`
-(The Stop hook extracts scores using this exact format.)
+Instruct the agent to output one line per finding, in the format:
+`Finding <N>: Score: <0-100>` (where `<N>` is the finding's 1-based index
+in the order passed in). This preserves the `Score: <0-100>` substring the
+Stop hook extracts, while adding the `Finding <N>:` prefix so the batch
+output can be parsed back per-finding.
 
 ### Step 6: Score filtering
 
-Discard all findings with score < 50. If no findings remain, report "No issues found" and stop.
+Parse Step 5's batched output into individual `(finding index, score)`
+pairs (splitting on the `Finding <N>: Score: <0-100>` lines), matching each
+score back to its corresponding Step 4 finding by index. Discard all
+findings with score < 50. If no findings remain, report "No issues found"
+and stop.
 
 ### Step 7: Re-check eligibility (PR mode only)
 

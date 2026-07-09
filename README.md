@@ -296,3 +296,19 @@ applies_to: all        # all | pr-only（省略時は all）
 - **乖離度に応じた判断**: 既存 `CLAUDE.md` とベストプラクティスとの乖離が大きい場合は全面的に書き直し、小さい場合は部分修正にとどめる（既存ファイルがない場合は新規作成）
 - **承認フローなし**: 対象ディレクトリが git 管理下であることを前提に、変更内容は `git diff`（新規作成時は `git status`）で事後確認する運用とし、実行前の承認は求めない
 - **対象は CLAUDE.md のみ**: `AGENTS.md` 等の他のエージェント設定ファイルは対象外（将来の拡張候補）
+
+## `rtk` スキル
+
+`rtk`(Rust Token Killer)メタコマンドのリファレンス。
+`home/dot_claude/skills/rtk/SKILL.md` として管理され、`chezmoi apply` で `~/.claude/skills/rtk/SKILL.md` にデプロイされる。
+
+通常のシェルコマンドは Claude Code の hook 経由で自動的に `rtk` 経由へ書き換えられるため常時ドキュメント化は不要だが、`rtk gain` などのメタコマンドはこの skill が唯一のリファレンスであり、必要な場面でのみ読み込まれる。
+
+### 使い方
+
+```bash
+rtk gain              # トークン削減量の分析結果を表示
+rtk gain --history     # コマンド使用履歴と削減量を表示
+rtk discover           # Claude Code の履歴から見逃された削減機会を分析
+rtk proxy <cmd>        # フィルタなしで生コマンドを実行(デバッグ用)
+```

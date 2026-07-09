@@ -299,7 +299,7 @@ applies_to: all        # all | pr-only（省略時は all）
 
 ## `rtk` スキル
 
-`rtk`(Rust Token Killer)メタコマンドのリファレンス。
+`rtk` (Rust Token Killer) メタコマンドのリファレンス。
 `home/dot_claude/skills/rtk/SKILL.md` として管理され、`chezmoi apply` で `~/.claude/skills/rtk/SKILL.md` にデプロイされる。
 
 通常のシェルコマンドは Claude Code の hook 経由で自動的に `rtk` 経由へ書き換えられるため常時ドキュメント化は不要だが、`rtk gain` などのメタコマンドはこの skill が唯一のリファレンスであり、必要な場面でのみ読み込まれる。

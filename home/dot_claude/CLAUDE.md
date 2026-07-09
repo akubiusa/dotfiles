@@ -36,8 +36,6 @@
 | `/handle-pr-reviews <URL>` | Reply and resolve review threads |
 | `/wait-for-copilot-review <number>` | Background wait for Copilot review |
 
-See `rules/workflow.md` for checklists and Jira rules.
-
 ## Context loading
 
 Not auto-loaded. Read the relevant file only when the situation applies:

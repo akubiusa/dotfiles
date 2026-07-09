@@ -1,7 +1,7 @@
 ---
 name: issue-pr-deep
 description: Full spec/plan approval flow for turning a GitHub Issue into a pull request. Invoked by the `issue-pr` dispatcher for non-trivial changes.
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 # issue-pr-deep: full spec/plan approval flow

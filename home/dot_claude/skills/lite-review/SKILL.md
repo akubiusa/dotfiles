@@ -88,9 +88,10 @@ Same as `deep-review` Step 11.
 
 ### Step 12: Report results
 
-Same as `deep-review` Step 12, with the report heading changed from
-`### Deep Review` to `### Lite Review` and the "no issues found" line
-changed to:
+Same as `deep-review` Step 12, with every occurrence of the report heading
+changed from `### Deep Review` to `### Lite Review` (this applies across
+all of Step 12's report variants — autofixed-own-PR, non-own-PR, and
+no-issues-found — not just one) and the "no issues found" line changed to:
 
 ```
 ### Lite Review

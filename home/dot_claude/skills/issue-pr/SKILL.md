@@ -176,7 +176,8 @@ context — the invoked skill starts at its own Phase 3 without redoing
 Phase 1/2. Also pass the Issue number/URL extracted in Phase 1 (`$ARGUMENTS`)
 explicitly to the invoked skill: unlike this dispatcher, it is not invoked
 as a top-level slash command, so `$ARGUMENTS` is not automatically bound
-there — `issue-pr-deep`'s Phase 5/9 (Issue comment posting) still rely on it.
+there — `issue-pr-deep`'s Phase 5/9 (Issue comment posting) and
+`issue-pr-lite`'s Phase 7 (`Closes #<issue number>`) both rely on it.
 
 This dispatcher has no Phase 3-onward logic of its own; all spec/plan/
 implementation/PR-creation responsibility belongs to whichever skill is

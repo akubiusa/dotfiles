@@ -20,6 +20,17 @@ disable-model-invocation: true
 > explicitly when invoking this skill, and this skill must treat that value
 > as `$ARGUMENTS` for the rest of its phases.
 
+## Progress Tracking
+
+Before Phase 3, create one Todo task per phase in this file (Phase 3
+through the end) using the Task tool. Mark each `in_progress` immediately
+before starting that phase and `completed` immediately after finishing it —
+do not batch updates at the end.
+
+If a revise loop (Phase 6 or Phase 10) sends execution back to an earlier
+phase, create a **new** task for the repeated phase (e.g. "Phase 3: Write
+the Spec (revision 2)") rather than reopening the completed one.
+
 ## Phase 3: Write the Spec
 
 Invoke **superpowers:brainstorming** with the issue content as the starting

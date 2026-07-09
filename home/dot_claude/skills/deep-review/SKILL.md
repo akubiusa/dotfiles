@@ -1,6 +1,6 @@
 ---
 name: deep-review
-description: Deep code review of a GitHub PR or the local working diff. Runs independent, scoped sub-agent reviews defined in reviewers/*.md plus any project-specific reviewers found under <repo-root>/.claude/deep-review-reviewers/, scores each finding 0-100 for confidence, reports only findings with score >= 50, and for the user's own PRs auto-fixes, commits, pushes, and updates the PR body.
+description: Deep code review of a GitHub PR or the local working diff. Runs independent, scoped sub-agent reviews defined in reviewers/*.md and any project-specific reviewers, scores each finding 0-100 for confidence, reports only findings with score >= 50, and for the user's own PRs auto-fixes, commits, pushes, and updates the PR body.
 argument-hint: "[PR number or URL | omit to review the local working diff]"
 disable-model-invocation: false
 effort: high
@@ -30,7 +30,7 @@ Launch a Haiku sub-agent to verify the PR does not fall into any of these catego
 ### Step 2: Collect CLAUDE.md / rules content
 
 Launch a Haiku sub-agent to collect the following files and return **both
-their paths and full file content** (not paths alone) — Step 4/5 sub-agents
+their paths and full file content** (not paths alone) — Step 5/6 sub-agents
 receive this content directly so they don't need to re-Read these files
 themselves:
 
@@ -40,7 +40,7 @@ themselves:
 
 Output format: for each file, its path followed by its full content (e.g. a
 `path: ...` / `content: ...` pair per file, or one Markdown section per
-file) — any format is fine as long as Step 4/5 can tell which content came
+file) — any format is fine as long as Step 5/6 can tell which content came
 from which path.
 
 ### Step 3: Summarise changes
@@ -57,7 +57,7 @@ every changed file path matches at least one of these patterns: `*.md`,
 `*.txt`, `docs/**`. Do this with plain pattern matching — do not launch an
 additional sub-agent for this check.
 
-- If **all** changed files match: in Step 4, run only
+- If **all** changed files match: in Step 5, run only
   `a-claude-md-compliance` and `c-history-context`; skip
   `b-bugs-correctness`, `e-code-comment-quality`, `f-security`,
   `g-performance`, `h-error-handling`, `i-type-design-tests`.
@@ -66,15 +66,19 @@ additional sub-agent for this check.
 
 This applies in both PR mode and local diff mode.
 
-### Step 4: Parallel perspective reviews
+### Step 4: Explore project and consider project-specific reviewers
+
+First, explore the project using the Explorer agent. If you already have a deep understanding of the project, skip this step.
+
+Then, using the exploration results and the diff information, use a Haiku sub-agent to consider up to three project-specific review perspectives.
+
+### Step 5: Parallel perspective reviews
 
 **Load reviewer definitions, then launch one independent general-purpose sub-agent per loaded reviewer, all in parallel.**
 
 1. Read every file under `~/.claude/skills/deep-review/reviewers/*.md` (the fixed reviewers, one file per perspective), then apply Step 3.5's docs-only skip list if it triggered.
-2. Resolve the reviewed repository root with `git rev-parse --show-toplevel`. If `<root>/.claude/deep-review-reviewers/*.md` exists, read every file in it too (project-specific reviewers). If the directory does not exist, skip this step silently — no error.
-3. Filter by mode: in Local diff mode, exclude any reviewer file whose frontmatter `applies_to` is `pr-only`.
-4. If 4 or more project-specific reviewer files were found in step 2, print a one-line notice before proceeding, e.g.: "Note: N project-specific reviewers detected under .claude/deep-review-reviewers/; ~3 is the recommended guideline." This is advisory only — do not enforce a hard cap, proceed with all of them.
-5. Each reviewer file uses this format:
+2. Filter by mode: in Local diff mode, exclude any reviewer file whose frontmatter `applies_to` is `pr-only`.
+3. Each reviewer file uses this format:
 
    ```markdown
    ---
@@ -91,7 +95,7 @@ This applies in both PR mode and local diff mode.
 
    If `applies_to` is missing, empty, or not one of `all`/`pr-only`, treat it as `all`.
 
-6. Pass each sub-agent: the shared false-positive suppression instructions
+4. Pass each sub-agent: the shared false-positive suppression instructions
    below, the `## Scope` body of its reviewer file, and the CLAUDE.md /
    rules content collected in Step 2 (the full file content, not just
    paths — tell the sub-agent explicitly: "The CLAUDE.md/rules files below
@@ -118,12 +122,10 @@ Do NOT report the following:
 
 **Fixed reviewers:** see `~/.claude/skills/deep-review/reviewers/*.md` for the full list and scope of each (`a-claude-md-compliance`, `b-bugs-correctness`, `c-history-context`, `e-code-comment-quality`, `f-security`, `g-performance`, `h-error-handling`, `i-type-design-tests`).
 
-**Project-specific reviewers:** any repository can add up to roughly 3 additional reviewer files (soft guideline, not enforced) under `.claude/deep-review-reviewers/*.md` in its own repo root, using the same frontmatter format as above (`id` may be omitted for project-specific reviewers).
-
-### Step 5: Confidence scoring (batched)
+### Step 6: Confidence scoring (batched)
 
 Launch a **single** Haiku sub-agent to score **all** findings returned by
-Step 4 in one call — do not launch one sub-agent per finding.
+Step 5 in one call — do not launch one sub-agent per finding.
 
 Pass this agent: the full list of findings (each finding's problem summary
 + evidence + file:line), the CLAUDE.md/rules content from Step 2, and the
@@ -149,15 +151,15 @@ in the order passed in). This preserves the `Score: <0-100>` substring the
 Stop hook extracts, while adding the `Finding <N>:` prefix so the batch
 output can be parsed back per-finding.
 
-### Step 6: Score filtering
+### Step 7: Score filtering
 
-Parse Step 5's batched output into individual `(finding index, score)`
+Parse Step 6's batched output into individual `(finding index, score)`
 pairs (splitting on the `Finding <N>: Score: <0-100>` lines), matching each
-score back to its corresponding Step 4 finding by index. Discard all
+score back to its corresponding Step 5 finding by index. Discard all
 findings with score < 50. If no findings remain, report "No issues found"
 and stop.
 
-If the parsed indices don't cleanly cover every Step 4 finding exactly once
+If the parsed indices don't cleanly cover every Step 5 finding exactly once
 (a missing index, a duplicate, an out-of-range index, or a parsed line count
 that doesn't match the input finding count), do not silently drop the
 unmatched findings as if they scored below 50. Re-dispatch a single Haiku
@@ -166,19 +168,19 @@ If a second parse also fails to cover them, treat each still-unmatched
 finding as score 50 (fail open into the report, not out of it) and note in
 the final report that its score could not be automatically confirmed.
 
-### Step 7: Re-check eligibility (PR mode only)
+### Step 8: Re-check eligibility (PR mode only)
 
 Launch a Haiku sub-agent to repeat the Step 1 eligibility check. Abort if the PR is now ineligible.
 
-### Step 8: PR author check (PR mode only)
+### Step 9: PR author check (PR mode only)
 
 Run `gh api user --jq '.login'` to get the current GitHub user login.
 Then run `gh pr view <PR> --json author --jq '.author.login'` to get the PR author.
 
-- Author matches the current user login, or is a bot created by the current user → proceed to Step 9 (autofix).
-- Any other author (Renovate, dependabot, external contributors) → skip to Step 12 (report only).
+- Author matches the current user login, or is a bot created by the current user → proceed to Step 10 (autofix).
+- Any other author (Renovate, dependabot, external contributors) → skip to Step 13 (report only).
 
-### Step 9: Autofix (own PRs only)
+### Step 10: Autofix (own PRs only)
 
 Fix all findings with score ≥ 50. Do not commit yet — fix all issues first.
 
@@ -187,12 +189,12 @@ For each issue:
 2. Apply the fix with the Edit tool.
 3. Confirm the fix addresses the issue.
 
-### Step 10: Commit (own PRs only)
+### Step 11: Commit (own PRs only)
 
 Commit all fixes:
 
 1. `git add` to stage all modified files.
-2. Commit following Conventional Commits (description in Japanese per project CLAUDE.md):
+2. Commit following Conventional Commits.
 
 ```
 fix: コードレビュー指摘事項を修正
@@ -204,11 +206,11 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 3. `git push origin <branch>` (use SSH).
 
-### Step 11: Update PR body (own PRs only)
+### Step 12: Update PR body (own PRs only)
 
 Run `gh pr edit <PR> --body "..."` to note that review issues were automatically fixed.
 
-### Step 12: Report results
+### Step 13: Report results
 
 - **PR mode**: post with `gh pr comment <PR> --body "..."`.
 - **Local diff mode**: present results directly to the user.

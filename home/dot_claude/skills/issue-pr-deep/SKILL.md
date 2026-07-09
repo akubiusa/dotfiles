@@ -278,28 +278,36 @@ PR body, and can trigger `/handle-pr-reviews` — none of that is "merging,"
 so the merge guardrail doesn't apply. No separate confirmation is needed;
 Phase 10 already approved the plan.
 
-If a `wait-for-copilot-review` background launch happens here (or from
-`issue-pr` itself, in a fork scenario), verify it succeeded before reporting
-completion — check the log (`~/.claude/logs/wait-copilot-review-<PR 番号>.log`)
-and the process (`ps aux | grep wait-for-copilot-review`). If either check
-fails, report the monitor failed to start rather than assuming it did.
+`pr-health-monitor` starts the Copilot review wait as a `Monitor(persistent:
+true)` instance in this same session (see `wait-for-copilot-review`'s
+SKILL.md) — there is no separate background process or log file to verify.
+Report the monitor as running; `/handle-pr-reviews` is called directly in
+this conversation when the monitor detects a review.
 
-## Phase 18: Launch Background Monitoring
+## Phase 18: Start the PR Close Monitor
 
-Immediately after Phase 17, launch the merge/close monitor in the
-background so cleanup happens even if the PR is closed outside this session:
+Immediately after Phase 17, start the merge/close monitor so cleanup
+happens automatically once the PR closes, as long as this session stays
+alive:
 
 ```bash
 PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
-~/.claude/skills/wait-for-pr-close/scripts/wait-for-pr-close.sh "$PR_NUMBER" --repo "$ISSUE_OWNER/$ISSUE_REPO" &
 ```
 
-Always pass `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly, even in the
-non-fork case — omitting it falls back to local `origin`, which is wrong in
-fork scenarios (PR lives in `ISSUE_OWNER/ISSUE_REPO`, not `origin`).
+Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed
+state check, then `Monitor(..., persistent: true)`), always passing
+`--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — this matters even in the
+non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not
+necessarily the local `origin` (the fork scenario from Issue #171).
 
-Fire-and-forget: the flow is complete once this launches. Cleanup
-(`/pr-cleanup`) happens outside this session once the PR closes.
+This does not require tmux or a fresh session: when the monitor emits a
+`pr_closed` event, call `/pr-cleanup` directly in this same conversation.
+If this session ends before the PR is merged or closed, the wait is lost
+and the user must run `/pr-cleanup <PR number or URL>` manually later —
+this is an accepted limitation (see the design spec behind Issue #200 for
+rationale), not a regression from the previous tmux-based design.
+
+The `issue-pr-deep` flow is considered complete once this monitor is running.
 
 ## Notes
 

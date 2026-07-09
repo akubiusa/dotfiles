@@ -108,14 +108,16 @@ chmod 600 ~/.claude/data/session-state.json
 Same as `issue-pr-deep`'s Phase 17: run `/pr-health-monitor <PR number>`
 immediately, without asking the user whether to run it.
 
-## Phase 10: Launch Background Monitoring
+## Phase 10: Start the PR Close Monitor
 
 Same as `issue-pr-deep`'s Phase 18:
 
 ```bash
 PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
-~/.claude/skills/wait-for-pr-close/scripts/wait-for-pr-close.sh "$PR_NUMBER" --repo "$ISSUE_OWNER/$ISSUE_REPO" &
 ```
 
-Always pass `--repo` explicitly (fork scenario safety — see
-`issue-pr-deep`'s Phase 18 for the full rationale).
+Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed state
+check, then `Monitor(..., persistent: true)`), always passing `--repo
+"$ISSUE_OWNER/$ISSUE_REPO"` explicitly (fork scenario safety — see
+`issue-pr-deep`'s Phase 18 for the full rationale). When the monitor emits a
+`pr_closed` event, call `/pr-cleanup` directly in this same conversation.

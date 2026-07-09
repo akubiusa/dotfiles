@@ -36,7 +36,19 @@
 | `/handle-pr-reviews <URL>` | Reply and resolve review threads |
 | `/wait-for-copilot-review <number>` | Background wait for Copilot review |
 
-See @rules/workflow.md for checklists and Jira rules.
+See `rules/workflow.md` for checklists and Jira rules.
+
+## Context loading
+
+Not auto-loaded. Read the relevant file only when the situation applies:
+
+| When | Read |
+|---|---|
+| Checklists / Jira rules needed | `rules/workflow.md` |
+| Writing a spec or plan document | `rules/superpowers.md` |
+| Posting a spec/plan/investigation doc to a GitHub Issue | `rules/issue-comment-docs.md` |
+| Posting a spec/plan/investigation doc to Confluence | `rules/confluence.md` |
+| Using an `rtk` meta command (`gain`, `discover`, `proxy`) | `rtk` skill |
 
 ## Tracking
 
@@ -49,7 +61,3 @@ Use the Todo tool for all multi-step work without omission.
 - chezmoi: `executable_` prefix is stripped at deploy — reference scripts without it in settings/configs.
 
 @CLAUDE.local.md
-@RTK.md
-@rules/superpowers.md
-@rules/confluence.md
-@rules/issue-comment-docs.md

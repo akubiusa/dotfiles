@@ -6,6 +6,44 @@
 # 表示内容が一時的に切り替わることで誤検出（フラッピング）が起きるため採用しない。
 # 代わりに、tmux セッションが起動している claude プロセスの pid から会話ログの
 # jsonl ファイルを一意に特定し、その内容でリミット状態を判定する。
+# tmux セッション名から、対応する claude プロセスの pid を特定する
+resolve_claude_pid() {
+    local session="$1" pane_pid
+
+    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
+    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
+    # ため、末尾に ":" を付けてセッション名指定であることを明示する
+    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
+    pgrep -P "$pane_pid" -f "^claude" | head -1
+}
+
+# claude プロセスの pid から、実際に sessions/<pid>.json が存在する
+# CLAUDE_CONFIG_DIR を特定する（環境変数の生値ではなく、実際にヒットした
+# ディレクトリを返す。空文字列を返すことはなく、見つからない場合は失敗を返す）
+resolve_config_dir_for_pid() {
+    local claude_pid="$1" config_dir dir
+    [ -n "$claude_pid" ] || return 1
+
+    config_dir=$(tr '\0' '\n' < "/proc/${claude_pid}/environ" 2>/dev/null | sed -n 's/^CLAUDE_CONFIG_DIR=//p')
+    for dir in "$config_dir" "$HOME/.claude" "$HOME/.claude-work"; do
+        [ -n "$dir" ] || continue
+        if [ -f "$dir/sessions/${claude_pid}.json" ]; then
+            echo "$dir"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# tmux セッション名から、対応する claude プロセスが使用している
+# CLAUDE_CONFIG_DIR を特定する（resolve_claude_pid + resolve_config_dir_for_pid の合成）
+resolve_config_dir() {
+    local session="$1" claude_pid
+    claude_pid=$(resolve_claude_pid "$session") || return 1
+    [ -n "$claude_pid" ] || return 1
+    resolve_config_dir_for_pid "$claude_pid"
+}
+
 # tmux セッション名から、対応する claude プロセスが書き込んでいる会話ログ (jsonl) の
 # パスを特定する。claude は CLAUDE_CONFIG_DIR ごと（例: ~/.claude と ~/.claude-work）に
 # sessions/<pid>.json（pid → sessionId の対応表）を別々に持つため両方を確認する。
@@ -13,30 +51,17 @@
 # （記号の置き換え方）は非公開かつ実装依存のため自前で再現せず、sessionId (UUID で一意)
 # を find で直接検索することでエンコード方式のずれによる特定失敗を避ける。
 resolve_jsonl_path() {
-    local session="$1" pane_pid claude_pid config_dir session_file dir session_id
+    local session="$1" claude_pid config_dir session_file session_id jsonl
 
-    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
-    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
-    # ため、末尾に ":" を付けてセッション名指定であることを明示する
-    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
-    claude_pid=$(pgrep -P "$pane_pid" -f "^claude" | head -1)
+    claude_pid=$(resolve_claude_pid "$session") || return 1
     [ -n "$claude_pid" ] || return 1
 
-    config_dir=$(tr '\0' '\n' < "/proc/${claude_pid}/environ" 2>/dev/null | sed -n 's/^CLAUDE_CONFIG_DIR=//p')
-    session_file=""
-    for dir in "$config_dir" "$HOME/.claude" "$HOME/.claude-work"; do
-        [ -n "$dir" ] || continue
-        if [ -f "$dir/sessions/${claude_pid}.json" ]; then
-            session_file="$dir/sessions/${claude_pid}.json"
-            break
-        fi
-    done
-    [ -n "$session_file" ] || return 1
+    config_dir=$(resolve_config_dir_for_pid "$claude_pid") || return 1
+    session_file="$config_dir/sessions/${claude_pid}.json"
 
     session_id=$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)
     [ -n "$session_id" ] || return 1
 
-    local jsonl
     jsonl=$(find "$HOME/.claude/projects" -maxdepth 2 -name "${session_id}.jsonl" -print -quit 2>/dev/null)
     [ -n "$jsonl" ] || return 1
     echo "$jsonl"

@@ -115,6 +115,49 @@ if [ -d "$TEST_HOME/.claude/scripts/limit-unlocked/data" ]; then
 fi
 rm -rf "$TEST_HOME"
 
+echo "Testing resolve_config_dir resolves the mocked claude process's CLAUDE_CONFIG_DIR..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.claude/sessions"
+
+CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" sleep 60 &
+FAKE_CLAUDE_PID=$!
+echo '{}' > "$TEST_HOME/.claude/sessions/${FAKE_CLAUDE_PID}.json"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  echo "12345"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$FAKE_CLAUDE_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_config_dir "dummy-session"
+  '
+)
+
+kill "$FAKE_CLAUDE_PID" 2>/dev/null || true
+wait "$FAKE_CLAUDE_PID" 2>/dev/null || true
+
+if [[ "$RESULT" != "$TEST_HOME/.claude" ]]; then
+  echo "❌ resolve_config_dir did not resolve the mocked claude process's CLAUDE_CONFIG_DIR (got: '$RESULT')"
+  FAILED=1
+else
+  echo "✅ resolve_config_dir resolved the mocked claude process's CLAUDE_CONFIG_DIR"
+fi
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 if [ $FAILED -eq 0 ]; then
   echo "✅ All notification script tests passed"
 else

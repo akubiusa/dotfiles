@@ -328,6 +328,173 @@ fi
 
 rm -rf "$TEST_HOME"
 
+echo "Testing detect_limited_sessions resumes via Usage API before reset_epoch..."
+TEST_HOME=$(mktemp -d)
+mkdir -p "$TEST_HOME/.claude/scripts/limit-unlocked/data"
+STATE_FILE_PATH="$TEST_HOME/.claude/scripts/limit-unlocked/data/limited_sessions.txt"
+touch "$STATE_FILE_PATH"
+RESUME_LOG="$TEST_HOME/resume.log"
+
+OUTPUT=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+
+    STATE_FILE="'"$STATE_FILE_PATH"'"
+    NEW_STATE_FILE="${STATE_FILE}.new"
+
+    # 同一 config_dir を共有する2セッションがともにリミット中、という状況をスタブする
+    tmux() {
+      if [[ "$1" == "list-sessions" ]]; then
+        printf "sess-a\nsess-b\n"
+      elif [[ "$1" == "has-session" ]]; then
+        return 0
+      fi
+    }
+    resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
+    check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
+    resolve_config_dir() { echo "/fake/config-dir"; }
+    usage_check_allowed() { return 0; }
+    record_usage_checked() { :; }
+    fetch_usage_status_calls=0
+    fetch_usage_status() {
+      fetch_usage_status_calls=$((fetch_usage_status_calls + 1))
+      echo -e "42\t10"
+    }
+    resume_session() { echo "resumed:$1" >> "'"$RESUME_LOG"'"; }
+
+    detect_limited_sessions
+
+    echo "calls=$fetch_usage_status_calls"
+    echo "new_state_lines=$(wc -l < "$NEW_STATE_FILE" | tr -d " ")"
+  '
+)
+
+if ! grep -q '^calls=1$' <<< "$OUTPUT"; then
+  echo "❌ detect_limited_sessions did not memoize fetch_usage_status per config_dir within a single run (output: $OUTPUT)"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions memoized fetch_usage_status per config_dir within a single run"
+fi
+
+if ! grep -q '^new_state_lines=0$' <<< "$OUTPUT"; then
+  echo "❌ detect_limited_sessions still recorded a Usage-API-confirmed-unlocked session in NEW_STATE_FILE"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions excluded Usage-API-confirmed-unlocked sessions from NEW_STATE_FILE"
+fi
+
+if [ "$(wc -l < "$RESUME_LOG" 2>/dev/null | tr -d ' ')" != "2" ]; then
+  echo "❌ detect_limited_sessions did not call resume_session for both unlocked sessions"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions called resume_session for both unlocked sessions"
+fi
+
+rm -rf "$TEST_HOME"
+
+echo "Testing detect_limited_sessions reuses the cached Usage API result even though record_usage_checked updates the throttle timestamp after the first session..."
+TEST_HOME=$(mktemp -d)
+mkdir -p "$TEST_HOME/.claude/scripts/limit-unlocked/data"
+STATE_FILE_PATH="$TEST_HOME/.claude/scripts/limit-unlocked/data/limited_sessions.txt"
+touch "$STATE_FILE_PATH"
+RESUME_LOG="$TEST_HOME/resume.log"
+
+OUTPUT=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+
+    STATE_FILE="'"$STATE_FILE_PATH"'"
+    NEW_STATE_FILE="${STATE_FILE}.new"
+
+    # usage_check_allowed / record_usage_checked は Task 4 の実実装をそのまま使う
+    # (スタブしない)。fetch_usage_status のみスタブし、呼び出し回数を数える。
+    tmux() {
+      if [[ "$1" == "list-sessions" ]]; then
+        printf "sess-a\nsess-b\n"
+      elif [[ "$1" == "has-session" ]]; then
+        return 0
+      fi
+    }
+    resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
+    check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
+    resolve_config_dir() { echo "/fake/config-dir"; }
+    fetch_usage_status_calls=0
+    fetch_usage_status() {
+      fetch_usage_status_calls=$((fetch_usage_status_calls + 1))
+      echo -e "42\t10"
+    }
+    resume_session() { echo "resumed:$1" >> "'"$RESUME_LOG"'"; }
+
+    detect_limited_sessions
+
+    echo "calls=$fetch_usage_status_calls"
+    echo "new_state_lines=$(wc -l < "$NEW_STATE_FILE" | tr -d " ")"
+  '
+)
+
+if ! grep -q '^calls=1$' <<< "$OUTPUT"; then
+  echo "❌ detect_limited_sessions called fetch_usage_status more than once for the same config_dir with real throttling functions (output: $OUTPUT)"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions called fetch_usage_status only once for the same config_dir with real throttling functions"
+fi
+
+if [ "$(wc -l < "$RESUME_LOG" 2>/dev/null | tr -d ' ')" != "2" ]; then
+  echo "❌ detect_limited_sessions did not resume both sessions sharing a config_dir when real throttling functions are used (second session was likely skipped by the throttle instead of reusing the cached result)"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions resumed both sessions sharing a config_dir even with real throttling functions"
+fi
+
+rm -rf "$TEST_HOME"
+
+echo "Testing detect_limited_sessions falls back to reset_epoch tracking when Usage API check is unavailable..."
+TEST_HOME=$(mktemp -d)
+mkdir -p "$TEST_HOME/.claude/scripts/limit-unlocked/data"
+STATE_FILE_PATH="$TEST_HOME/.claude/scripts/limit-unlocked/data/limited_sessions.txt"
+touch "$STATE_FILE_PATH"
+
+OUTPUT=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+
+    STATE_FILE="'"$STATE_FILE_PATH"'"
+    NEW_STATE_FILE="${STATE_FILE}.new"
+
+    tmux() {
+      if [[ "$1" == "list-sessions" ]]; then
+        echo "sess-a"
+      elif [[ "$1" == "display-message" ]]; then
+        echo "/tmp/work"
+      fi
+    }
+    resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
+    check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
+    resolve_config_dir() { return 1; }
+    resume_session() { echo "resumed:$1" >> "'"$TEST_HOME/resume.log"'"; }
+
+    detect_limited_sessions
+
+    echo "new_state_lines=$(wc -l < "$NEW_STATE_FILE" | tr -d " ")"
+  '
+)
+
+if ! grep -q '^new_state_lines=1$' <<< "$OUTPUT"; then
+  echo "❌ detect_limited_sessions did not fall back to recording the session in NEW_STATE_FILE when config_dir cannot be resolved"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions fell back to existing reset_epoch-based tracking when config_dir cannot be resolved"
+fi
+
+if [ -f "$TEST_HOME/resume.log" ]; then
+  echo "❌ detect_limited_sessions should not call resume_session when Usage API confirmation is unavailable"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions did not call resume_session when Usage API confirmation is unavailable"
+fi
+
+rm -rf "$TEST_HOME"
+
 if [ $FAILED -eq 0 ]; then
   echo "✅ All notification script tests passed"
 else

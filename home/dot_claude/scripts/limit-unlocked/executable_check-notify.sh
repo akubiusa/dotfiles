@@ -209,9 +209,11 @@ check_limit_status() {
 # 現在リミット中の tmux セッション一覧を検出し、$NEW_STATE_FILE に書き出す
 detect_limited_sessions() {
     : > "$NEW_STATE_FILE"
+    local -A usage_cache_five usage_cache_seven usage_cache_ok
 
     for session in $(tmux list-sessions -F "#{session_name}" 2>/dev/null); do
         local jsonl status_line is_limited reset_epoch reset_text cwd
+        local config_dir five_hour seven_day usage_tmpfile
         jsonl=$(resolve_jsonl_path "$session")
         if [ -z "$jsonl" ]; then
             # pgrep や /proc/<pid>/environ の読み取りは一時的に失敗しうる（他ツール実行中の
@@ -225,6 +227,54 @@ detect_limited_sessions() {
         status_line=$(check_limit_status "$jsonl")
         IFS=$'\t' read -r is_limited reset_epoch reset_text <<< "$status_line"
         [ "$is_limited" = "1" ] || continue
+
+        # Usage API で能動的に解除済みかどうかを確認する。予測時刻(reset_epoch)を
+        # 待たずに早期解除を検知するための追加チェックであり、失敗時は
+        # 既存の reset_epoch ベースの判定にフォールバックする
+        # (誤って「解除」と判定しないことを最優先する)。
+        config_dir=$(resolve_config_dir "$session")
+        if [ -n "$config_dir" ]; then
+            # 同一 config_dir への Usage API 呼び出しは実行内で1回のみに留める
+            # (アカウント単位の値のため、複数セッションから重複して取得しない)。
+            # 「実行内キャッシュ未確定」の場合にのみスロットリング判定を行う点が重要:
+            # スロットリング判定を毎セッション行ってしまうと、直前のセッションの
+            # record_usage_checked によって最終チェック時刻が「今」に更新され、
+            # 同一 config_dir を共有する2つ目以降のセッションが本来使えるはずの
+            # キャッシュ済み判定結果を使わずに(誤ってスロットリング対象とみなされて)
+            # 素通りしてしまう(=要件2の「実行内で使い回す」が成立しなくなる)。
+            if [ -z "${usage_cache_ok[$config_dir]+x}" ]; then
+                if usage_check_allowed "$config_dir"; then
+                    record_usage_checked "$config_dir"
+                    # コマンド置換 $(...) はサブシェルを生成するため使わない。
+                    # fetch_usage_status をサブシェル経由で呼ぶと、呼び出し回数の
+                    # 記録など呼び出し側で状態を持つ実装に対して「実際は1回しか
+                    # 呼ばれていないのに呼ばれたかどうかを外側から観測できない」
+                    # 問題が生じるため、標準出力を一時ファイル経由で受け取る
+                    usage_tmpfile=$(mktemp)
+                    if fetch_usage_status "$config_dir" > "$usage_tmpfile"; then
+                        usage_cache_ok["$config_dir"]=1
+                        IFS=$'\t' read -r usage_cache_five["$config_dir"] usage_cache_seven["$config_dir"] < "$usage_tmpfile"
+                    else
+                        usage_cache_ok["$config_dir"]=0
+                    fi
+                    rm -f "$usage_tmpfile"
+                else
+                    usage_cache_ok["$config_dir"]=0
+                fi
+            fi
+
+            if [ "${usage_cache_ok[$config_dir]}" = "1" ]; then
+                five_hour="${usage_cache_five[$config_dir]}"
+                seven_day="${usage_cache_seven[$config_dir]}"
+                if awk -v a="$five_hour" -v b="$seven_day" 'BEGIN{exit !(a<100 && b<100)}'; then
+                    echo "Unlocked via Usage API: $session"
+                    if tmux has-session -t "${session}:" 2>/dev/null; then
+                        resume_session "$session"
+                    fi
+                    continue
+                fi
+            fi
+        fi
 
         cwd=$(tmux display-message -t "${session}:" -p '#{pane_current_path}' 2>/dev/null || echo "unknown")
         echo -e "${session}\t${cwd}\t${reset_epoch}\t${reset_text}" >> "$NEW_STATE_FILE"

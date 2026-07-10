@@ -82,8 +82,7 @@ ghc() {
       # 出力と終了コードを分けて取得し、終了コードで確実に not_found を判定する
       local fork_check_output
       local fork_check
-      fork_check_output=$(gh api "repos/$current_user/${repo_name#*/}" --jq 'if .fork and .parent.full_name == "'"$repo_name"'" then "true" else "false" end' 2>/dev/null)
-      if [[ $? -ne 0 ]]; then
+      if ! fork_check_output=$(gh api "repos/$current_user/${repo_name#*/}" --jq 'if .fork and .parent.full_name == "'"$repo_name"'" then "true" else "false" end' 2>/dev/null); then
         fork_check="not_found"
       else
         fork_check="$fork_check_output"

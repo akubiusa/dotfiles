@@ -44,6 +44,60 @@ resolve_config_dir() {
     resolve_config_dir_for_pid "$claude_pid"
 }
 
+# config_dir の認証情報(.credentials.json)を使い、Claude Code の内部 API
+# (/api/oauth/usage)を呼び出して現在の利用率を取得する。
+# 標準出力: "<five_hour_utilization>\t<seven_day_utilization>"
+# 取得できない場合(認証情報欠如・期限切れ・通信エラー・不正なレスポンス等)は
+# 何も出力せず、終了コード1を返す。「解除」の誤判定を避けるため、
+# 失敗時は必ず呼び出し元へ「取得不可」であることを伝える。
+fetch_usage_status() {
+    local config_dir="$1" creds access_token expires_at now_ms buffer_ms
+    local response http_code body five_hour seven_day
+
+    creds="$config_dir/.credentials.json"
+    [ -f "$creds" ] || return 1
+
+    access_token=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds" 2>/dev/null)
+    [ -n "$access_token" ] || return 1
+
+    expires_at=$(jq -r '.claudeAiOauth.expiresAt // 0' "$creds" 2>/dev/null)
+    now_ms=$(( $(date +%s) * 1000 ))
+    buffer_ms=60000
+    if [[ "$expires_at" =~ ^[0-9]+$ ]] && [ "$expires_at" -gt 0 ] && [ "$expires_at" -le $((now_ms + buffer_ms)) ]; then
+        echo "fetch_usage_status: access token is expired or about to expire for $config_dir" >&2
+        return 1
+    fi
+
+    response=$(curl -s --max-time 5 \
+        -H "Authorization: Bearer ${access_token}" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        "https://api.anthropic.com/api/oauth/usage" -w '\n%{http_code}' 2>/dev/null)
+    if [ -z "$response" ]; then
+        echo "fetch_usage_status: curl request failed for $config_dir" >&2
+        return 1
+    fi
+
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
+    if [ "$http_code" != "200" ]; then
+        echo "fetch_usage_status: unexpected HTTP status $http_code for $config_dir" >&2
+        return 1
+    fi
+
+    five_hour=$(echo "$body" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
+    seven_day=$(echo "$body" | jq -r '.seven_day.utilization // empty' 2>/dev/null)
+    if ! [[ "$five_hour" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$seven_day" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "fetch_usage_status: missing or non-numeric utilization in response for $config_dir" >&2
+        return 1
+    fi
+    if ! awk -v v="$five_hour" 'BEGIN{exit !(v>=0 && v<=100)}' || ! awk -v v="$seven_day" 'BEGIN{exit !(v>=0 && v<=100)}'; then
+        echo "fetch_usage_status: utilization out of range (0-100) in response for $config_dir" >&2
+        return 1
+    fi
+
+    echo -e "${five_hour}\t${seven_day}"
+}
+
 # tmux セッション名から、対応する claude プロセスが書き込んでいる会話ログ (jsonl) の
 # パスを特定する。claude は CLAUDE_CONFIG_DIR ごと（例: ~/.claude と ~/.claude-work）に
 # sessions/<pid>.json（pid → sessionId の対応表）を別々に持つため両方を確認する。

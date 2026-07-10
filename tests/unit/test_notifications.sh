@@ -158,6 +158,120 @@ else
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
+echo "Testing fetch_usage_status..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN_DIR=$(mktemp -d)
+TEST_CONFIG_DIR="$TEST_HOME/.claude"
+mkdir -p "$TEST_CONFIG_DIR"
+
+FUTURE_MS=$(( ($(date +%s) + 3600) * 1000 ))
+cat > "$TEST_CONFIG_DIR/.credentials.json" <<EOF
+{"claudeAiOauth": {"accessToken": "dummy-token", "expiresAt": $FUTURE_MS}}
+EOF
+
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+printf '%s\n200\n' '{"five_hour":{"utilization":42},"seven_day":{"utilization":10}}'
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  '
+)
+
+if [[ "$RESULT" != $'42\t10' ]]; then
+  echo "❌ fetch_usage_status did not parse a successful response (got: '$RESULT')"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status parsed a successful response"
+fi
+
+echo "Testing fetch_usage_status fails safely on non-200 response..."
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+printf '%s\n401\n' '{"error":"unauthorized"}'
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+if PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  ' >/tmp/fetch_usage_status_401_out 2>/dev/null; then
+  echo "❌ fetch_usage_status should fail on a non-200 response"
+  FAILED=1
+elif [ -s /tmp/fetch_usage_status_401_out ]; then
+  echo "❌ fetch_usage_status printed output on a non-200 response"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status failed safely on a non-200 response"
+fi
+rm -f /tmp/fetch_usage_status_401_out
+
+echo "Testing fetch_usage_status fails safely on missing utilization field..."
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+printf '%s\n200\n' '{"five_hour":{"utilization":null},"seven_day":{"utilization":10}}'
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+if PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  ' >/dev/null 2>/dev/null; then
+  echo "❌ fetch_usage_status should fail when five_hour.utilization is null"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status failed safely when five_hour.utilization is null"
+fi
+
+echo "Testing fetch_usage_status fails safely on out-of-range utilization..."
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+printf '%s\n200\n' '{"five_hour":{"utilization":150},"seven_day":{"utilization":10}}'
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+if PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  ' >/tmp/fetch_usage_status_range_out 2>/dev/null; then
+  echo "❌ fetch_usage_status should fail when five_hour.utilization is out of range (>100)"
+  FAILED=1
+elif [ -s /tmp/fetch_usage_status_range_out ]; then
+  echo "❌ fetch_usage_status printed output on an out-of-range utilization"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status failed safely on an out-of-range utilization"
+fi
+rm -f /tmp/fetch_usage_status_range_out
+
+echo "Testing fetch_usage_status fails safely on expired token without calling curl..."
+PAST_MS=$(( ($(date +%s) - 3600) * 1000 ))
+cat > "$TEST_CONFIG_DIR/.credentials.json" <<EOF
+{"claudeAiOauth": {"accessToken": "dummy-token", "expiresAt": $PAST_MS}}
+EOF
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+echo "curl should not have been called" >&2
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+if PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  ' >/dev/null 2>/dev/null; then
+  echo "❌ fetch_usage_status should fail on an expired token"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status failed safely on an expired token (curl not called)"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 if [ $FAILED -eq 0 ]; then
   echo "✅ All notification script tests passed"
 else

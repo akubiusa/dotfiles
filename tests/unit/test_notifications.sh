@@ -270,6 +270,31 @@ else
   echo "✅ fetch_usage_status failed safely on an expired token (curl not called)"
 fi
 
+echo "Testing fetch_usage_status does not expose the OAuth token via curl's argv..."
+FUTURE_MS=$(( ($(date +%s) + 3600) * 1000 ))
+cat > "$TEST_CONFIG_DIR/.credentials.json" <<EOF
+{"claudeAiOauth": {"accessToken": "dummy-token", "expiresAt": $FUTURE_MS}}
+EOF
+CURL_ARGS_CAPTURE="$TEST_HOME/curl_args_capture.txt"
+cat > "$TEST_BIN_DIR/curl" <<EOF
+#!/bin/bash
+printf '%s\n' "\$@" > "$CURL_ARGS_CAPTURE"
+printf '%s\n200\n' '{"five_hour":{"utilization":42},"seven_day":{"utilization":10}}'
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    fetch_usage_status "'"$TEST_CONFIG_DIR"'"
+  ' >/dev/null 2>/dev/null
+
+if grep -Fq 'dummy-token' "$CURL_ARGS_CAPTURE"; then
+  echo "❌ fetch_usage_status passed the OAuth token via curl's argument list (got: $(cat "$CURL_ARGS_CAPTURE"))"
+  FAILED=1
+else
+  echo "✅ fetch_usage_status did not expose the OAuth token via curl's argv"
+fi
+
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
 echo "Testing usage_check_allowed / record_usage_checked throttling..."
@@ -292,7 +317,7 @@ RESULT=$(
       echo "allowed_immediately_after=no"
     fi
 
-    # 最終チェック時刻を31分前に書き換える
+    # 最終チェック時刻を 31 分前に書き換える
     file=$(usage_last_checked_file)
     old_epoch=$(( $(date +%s) - 1860 ))
     printf "/fake/config-dir\t%s\n" "$old_epoch" > "$file"
@@ -342,7 +367,7 @@ OUTPUT=$(
     STATE_FILE="'"$STATE_FILE_PATH"'"
     NEW_STATE_FILE="${STATE_FILE}.new"
 
-    # 同一 config_dir を共有する2セッションがともにリミット中、という状況をスタブする
+    # 同一 config_dir を共有する 2 セッションがともにリミット中、という状況をスタブする
     tmux() {
       if [[ "$1" == "list-sessions" ]]; then
         printf "sess-a\nsess-b\n"
@@ -350,9 +375,10 @@ OUTPUT=$(
         return 0
       fi
     }
+    resolve_claude_pid() { echo "12345"; }
+    resolve_config_dir_for_pid() { echo "/fake/config-dir"; }
     resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
     check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
-    resolve_config_dir() { echo "/fake/config-dir"; }
     usage_check_allowed() { return 0; }
     record_usage_checked() { :; }
     fetch_usage_status_calls=0
@@ -415,9 +441,10 @@ OUTPUT=$(
         return 0
       fi
     }
+    resolve_claude_pid() { echo "12345"; }
+    resolve_config_dir_for_pid() { echo "/fake/config-dir"; }
     resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
     check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
-    resolve_config_dir() { echo "/fake/config-dir"; }
     fetch_usage_status_calls=0
     fetch_usage_status() {
       fetch_usage_status_calls=$((fetch_usage_status_calls + 1))
@@ -468,9 +495,10 @@ OUTPUT=$(
         echo "/tmp/work"
       fi
     }
+    resolve_claude_pid() { echo "12345"; }
+    resolve_config_dir_for_pid() { return 1; }
     resolve_jsonl_path() { echo "/dummy/${1}.jsonl"; }
     check_limit_status() { echo -e "1\t9999999999\tdummy reset text"; }
-    resolve_config_dir() { return 1; }
     resume_session() { echo "resumed:$1" >> "'"$TEST_HOME/resume.log"'"; }
 
     detect_limited_sessions

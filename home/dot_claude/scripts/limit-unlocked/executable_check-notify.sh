@@ -48,11 +48,11 @@ resolve_config_dir() {
 # (/api/oauth/usage)を呼び出して現在の利用率を取得する。
 # 標準出力: "<five_hour_utilization>\t<seven_day_utilization>"
 # 取得できない場合(認証情報欠如・期限切れ・通信エラー・不正なレスポンス等)は
-# 何も出力せず、終了コード1を返す。「解除」の誤判定を避けるため、
+# 何も出力せず、終了コード 1 を返す。「解除」の誤判定を避けるため、
 # 失敗時は必ず呼び出し元へ「取得不可」であることを伝える。
 fetch_usage_status() {
     local config_dir="$1" creds access_token expires_at now_ms buffer_ms
-    local response http_code body five_hour seven_day
+    local response http_code body five_hour seven_day curl_exit
 
     creds="$config_dir/.credentials.json"
     [ -f "$creds" ] || return 1
@@ -68,12 +68,22 @@ fetch_usage_status() {
         return 1
     fi
 
-    response=$(curl -s --max-time 5 \
-        -H "Authorization: Bearer ${access_token}" \
-        -H "anthropic-beta: oauth-2025-04-20" \
-        "https://api.anthropic.com/api/oauth/usage" -w '\n%{http_code}' 2>/dev/null)
+    # OAuth トークンが ps/proc 経由で他プロセスから見えないよう、ヘッダーは curl の
+    # 設定ファイル形式(-K -)で標準入力経由で渡す(引数一覧には残さない)。
+    #
+    # 複数 config_dir を並列に照会するバックグラウンド化も検討したが、実運用では
+    # config_dir は ~/.claude と ~/.claude-work の高々 1〜2 種類しかなく、得られる
+    # 短縮効果に対してループ構造の変更リスクが見合わないため見送り、代わりに
+    # --max-time を短縮して 1 回あたりのブロッキング時間を抑える方針とした。
+    curl_exit=0
+    response=$(printf 'header = "Authorization: Bearer %s"\nheader = "anthropic-beta: oauth-2025-04-20"\n' "$access_token" \
+        | curl -s --max-time 3 -K - "https://api.anthropic.com/api/oauth/usage" -w '\n%{http_code}' 2>/dev/null) || curl_exit=$?
+    if [ "$curl_exit" -ne 0 ]; then
+        echo "fetch_usage_status: curl exited with status $curl_exit for $config_dir" >&2
+        return 1
+    fi
     if [ -z "$response" ]; then
-        echo "fetch_usage_status: curl request failed for $config_dir" >&2
+        echo "fetch_usage_status: curl returned empty response for $config_dir" >&2
         return 1
     fi
 
@@ -84,8 +94,7 @@ fetch_usage_status() {
         return 1
     fi
 
-    five_hour=$(echo "$body" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
-    seven_day=$(echo "$body" | jq -r '.seven_day.utilization // empty' 2>/dev/null)
+    IFS=$'\t' read -r five_hour seven_day < <(echo "$body" | jq -r '"\(.five_hour.utilization // "")\t\(.seven_day.utilization // "")"' 2>/dev/null)
     if ! [[ "$five_hour" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$seven_day" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
         echo "fetch_usage_status: missing or non-numeric utilization in response for $config_dir" >&2
         return 1
@@ -103,19 +112,20 @@ usage_last_checked_file() {
     echo "$HOME/.claude/scripts/limit-unlocked/data/usage_last_checked.txt"
 }
 
-# config_dir に対して直近30分以内にUsage APIを照会済みでないかを判定する。
-# 許可する場合は終了コード0、スロットリング対象なら終了コード1を返す。
+# config_dir に対してスロットリング間隔(下記)以内に Usage API を照会済みでないかを判定する。
+# 許可する場合は終了コード 0、スロットリング対象なら終了コード 1 を返す。
 usage_check_allowed() {
     local config_dir="$1" file last_checked now
+    local -r throttle_interval_seconds=1800 # 30分
     file=$(usage_last_checked_file)
     [ -f "$file" ] || return 0
     last_checked=$(awk -F'\t' -v d="$config_dir" '$1 == d { print $2; exit }' "$file")
     [ -n "$last_checked" ] || return 0
     now=$(date +%s)
-    [ $((now - last_checked)) -ge 1800 ]
+    [ $((now - last_checked)) -ge "$throttle_interval_seconds" ]
 }
 
-# config_dir に対するUsage API照会の最終実行時刻を記録する。
+# config_dir に対する Usage API 照会の最終実行時刻を記録する。
 # 成功・失敗に関わらず「試行した」時点で呼び出すことで、認証エラーや
 # ネットワーク障害が続く間の連続リトライを防ぐ。
 record_usage_checked() {
@@ -130,18 +140,24 @@ record_usage_checked() {
 }
 
 # tmux セッション名から、対応する claude プロセスが書き込んでいる会話ログ (jsonl) の
-# パスを特定する。claude は CLAUDE_CONFIG_DIR ごと（例: ~/.claude と ~/.claude-work）に
-# sessions/<pid>.json（pid → sessionId の対応表）を別々に持つため両方を確認する。
+# パスを特定する。config_dir 配下の sessions/<pid>.json から sessionId を取得し、
 # jsonl のパスは projects/<encoded-cwd>/<sessionId>.jsonl だが、cwd のエンコード規則
 # （記号の置き換え方）は非公開かつ実装依存のため自前で再現せず、sessionId (UUID で一意)
 # を find で直接検索することでエンコード方式のずれによる特定失敗を避ける。
+#
+# 引数 2(claude_pid)・引数 3(config_dir)を渡すと、呼び出し元(detect_limited_sessions)が
+# 既に解決済みの値を再利用でき、pgrep・/proc・sessions ファイル探索の再実行を避けられる。
 resolve_jsonl_path() {
-    local session="$1" claude_pid config_dir session_file session_id jsonl
+    local session="$1" claude_pid="${2:-}" config_dir="${3:-}" session_file session_id jsonl
 
-    claude_pid=$(resolve_claude_pid "$session") || return 1
-    [ -n "$claude_pid" ] || return 1
+    if [ -z "$claude_pid" ]; then
+        claude_pid=$(resolve_claude_pid "$session") || return 1
+        [ -n "$claude_pid" ] || return 1
+    fi
 
-    config_dir=$(resolve_config_dir_for_pid "$claude_pid") || return 1
+    if [ -z "$config_dir" ]; then
+        config_dir=$(resolve_config_dir_for_pid "$claude_pid") || return 1
+    fi
     session_file="$config_dir/sessions/${claude_pid}.json"
 
     session_id=$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)
@@ -213,8 +229,12 @@ detect_limited_sessions() {
 
     for session in $(tmux list-sessions -F "#{session_name}" 2>/dev/null); do
         local jsonl status_line is_limited reset_epoch reset_text cwd
-        local config_dir five_hour seven_day usage_tmpfile
-        jsonl=$(resolve_jsonl_path "$session")
+        local config_dir five_hour seven_day usage_tmpfile claude_pid
+        # pid/config_dir はこのセッションにつき 1 回だけ解決し、jsonl 特定と
+        # Usage API 用の config_dir 取得の両方で使い回す(二重に fork/proc 読み取りしない)
+        claude_pid=$(resolve_claude_pid "$session")
+        config_dir=$(resolve_config_dir_for_pid "$claude_pid" 2>/dev/null) || config_dir=""
+        jsonl=$(resolve_jsonl_path "$session" "$claude_pid" "$config_dir")
         if [ -z "$jsonl" ]; then
             # pgrep や /proc/<pid>/environ の読み取りは一時的に失敗しうる（他ツール実行中の
             # 前面プロセス切り替わり等）。特定失敗を「リミット解除」と誤認しないよう、
@@ -228,28 +248,20 @@ detect_limited_sessions() {
         IFS=$'\t' read -r is_limited reset_epoch reset_text <<< "$status_line"
         [ "$is_limited" = "1" ] || continue
 
-        # Usage API で能動的に解除済みかどうかを確認する。予測時刻(reset_epoch)を
-        # 待たずに早期解除を検知するための追加チェックであり、失敗時は
-        # 既存の reset_epoch ベースの判定にフォールバックする
-        # (誤って「解除」と判定しないことを最優先する)。
-        config_dir=$(resolve_config_dir "$session")
+        # Usage API で能動的に解除済みかどうかを確認する。予測時刻(reset_epoch)を待たずに
+        # 早期解除を検知するための追加チェックであり、失敗時は既存の reset_epoch ベースの
+        # 判定にフォールバックする(誤って「解除」と判定しないことを最優先する)。
+        # config_dir はループ冒頭で既に解決済みのものを使う(再解決しない)。
         if [ -n "$config_dir" ]; then
-            # 同一 config_dir への Usage API 呼び出しは実行内で1回のみに留める
-            # (アカウント単位の値のため、複数セッションから重複して取得しない)。
-            # 「実行内キャッシュ未確定」の場合にのみスロットリング判定を行う点が重要:
-            # スロットリング判定を毎セッション行ってしまうと、直前のセッションの
-            # record_usage_checked によって最終チェック時刻が「今」に更新され、
-            # 同一 config_dir を共有する2つ目以降のセッションが本来使えるはずの
-            # キャッシュ済み判定結果を使わずに(誤ってスロットリング対象とみなされて)
-            # 素通りしてしまう(=要件2の「実行内で使い回す」が成立しなくなる)。
+            # 同一 config_dir への Usage API 呼び出しは実行内で 1 回のみに留める(アカウント単位の値のため)。
+            # キャッシュ未確定の場合にのみスロットリング判定を行う: 毎セッションで判定すると、
+            # 直前のセッションの record_usage_checked が最終チェック時刻を更新してしまい、
+            # 同一 config_dir を共有する 2 つ目以降のセッションが誤ってスロットリング対象になる。
             if [ -z "${usage_cache_ok[$config_dir]+x}" ]; then
                 if usage_check_allowed "$config_dir"; then
                     record_usage_checked "$config_dir"
-                    # コマンド置換 $(...) はサブシェルを生成するため使わない。
-                    # fetch_usage_status をサブシェル経由で呼ぶと、呼び出し回数の
-                    # 記録など呼び出し側で状態を持つ実装に対して「実際は1回しか
-                    # 呼ばれていないのに呼ばれたかどうかを外側から観測できない」
-                    # 問題が生じるため、標準出力を一時ファイル経由で受け取る
+                    # fetch_usage_status はサブシェル経由($(...))で呼ばない: サブシェル内での
+                    # 状態変化は呼び出し元から観測できないため、標準出力を一時ファイル経由で受け取る。
                     usage_tmpfile=$(mktemp)
                     if fetch_usage_status "$config_dir" > "$usage_tmpfile"; then
                         usage_cache_ok["$config_dir"]=1
@@ -344,7 +356,7 @@ session_recorded_in() {
 
 # メイン処理: このファイルが直接実行された場合のみ実行する。
 # テスト等から source されたとき(BASH_SOURCE がスクリプト自身と一致しない)は
-# 関数定義のみを提供し、mkdir・Discord通知・tmux操作などの副作用は起こさない。
+# 関数定義のみを提供し、mkdir・Discord 通知・tmux 操作などの副作用は起こさない。
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 

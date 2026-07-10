@@ -89,6 +89,32 @@ else
   fi
 fi
 
+echo "Testing check-notify.sh is safely sourceable (no side effects)..."
+TEST_HOME=$(mktemp -d)
+if ! (
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    if declare -p STATE_FILE >/dev/null 2>&1; then
+      echo "STATE_FILE should not be set when sourced" >&2
+      exit 1
+    fi
+    if ! declare -F resolve_jsonl_path >/dev/null 2>&1; then
+      echo "resolve_jsonl_path should be defined after sourcing" >&2
+      exit 1
+    fi
+  '
+); then
+  echo "❌ check-notify.sh executed main logic (or failed) when sourced"
+  FAILED=1
+else
+  echo "✅ check-notify.sh only defines functions when sourced"
+fi
+if [ -d "$TEST_HOME/.claude/scripts/limit-unlocked/data" ]; then
+  echo "❌ check-notify.sh created state directory as a side effect of sourcing"
+  FAILED=1
+fi
+rm -rf "$TEST_HOME"
+
 if [ $FAILED -eq 0 ]; then
   echo "✅ All notification script tests passed"
 else

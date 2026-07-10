@@ -6,16 +6,6 @@
 # 表示内容が一時的に切り替わることで誤検出（フラッピング）が起きるため採用しない。
 # 代わりに、tmux セッションが起動している claude プロセスの pid から会話ログの
 # jsonl ファイルを一意に特定し、その内容でリミット状態を判定する。
-cd "$(dirname "$0")" || exit 1
-
-mkdir -p "$HOME/.claude/scripts/limit-unlocked/data"
-STATE_FILE="$HOME/.claude/scripts/limit-unlocked/data/limited_sessions.txt"
-NEW_STATE_FILE="${STATE_FILE}.new"
-touch "$STATE_FILE"
-
-# shellcheck source=/dev/null
-source ./.env
-
 # tmux セッション名から、対応する claude プロセスが書き込んでいる会話ログ (jsonl) の
 # パスを特定する。claude は CLAUDE_CONFIG_DIR ごと（例: ~/.claude と ~/.claude-work）に
 # sessions/<pid>.json（pid → sessionId の対応表）を別々に持つため両方を確認する。
@@ -192,45 +182,60 @@ session_recorded_in() {
     awk -F'\t' -v s="$session" '$1 == s { found=1 } END { exit !found }' "$file" 2>/dev/null
 }
 
-detect_limited_sessions
-now=$(date +%s)
+# メイン処理: このファイルが直接実行された場合のみ実行する。
+# テスト等から source されたとき(BASH_SOURCE がスクリプト自身と一致しない)は
+# 関数定義のみを提供し、mkdir・Discord通知・tmux操作などの副作用は起こさない。
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-# 新規にリミットへ到達したセッションを通知する
-while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
-    [ -n "$session" ] || continue
-    if ! session_recorded_in "$session" "$STATE_FILE"; then
-        echo "Limit detected: $session ($cwd)"
-        description="${cwd} (session: ${session}) が利用制限に達しました。"
-        description="${description}"$'\n'"再開予定: $(format_jst "$reset_epoch")"
-        [ -n "$reset_text" ] && [ "$reset_text" != "-" ] && description="${description}"$'\n'"${reset_text}"
-        send_discord \
-            "Claude Code のリミット到達" \
-            "$description" \
-            15158332 # 赤系色
-    fi
+    mkdir -p "$HOME/.claude/scripts/limit-unlocked/data"
+    STATE_FILE="$HOME/.claude/scripts/limit-unlocked/data/limited_sessions.txt"
+    NEW_STATE_FILE="${STATE_FILE}.new"
+    touch "$STATE_FILE"
 
-    # 再開予定時刻を過ぎてもまだリミット中の場合は再開を試みる。
-    # 再開に成功していれば、次回ポーリング時には会話ログの直近メッセージが
-    # 送信した system-reminder 形式の再開メッセージに置き換わり、
-    # is_limited が自然に 0 になるため、再開済みかどうかを別途記録しなくても二重送信にはならない
-    if [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
-        echo "Resuming: $session ($cwd)"
-        resume_session "$session"
-    fi
-done < "$NEW_STATE_FILE"
+    # shellcheck source=/dev/null
+    source ./.env
 
-# リミットが解除された（前回は記録されていたが今回は検出されなかった）セッションを通知する
-while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
-    [ -n "$session" ] || continue
-    session_recorded_in "$session" "$NEW_STATE_FILE" && continue # まだリミット中
+    detect_limited_sessions
+    now=$(date +%s)
 
-    if tmux has-session -t "${session}:" 2>/dev/null; then
-        echo "Limit unlocked: $session ($cwd)"
-        send_discord \
-            "Claude Code のリミット解除" \
-            "${cwd} (session: ${session}) のリミットが解除されました。" \
-            5814783 # 青系色
-    fi
-done < "$STATE_FILE"
+    # 新規にリミットへ到達したセッションを通知する
+    while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
+        [ -n "$session" ] || continue
+        if ! session_recorded_in "$session" "$STATE_FILE"; then
+            echo "Limit detected: $session ($cwd)"
+            description="${cwd} (session: ${session}) が利用制限に達しました。"
+            description="${description}"$'\n'"再開予定: $(format_jst "$reset_epoch")"
+            [ -n "$reset_text" ] && [ "$reset_text" != "-" ] && description="${description}"$'\n'"${reset_text}"
+            send_discord \
+                "Claude Code のリミット到達" \
+                "$description" \
+                15158332 # 赤系色
+        fi
 
-mv "$NEW_STATE_FILE" "$STATE_FILE"
+        # 再開予定時刻を過ぎてもまだリミット中の場合は再開を試みる。
+        # 再開に成功していれば、次回ポーリング時には会話ログの直近メッセージが
+        # 送信した system-reminder 形式の再開メッセージに置き換わり、
+        # is_limited が自然に 0 になるため、再開済みかどうかを別途記録しなくても二重送信にはならない
+        if [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
+            echo "Resuming: $session ($cwd)"
+            resume_session "$session"
+        fi
+    done < "$NEW_STATE_FILE"
+
+    # リミットが解除された（前回は記録されていたが今回は検出されなかった）セッションを通知する
+    while IFS=$'\t' read -r session cwd reset_epoch reset_text; do
+        [ -n "$session" ] || continue
+        session_recorded_in "$session" "$NEW_STATE_FILE" && continue # まだリミット中
+
+        if tmux has-session -t "${session}:" 2>/dev/null; then
+            echo "Limit unlocked: $session ($cwd)"
+            send_discord \
+                "Claude Code のリミット解除" \
+                "${cwd} (session: ${session}) のリミットが解除されました。" \
+                5814783 # 青系色
+        fi
+    done < "$STATE_FILE"
+
+    mv "$NEW_STATE_FILE" "$STATE_FILE"
+fi

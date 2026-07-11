@@ -140,11 +140,11 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 2. **Issue 内容の取得**: `gh issue view` で Issue のタイトル・本文・コメントを取得
 3. **spec（設計）の作成**: `superpowers:brainstorming` により要件を対話的に確認し、spec を作成
 4. **spec のレビュー**: sub-agent による自動レビューを実施
-5. **spec の Confluence アップロード**: レビュー後の spec を Confluence にアップロード
+5. **spec の Issue コメント投稿**: レビュー後の spec を `gh issue comment` で Issue にコメント投稿
 6. **spec の承認**: `AskUserQuestion` でユーザーに承認を求める
 7. **plan（実装計画）の作成**: `superpowers:writing-plans` により plan を作成
-8. **plan のレビュー・Confluence アップロード・承認**: spec と同様の流れを plan にも適用
-9. **Issue へのコメント投稿**: spec/plan の Confluence URL を Issue にコメント
+8. **plan のレビュー**: sub-agent による自動レビューを実施
+9. **plan の Issue コメント投稿**: レビュー後の plan を新規コメントとして Issue に投稿(記録用途であり、plan 自体に承認ステップはない)
 10. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
 11. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
 12. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
@@ -187,7 +187,7 @@ Jira チケットを確認し、対応のためのブランチを作成して PR
 2. **ユーザーへの質問** (不明点がある場合のみ): 不明点や仕様の確認を対話的に質問
 3. **外部仕様の確認**: 必要に応じて外部依存や最新仕様を確認
 4. **要件定義書の作成**: 詳細な要件定義書を作成
-5. **Jira チケットへのコメント投稿**: 要件定義書を Jira チケットにコメントとして投稿
+5. **要件定義書の opengist アップロードと Jira チケットへのコメント投稿**: 要件定義書を opengist にアップロードし、短い要約 + gist URL を Jira チケットにコメントとして投稿
 6. **プランファイルへの記載**: 実装計画をプランファイルに記載
 7. **ExitPlanMode の実行**: プランモードを終了し、ユーザーの承認を待つ
 

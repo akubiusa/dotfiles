@@ -27,9 +27,10 @@ through the end) using the Todo tool. Mark each `in_progress` immediately
 before starting that phase and `completed` immediately after finishing it —
 do not batch updates at the end.
 
-If a revise loop (Phase 6 or Phase 10) sends execution back to an earlier
-phase, create a **new** task for the repeated phase (e.g. "Phase 3: Write
-the Spec (revision 2)") rather than reopening the completed one.
+If a revise loop (Phase 6) sends execution back to an earlier phase, create
+a **new** task for the repeated phase (e.g. "Phase 3: Write the Spec
+(revision 2)") rather than reopening the completed one. There is no
+equivalent revise loop for the plan — the plan has no human approval step.
 
 ## Phase 3: Write the Spec
 
@@ -50,6 +51,22 @@ information is not.
 Skip brainstorming's own "commit the spec to git" step: per
 `rules/superpowers.md`'s "Local-Only Artifacts" policy, `docs/superpowers/`
 is `.gitignore`d and stays a local untracked artifact.
+
+brainstorming's own `<HARD-GATE>` (approving each design section before the
+spec file is written) is baked into the vendored plugin and cannot be
+skipped from here — see the Notes section for why. Explicitly instruct
+brainstorming, every time, to use the **AskUserQuestion** tool for that
+approval confirmation rather than a plain-text question, per this
+repository's convention of using AskUserQuestion for all user-facing
+clarifying/approval questions.
+
+Also explicitly instruct brainstorming to stop once the spec file is
+written and its own self-review is complete: it must skip its own "User
+Review Gate" (the step where it asks the user to review the written spec
+file) and must not auto-chain into invoking writing-plans. This flow's own
+Phase 4 through Phase 7 own spec review, posting, approval, and plan
+creation instead — chaining from within brainstorming would duplicate
+Phase 6's approval and invoke writing-plans out of order.
 
 ## Phase 4: Review the Spec
 
@@ -113,6 +130,11 @@ Same language instruction as Phase 3 (Japanese for this repository, code/
 commands/identifiers as-is), and same "skip the commit-to-git step" rule —
 the plan stays a local untracked artifact.
 
+Explicitly instruct writing-plans to skip its own "Execution Handoff" step
+(the question asking the user to choose Subagent-Driven vs. Inline
+Execution) once the plan is saved. This flow decides that itself in
+Phase 11, without asking the user.
+
 ## Phase 8: Review the Plan
 
 Same as Phase 4, for the plan file: wait for the automatic sub-agent review
@@ -129,29 +151,14 @@ PLAN_COMMENT_URL="$url"
 PLAN_COMMENT_ID=${url##*issuecomment-}
 ```
 
-This must be a **new** comment, never reusing `SPEC_COMMENT_ID`.
-
-Same revision rule as Phase 5: if repeating after Phase 10, update the
-existing plan comment by its own ID:
-
-```bash
-gh api "repos/$ISSUE_OWNER/$ISSUE_REPO/issues/comments/$PLAN_COMMENT_ID" -X PATCH -F body=@<plan-file-path>
-```
+This must be a **new** comment, never reusing `SPEC_COMMENT_ID`. Posted for
+record/audit purposes — Phase 8's automatic sub-agent review already ran
+before this posting, and there is no human approval step for the plan (see
+Notes for why), so this comment is not revised afterward.
 
 Same fallback as Phase 5 if the post fails.
 
-## Phase 10: Approve the Plan
-
-Use **AskUserQuestion** again for explicit plan approval — Phase 6's spec
-approval does not carry over, since a plan can diverge from its spec.
-
-Same requirements as Phase 6: the question text MUST include `PLAN_COMMENT_URL`
-(Phase 9), and the same two fixed options apply (see Phase 6).
-
-If revise is chosen, get what to change via "Other", update the plan, and
-repeat Phases 7–10 (Phase 9 becomes an update via `PLAN_COMMENT_ID`).
-
-## Phase 11: Create Branch
+## Phase 10: Create Branch
 
 `EnterWorktree` (Phase 1) already created a branch off
 `origin/<default-branch>`; this phase renames it to a Conventional Branch
@@ -176,31 +183,38 @@ stop and ask how to proceed.
 If `git branch -m <branch_name>` fails because it already exists, do not
 force-rename over it — stop and ask whether to reuse, delete, or rename.
 
-## Phase 12: Execute the Plan
+## Phase 11: Execute the Plan
 
-Invoke **superpowers:executing-plans** (or
-**superpowers:subagent-driven-development** for independent tasks) against
-the approved plan. Run its tasks without re-confirming each one with the
-user; only stop for genuine blockers the plan didn't anticipate (missing
-credentials, contradictory requirements).
+Decide the execution approach yourself — do not ask the user to choose.
+Use **superpowers:subagent-driven-development** when the plan's tasks are
+independent of each other (a fresh subagent per task benefits from
+parallel review). Use **superpowers:executing-plans** (inline) when tasks
+are tightly sequential and each depends on the previous task's exact file
+state (e.g. a single file edited incrementally across tasks), where
+per-task subagents would need to re-derive context that's cheaper to keep
+in this session.
+
+Invoke the chosen skill against the approved plan. Run its tasks without
+re-confirming each one with the user; only stop for genuine blockers the
+plan didn't anticipate (missing credentials, contradictory requirements).
 
 If a task fails (test failure, compile error, a sub-agent reporting it
-couldn't complete), stop and report it before moving to Phase 13 — do not
+couldn't complete), stop and report it before moving to Phase 12 — do not
 treat it as done.
 
-## Phase 13: Verify
+## Phase 12: Verify
 
 Invoke **superpowers:verification-before-completion** before creating the PR.
-If it reports a failure, go back to Phase 12 to fix it — do not proceed to
-Phase 14 with a known-failing verification.
+If it reports a failure, go back to Phase 11 to fix it — do not proceed to
+Phase 13 with a known-failing verification.
 
-## Phase 14: Deep Review
+## Phase 13: Deep Review
 
 Run `/deep-review` (no arguments — local diff mode) per `rules/workflow.md`
-ADR-003. Fix every finding scored ≥ 50 before Phase 15 — this is a required
+ADR-003. Fix every finding scored ≥ 50 before Phase 14 — this is a required
 gate the Stop/PostToolUse hooks enforce.
 
-## Phase 15: Create PR
+## Phase 14: Create PR
 
 `gh pr create` requires the branch to already exist on a remote. Push it
 first, or it fails with `aborted: you must first push the current branch to
@@ -245,7 +259,7 @@ EOF
   repo the Issue lives in, not `gh`'s fork/parent heuristic default). If
   head resolution fails, fall back to `--head <origin-owner>:<branch>`.
 
-## Phase 16: Write Session State
+## Phase 15: Write Session State
 
 After PR creation, write the PR URL to the session state file so hooks can
 reference it directly:
@@ -269,14 +283,15 @@ chmod 600 ~/.claude/data/session-state.json
 If `PR_URL` comes back empty or the `jq` write fails, stop and report it
 instead of leaving a stale/empty state file.
 
-## Phase 17: After PR Creation
+## Phase 16: After PR Creation
 
 Run `/pr-health-monitor <PR number>` immediately, without asking first.
 
 `pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the
 PR body, and can trigger `/handle-pr-reviews` — none of that is "merging,"
 so the merge guardrail doesn't apply. No separate confirmation is needed;
-Phase 10 already approved the plan.
+the plan was already reviewed automatically (Phase 8) and posted for the
+record (Phase 9).
 
 `pr-health-monitor` starts the Copilot review wait as a `Monitor(persistent:
 true)` instance in this same session (see `wait-for-copilot-review`'s
@@ -284,9 +299,9 @@ SKILL.md) — there is no separate background process or log file to verify.
 Report the monitor as running; `/handle-pr-reviews` is called directly in
 this conversation when the monitor detects a review.
 
-## Phase 18: Start the PR Close Monitor
+## Phase 17: Start the PR Close Monitor
 
-Immediately after Phase 17, start the merge/close monitor so cleanup
+Immediately after Phase 16, start the merge/close monitor so cleanup
 happens automatically once the PR closes, as long as this session stays
 alive:
 
@@ -317,3 +332,17 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - `disable-model-invocation: true` is intentional: only the `issue-pr`
   dispatcher's explicit hand-off reaches this skill, not opportunistic
   auto-trigger on an issue number appearing in conversation.
+- brainstorming's `<HARD-GATE>` (per-design-section approval before the
+  spec file exists) is hardcoded into the vendored `superpowers:brainstorming`
+  plugin skill itself, not into this repository's configuration — it cannot
+  be disabled from `issue-pr-deep`'s own instructions. This is why "disable
+  approval" settings on the dotfiles side don't fully suppress user-facing
+  confirmations; Phase 3 mitigates it by forcing that confirmation through
+  AskUserQuestion instead of a plain-text question.
+- The plan has no human approval step by design: Phase 8's automatic
+  sub-agent review and Phase 9's Issue-comment posting already surface the
+  plan's content for review/record before implementation starts, so an
+  additional explicit `AskUserQuestion` gate (the old Phase 10) was removed
+  as redundant. If a plan needs correction after Phase 9, treat it the same
+  as any other implementation issue found during Phase 11 (Execute the
+  Plan) rather than reopening an approval loop.

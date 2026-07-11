@@ -36,7 +36,7 @@ the lite path if it no longer fits. Recommend switching to `issue-pr-deep`.
 
 ## Phase 4: Create Branch
 
-Same logic as `issue-pr-deep`'s Phase 11 (branch rename from the
+Same logic as `issue-pr-deep`'s Phase 10 (branch rename from the
 dispatcher-created worktree branch to a Conventional Branch name):
 
 ```bash
@@ -60,11 +60,11 @@ PR. If it reports a failure, fix it and re-run before moving on.
 
 Run `/lite-review` (no arguments — local diff mode). Fix every finding
 scored ≥ 50 before moving on to Phase 7. This replaces `issue-pr-deep`'s
-Phase 14 `/deep-review` gate — the lite path always uses `/lite-review`.
+Phase 13 `/deep-review` gate — the lite path always uses `/lite-review`.
 
 ## Phase 7: Create PR
 
-Same logic as `issue-pr-deep`'s Phase 15, with one difference: the PR body
+Same logic as `issue-pr-deep`'s Phase 14, with one difference: the PR body
 does **not** include `Spec: [URL]` / `Plan: [URL]` lines (no spec/plan
 document exists for this path).
 
@@ -80,12 +80,12 @@ PRBODY
 )"
 ```
 
-Same untrusted-input precautions as `issue-pr-deep`'s Phase 15 (quoted
+Same untrusted-input precautions as `issue-pr-deep`'s Phase 14 (quoted
 heredoc, sensitive-info check, `--repo` explicit).
 
 ## Phase 8: Write Session State
 
-Same as `issue-pr-deep`'s Phase 16, verbatim:
+Same as `issue-pr-deep`'s Phase 15, verbatim:
 
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
@@ -105,12 +105,12 @@ chmod 600 ~/.claude/data/session-state.json
 
 ## Phase 9: After PR Creation
 
-Same as `issue-pr-deep`'s Phase 17: run `/pr-health-monitor <PR number>`
+Same as `issue-pr-deep`'s Phase 16: run `/pr-health-monitor <PR number>`
 immediately, without asking the user whether to run it.
 
 ## Phase 10: Start the PR Close Monitor
 
-Same as `issue-pr-deep`'s Phase 18:
+Same as `issue-pr-deep`'s Phase 17:
 
 ```bash
 PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
@@ -119,5 +119,5 @@ PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .numbe
 Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed state
 check, then `Monitor(..., persistent: true)`), always passing `--repo
 "$ISSUE_OWNER/$ISSUE_REPO"` explicitly (fork scenario safety — see
-`issue-pr-deep`'s Phase 18 for the full rationale). When the monitor emits a
+`issue-pr-deep`'s Phase 17 for the full rationale). When the monitor emits a
 `pr_closed` event, call `/pr-cleanup` directly in this same conversation.

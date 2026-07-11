@@ -64,7 +64,7 @@ runs inside the worktree created here.
      `EnterWorktree`'s default `baseRef: fresh`).
    - Immediately after success, record the actual current branch name via
      `git branch --show-current` — the invoked skill's Create Branch phase
-     (`issue-pr-deep`'s Phase 11, or `issue-pr-lite`'s Phase 4, depending on
+     (`issue-pr-deep`'s Phase 10, or `issue-pr-lite`'s Phase 4, depending on
      which one Phase 2.5 selects) needs this exact value to know which
      branch to rename, since the harness's naming convention for that
      branch is not a hard guarantee.

@@ -37,3 +37,12 @@ DISCORD_CODEX_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEB
 
 # Discord でメンションするユーザー ID（オプション）
 DISCORD_CODEX_MENTION_USER_ID=""
+
+# -----------------------------------------
+# opengist - Document upload
+# -----------------------------------------
+# opengist への新規 gist 作成(HTTP push)に使う直接アクセス URL(SSO を経由しない)
+OPENGIST_HTTP_URL="http://192.168.0.100:6157"
+
+# opengist の Web UI で発行した Personal Access Token
+OPENGIST_API_TOKEN=""

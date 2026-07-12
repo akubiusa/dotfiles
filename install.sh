@@ -17,6 +17,7 @@
 #     --skip-gh          gh CLI のインストールをスキップ
 #     --skip-ghq         ghq のインストールをスキップ
 #     --skip-mkwork      mkwork のインストールをスキップ
+#     --skip-roots       roots のインストールをスキップ
 #     --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
 #     --help             ヘルプを表示
 # ==============================================================================
@@ -31,6 +32,7 @@ SKIP_APT=0
 SKIP_GH=0
 SKIP_GHQ=0
 SKIP_MKWORK=0
+SKIP_ROOTS=0
 SKIP_INTERACTIVE=0
 
 # ヘルプメッセージを表示する関数
@@ -45,6 +47,7 @@ OPTIONS:
   --skip-gh          gh CLI のインストールをスキップ
   --skip-ghq         ghq のインストールをスキップ
   --skip-mkwork      mkwork のインストールをスキップ
+  --skip-roots       roots のインストールをスキップ
   --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
   --help             このヘルプを表示
 
@@ -81,6 +84,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-mkwork)
       SKIP_MKWORK=1
+      shift
+      ;;
+    --skip-roots)
+      SKIP_ROOTS=1
       shift
       ;;
     --skip-interactive)
@@ -555,6 +562,90 @@ install_ghq() {
   log_info "ghq が正常にインストールされました"
 }
 
+# roots のインストール
+install_roots() {
+  if [[ "$SKIP_ROOTS" == "1" ]]; then
+    log_info "roots のインストールをスキップします (--skip-roots)"
+    return 0
+  fi
+
+  log_info "roots をインストールしています..."
+
+  if command -v roots &> /dev/null; then
+    log_warn "roots は既にインストールされています"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log_info "[DRY RUN] roots の GitHub Release からのダウンロード・インストールをスキップします"
+    return 0
+  fi
+
+  log_info "GitHub Release から最新版を取得しています..."
+
+  local version
+  local api_response
+  api_response=$(curl -fsSL https://api.github.com/repos/k1LoW/roots/releases/latest)
+
+  if command -v jq &> /dev/null; then
+    version=$(printf '%s\n' "$api_response" | jq -r '.tag_name')
+  else
+    log_warn "jq is not installed. Falling back to grep/sed for version parsing"
+    version=$(printf '%s\n' "$api_response" | grep '"tag_name":' | sed -E 's/.*"(v[^"]+)".*/\1/')
+  fi
+
+  if [[ -z "$version" || "$version" == "null" ]]; then
+    log_error "Failed to parse latest version from GitHub API"
+    return 1
+  fi
+
+  log_info "最新バージョン: $version"
+
+  local download_url="https://github.com/k1LoW/roots/releases/download/${version}/roots_${version}_linux_${ARCH}.tar.gz"
+
+  log_info "ダウンロード URL: $download_url"
+
+  local temp_dir
+  temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' RETURN
+
+  if [[ ! -d "$temp_dir" ]]; then
+    log_error "Failed to create temporary directory"
+    return 1
+  fi
+
+  cd "$temp_dir" || { log_error "Failed to change directory to temporary directory"; return 1; }
+
+  if ! curl -fsSL -o roots.tar.gz "$download_url"; then
+    log_error "Failed to download roots archive"
+    cd - > /dev/null || true
+    return 1
+  fi
+
+  if ! tar -xzf roots.tar.gz; then
+    log_error "Failed to extract roots archive"
+    cd - > /dev/null || true
+    return 1
+  fi
+
+  local roots_binary
+  roots_binary=$(find . -maxdepth 1 -type f -name roots -print -quit)
+
+  if [[ -z "$roots_binary" ]]; then
+    log_error "roots binary not found after extraction"
+    cd - > /dev/null || true
+    return 1
+  fi
+
+  mkdir -p "$HOME/.local/bin"
+  mv "$roots_binary" "$HOME/.local/bin/roots"
+  chmod +x "$HOME/.local/bin/roots"
+
+  cd - > /dev/null
+
+  log_info "roots が正常にインストールされました"
+}
+
 # mkwork のインストール
 install_mkwork() {
   if [[ "$SKIP_MKWORK" == "1" ]]; then
@@ -829,6 +920,7 @@ main() {
   install_apt_packages
   install_gh_cli
   install_ghq
+  install_roots
   install_mkwork
   setup_gitconfig_local
   setup_env

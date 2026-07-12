@@ -18,30 +18,41 @@ if [ ! -f "$file" ]; then
   exit 1
 fi
 
-# ~/.env を読み込む(トップレベルの横断的環境変数、home/dot_env.example 参照)。
-# 新規作成(HTTP push)にのみ必要。
-# shellcheck source=/dev/null
-source "$HOME/.env"
-
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 ssh_remote="ssh://opengist/akubiusa/$slug"
 push_output=""
 
-if ssh -T -o BatchMode=yes -o ConnectTimeout=5 opengist true 2>/dev/null \
-    && git clone -q "$ssh_remote" "$tmpdir/repo" 2>/dev/null; then
+# SSH 到達可否を先に判定する(spec の運用方針: 接続できれば使える、できなければ
+# 使えないと割り切る)。到達済みなのに clone が失敗した場合は原因不明のエラーの
+# 可能性があるため、新規作成へフォールバックする前に警告する。
+ssh_ok=false
+if ssh -T -o BatchMode=yes -o ConnectTimeout=5 opengist true 2>/dev/null; then
+  ssh_ok=true
+fi
+
+if [ "$ssh_ok" = true ] && git clone -q "$ssh_remote" "$tmpdir/repo" 2>/dev/null; then
   # 既存 gist を更新: ファイルを上書きして通常 commit・push(fast-forward)。
   # → 履歴が自然に積み上がり、opengist の Web UI 上で改訂履歴を閲覧できる。
   cd "$tmpdir/repo"
   cp "$file" "./$(basename "$file")"
   git add .
   git commit -q -m "$title" --allow-empty
-  push_output=$(git push origin main -o title="$title" -o visibility=private 2>&1)
+  push_output=$(git push origin main -o title="$title" -o visibility=private 2>&1) || true
 else
-  # 新規作成: SSH には gist 作成経路がないため HTTP push を使う(opengist のソースコード
-  # 上、SSH は既存 gist への push/pull のみをサポートし、新規作成には対応していない)。
+  if [ "$ssh_ok" = true ]; then
+    echo "WARN: SSH reachable but cloning the existing gist failed; falling back to HTTP new-gist creation." >&2
+  fi
+
+  # 新規作成: SSH には gist 作成経路がないため HTTP push を使う(opengist のソースコード上、
+  # SSH は既存 gist への push/pull のみをサポートし、新規作成には対応していない)。
   # PAT は remote URL に埋め込まず、http.extraHeader で Basic 認証ヘッダーとして注入する。
+  # ~/.env を読み込む(トップレベルの横断的環境変数、home/dot_env.example 参照)。
+  # 新規作成(HTTP push)にのみ必要なため、このブランチでのみ読み込む。
+  # shellcheck source=/dev/null
+  source "$HOME/.env"
+
   if [ -z "${OPENGIST_HTTP_URL:-}" ] || [ -z "${OPENGIST_API_TOKEN:-}" ]; then
     echo "ERROR: OPENGIST_HTTP_URL / OPENGIST_API_TOKEN must be set in ~/.env" >&2
     exit 1
@@ -57,7 +68,7 @@ else
   git add .
   git commit -q -m "$title"
   git remote add origin "$http_remote"
-  push_output=$(git -c http.extraHeader="$auth_header" push origin main -o title="$title" -o visibility=private 2>&1)
+  push_output=$(git -c http.extraHeader="$auth_header" push origin main -o title="$title" -o visibility=private 2>&1) || true
 fi
 
 # gist URL を push 出力から抽出する。

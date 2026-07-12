@@ -140,11 +140,11 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 2. **Issue 内容の取得**: `gh issue view` で Issue のタイトル・本文・コメントを取得
 3. **spec（設計）の作成**: `superpowers:brainstorming` により要件を対話的に確認し、spec を作成
 4. **spec のレビュー**: sub-agent による自動レビューを実施
-5. **spec の Confluence アップロード**: レビュー後の spec を Confluence にアップロード
+5. **spec の Trilium アップロード**: レビュー後の spec を Trilium にアップロード
 6. **spec の承認**: `AskUserQuestion` でユーザーに承認を求める
 7. **plan（実装計画）の作成**: `superpowers:writing-plans` により plan を作成
-8. **plan のレビュー・Confluence アップロード・承認**: spec と同様の流れを plan にも適用
-9. **Issue へのコメント投稿**: spec/plan の Confluence URL を Issue にコメント
+8. **plan のレビュー・Trilium アップロード・承認**: spec と同様の流れを plan にも適用
+9. **Issue へのコメント投稿**: spec/plan の Trilium URL を Issue にコメント
 10. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
 11. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
 12. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う

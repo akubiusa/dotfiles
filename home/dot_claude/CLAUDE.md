@@ -15,6 +15,7 @@
 - Code comments: follow project CLAUDE.md; default English. Error messages: English.
 - Half-width space between Japanese and alphanumeric characters.
 - **All Markdown under `~/.claude/` must be written in English.**
+- **No mid-sentence line breaks**: within a single prose paragraph (chat responses, generated Markdown documents/articles, PR/commit/comment bodies, etc.), do not insert a manual line break (hard-wrapping, e.g. at a fixed column width) in the middle of a sentence. Write each sentence as one continuous line in the source text; let the renderer wrap it. This applies to prose paragraphs, not to intentionally structured content (bullet lists, code blocks, tables), where one item/line per line is expected.
 
 ## Git
 

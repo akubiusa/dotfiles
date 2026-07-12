@@ -23,8 +23,8 @@ you MUST dispatch a sub-agent to review the document and apply fixes.
      brainstorming conducted directly on a GitHub Issue), follow
      `rules/issue-comment-docs.md` and present the user with the local file
      path and the Issue comment URL.
-   - Otherwise, follow `rules/confluence.md` and present the user with the
-     local file path and the Confluence URL.
+   - Otherwise, invoke the `trilium` skill and present the user with the
+     local file path and the share URL.
 
 ### Clarifying questions
 
@@ -41,6 +41,6 @@ AskUserQuestion to relay it to the user.
 `docs/superpowers/` and `.superpowers/` are intentionally excluded via the
 global `.gitignore` (`home/dot_config/git/ignore`). Spec and plan documents
 under these paths are local-only working artifacts — after uploading them
-to Confluence (per `rules/confluence.md`), do NOT force-add or commit them
+to Trilium (per the `trilium` skill), do NOT force-add or commit them
 to git (no `git add -f`, no `--force`). The durable record is the
-Confluence page, not the git history.
+Trilium note, not the git history.

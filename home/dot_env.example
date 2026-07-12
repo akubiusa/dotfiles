@@ -37,3 +37,12 @@ DISCORD_CODEX_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEB
 
 # Discord でメンションするユーザー ID（オプション）
 DISCORD_CODEX_MENTION_USER_ID=""
+
+# -----------------------------------------
+# Trilium Notes - ドキュメントアップロード用
+# -----------------------------------------
+# Trilium サーバーの HTTP ベース URL（末尾スラッシュなし）
+TRILIUM_HTTP_URL="http://192.168.0.100:7001"
+
+# Trilium ETAPI トークン（Trilium の設定画面から発行）
+TRILIUM_ETAPI_TOKEN="YOUR_ETAPI_TOKEN"

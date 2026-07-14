@@ -608,7 +608,8 @@ install_roots() {
 
   local temp_dir
   temp_dir=$(mktemp -d)
-  trap 'rm -rf "$temp_dir"' RETURN
+  # ${temp_dir:-} は set -u 下で temp_dir が未定義の場合でも trap がエラーにならないようにする防御策
+  trap 'rm -rf "${temp_dir:-}"' RETURN
 
   if [[ ! -d "$temp_dir" ]]; then
     log_error "Failed to create temporary directory"

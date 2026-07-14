@@ -53,12 +53,17 @@ Skip brainstorming's own "commit the spec to git" step: per
 is `.gitignore`d and stays a local untracked artifact.
 
 brainstorming's own `<HARD-GATE>` (approving each design section before the
-spec file is written) is baked into the vendored plugin and cannot be
-skipped from here — see the Notes section for why. Explicitly instruct
-brainstorming, every time, to use the **AskUserQuestion** tool for that
-approval confirmation rather than a plain-text question, per this
-repository's convention of using AskUserQuestion for all user-facing
-clarifying/approval questions.
+spec file is written) is a vendored-plugin default this repository
+overrides via instruction, not a mechanism this repository can disable at
+the tool level — see the Notes section for why that distinction matters.
+Explicitly instruct brainstorming, every time, **not** to ask for that
+per-section or overall "does this design look right, may I proceed"
+approval before writing the spec file — skip straight to writing it once
+enough information has been gathered. This does not affect genuine
+requirement-clarifying questions (still fine via AskUserQuestion, per the
+paragraph above) — only the "may I proceed with this design" confirmation
+is being skipped. The sole remaining human checkpoint for the spec's
+content is Phase 6, after the spec is posted as an Issue comment.
 
 Also explicitly instruct brainstorming to stop once the spec file is
 written and its own self-review is complete: it must skip its own "User
@@ -130,10 +135,14 @@ Same language instruction as Phase 3 (Japanese for this repository, code/
 commands/identifiers as-is), and same "skip the commit-to-git step" rule —
 the plan stays a local untracked artifact.
 
-Explicitly instruct writing-plans to skip its own "Execution Handoff" step
-(the question asking the user to choose Subagent-Driven vs. Inline
-Execution) once the plan is saved. This flow decides that itself in
-Phase 11, without asking the user.
+Explicitly instruct writing-plans, as a hard rule with no exceptions, not
+to ask the Execution Handoff question (the question offering a choice
+between Subagent-Driven vs. Inline Execution) under any circumstance —
+writing-plans's own SKILL.md treats "offer execution choice" as a required
+step after saving the plan, and that step must not fire here. This flow
+decides the execution approach itself in Phase 11, without asking the
+user, and proceeds directly from plan completion into execution — no
+confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
@@ -186,6 +195,11 @@ force-rename over it — stop and ask whether to reuse, delete, or rename.
 ## Phase 11: Execute the Plan
 
 Decide the execution approach yourself — do not ask the user to choose.
+This decision must already be final by the time this phase starts: if you
+find yourself about to ask the user which approach to use, that is a bug
+in this flow, not a legitimate checkpoint. Move from plan completion
+directly into dispatching the chosen skill below, with no pause, no
+confirmation, and no waiting for a response before starting.
 Use **superpowers:subagent-driven-development** when the plan's tasks are
 independent of each other (a fresh subagent per task benefits from
 parallel review). Use **superpowers:executing-plans** (inline) when tasks
@@ -333,12 +347,15 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
   dispatcher's explicit hand-off reaches this skill, not opportunistic
   auto-trigger on an issue number appearing in conversation.
 - brainstorming's `<HARD-GATE>` (per-design-section approval before the
-  spec file exists) is hardcoded into the vendored `superpowers:brainstorming`
-  plugin skill itself, not into this repository's configuration — it cannot
-  be disabled from `issue-pr-deep`'s own instructions. This is why "disable
-  approval" settings on the dotfiles side don't fully suppress user-facing
-  confirmations; Phase 3 mitigates it by forcing that confirmation through
-  AskUserQuestion instead of a plain-text question.
+  spec file exists) is a default behavior of the vendored
+  `superpowers:brainstorming` plugin skill itself, not a mechanism this
+  repository's configuration can switch off at the tool level. What
+  `issue-pr-deep` *can* do — and does, per Phase 3 — is instruct
+  brainstorming, via the prompt it's invoked with, not to ask for that
+  approval before writing the spec file. Genuine requirement-clarifying
+  questions are unaffected; only the "may I proceed with this design"
+  confirmation is skipped, with Phase 6 serving as the sole human
+  checkpoint for the spec's content afterward.
 - The plan has no human approval step by design: Phase 8's automatic
   sub-agent review and Phase 9's Issue-comment posting already surface the
   plan's content for review/record before implementation starts, so an

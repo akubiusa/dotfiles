@@ -53,12 +53,17 @@ Skip brainstorming's own "commit the spec to git" step: per
 is `.gitignore`d and stays a local untracked artifact.
 
 brainstorming's own `<HARD-GATE>` (approving each design section before the
-spec file is written) is baked into the vendored plugin and cannot be
-skipped from here — see the Notes section for why. Explicitly instruct
-brainstorming, every time, to use the **AskUserQuestion** tool for that
-approval confirmation rather than a plain-text question, per this
-repository's convention of using AskUserQuestion for all user-facing
-clarifying/approval questions.
+spec file is written) is a vendored-plugin default this repository
+overrides via instruction, not a mechanism this repository can disable at
+the tool level — see the Notes section for why that distinction matters.
+Explicitly instruct brainstorming, every time, **not** to ask for that
+per-section or overall "does this design look right, may I proceed"
+approval before writing the spec file — skip straight to writing it once
+enough information has been gathered. This does not affect genuine
+requirement-clarifying questions (still fine via AskUserQuestion, per the
+paragraph above) — only the "may I proceed with this design" confirmation
+is being skipped. The sole remaining human checkpoint for the spec's
+content is Phase 6, after the spec is posted as an Issue comment.
 
 Also explicitly instruct brainstorming to stop once the spec file is
 written and its own self-review is complete: it must skip its own "User

@@ -135,10 +135,14 @@ Same language instruction as Phase 3 (Japanese for this repository, code/
 commands/identifiers as-is), and same "skip the commit-to-git step" rule —
 the plan stays a local untracked artifact.
 
-Explicitly instruct writing-plans to skip its own "Execution Handoff" step
-(the question asking the user to choose Subagent-Driven vs. Inline
-Execution) once the plan is saved. This flow decides that itself in
-Phase 11, without asking the user.
+Explicitly instruct writing-plans, as a hard rule with no exceptions, not
+to ask the Execution Handoff question (the question offering a choice
+between Subagent-Driven vs. Inline Execution) under any circumstance —
+writing-plans's own SKILL.md treats "offer execution choice" as a required
+step after saving the plan, and that step must not fire here. This flow
+decides the execution approach itself in Phase 11, without asking the
+user, and proceeds directly from plan completion into execution — no
+confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
@@ -191,6 +195,11 @@ force-rename over it — stop and ask whether to reuse, delete, or rename.
 ## Phase 11: Execute the Plan
 
 Decide the execution approach yourself — do not ask the user to choose.
+This decision must already be final by the time this phase starts: if you
+find yourself about to ask the user which approach to use, that is a bug
+in this flow, not a legitimate checkpoint. Move from plan completion
+directly into dispatching the chosen skill below, with no pause, no
+confirmation, and no waiting for a response before starting.
 Use **superpowers:subagent-driven-development** when the plan's tasks are
 independent of each other (a fresh subagent per task benefits from
 parallel review). Use **superpowers:executing-plans** (inline) when tasks

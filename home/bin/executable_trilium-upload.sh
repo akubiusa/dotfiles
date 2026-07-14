@@ -85,13 +85,21 @@ elif [ "$get_status" = "404" ]; then
   # NOTE: ETAPI の create-note は "attributes" プロパティを受け付けない
   # (PROPERTY_NOT_ALLOWED) ため、マーカーラベルはノート作成後に
   # 別途 POST /etapi/attributes で付与する。
-  payload=$(jq -n \
+  # NOTE: --arg content "$(cat "$html_file")" だと本文がコマンドライン引数として
+  # 渡され、大きいドキュメントで "Argument list too long" になる。--rawfile で
+  # ファイルから直接読み込むことで引数長制限を回避する。
+  payload_file="$tmpdir/create-note-payload.json"
+  jq -n \
     --arg noteId "$note_id" \
     --arg title "$title" \
-    --arg content "$(cat "$html_file")" \
-    '{parentNoteId: "_share", noteId: $noteId, title: $title, type: "text", content: $content}')
+    --rawfile content "$html_file" \
+    '{parentNoteId: "_share", noteId: $noteId, title: $title, type: "text", content: $content}' \
+    > "$payload_file"
+  # NOTE: 同様に、curl --data "$payload" のようにシェル変数展開でコマンドライン
+  # 引数として渡すと大きいドキュメントで "Argument list too long" になるため、
+  # --data @<file> でファイルから直接読み込む。
   curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
-    --data "$payload" \
+    --data "@$payload_file" \
     "$TRILIUM_HTTP_URL/etapi/create-note" >/dev/null
 
   label_payload=$(jq -n \

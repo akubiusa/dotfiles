@@ -338,12 +338,15 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
   dispatcher's explicit hand-off reaches this skill, not opportunistic
   auto-trigger on an issue number appearing in conversation.
 - brainstorming's `<HARD-GATE>` (per-design-section approval before the
-  spec file exists) is hardcoded into the vendored `superpowers:brainstorming`
-  plugin skill itself, not into this repository's configuration — it cannot
-  be disabled from `issue-pr-deep`'s own instructions. This is why "disable
-  approval" settings on the dotfiles side don't fully suppress user-facing
-  confirmations; Phase 3 mitigates it by forcing that confirmation through
-  AskUserQuestion instead of a plain-text question.
+  spec file exists) is a default behavior of the vendored
+  `superpowers:brainstorming` plugin skill itself, not a mechanism this
+  repository's configuration can switch off at the tool level. What
+  `issue-pr-deep` *can* do — and does, per Phase 3 — is instruct
+  brainstorming, via the prompt it's invoked with, not to ask for that
+  approval before writing the spec file. Genuine requirement-clarifying
+  questions are unaffected; only the "may I proceed with this design"
+  confirmation is skipped, with Phase 6 serving as the sole human
+  checkpoint for the spec's content afterward.
 - The plan has no human approval step by design: Phase 8's automatic
   sub-agent review and Phase 9's Issue-comment posting already surface the
   plan's content for review/record before implementation starts, so an

@@ -194,10 +194,15 @@ for cmd in \
 done
 
 # 書き込み系: permissionDecision: deny が出力される
+# (回避策として、読み取りコマンドとの連結や、書き込みコマンドへの
+# 読み取り系オプション付与によるすり抜けを試みるケースも含む)
 for cmd in \
   'git config user.name "Foo"' \
   'git config --global user.email foo@example.com' \
-  'git config --unset user.name'; do
+  'git config --unset user.name' \
+  'git config --list && git config user.name attacker' \
+  'git config user.name attacker --get x' \
+  'git config user.name attacker && echo git config'; do
   OUTPUT=$(run_git_config_guard "$cmd")
   DECISION=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecision // empty' 2>/dev/null)
   if [[ "$DECISION" != "deny" ]]; then

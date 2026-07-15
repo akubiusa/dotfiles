@@ -17,6 +17,7 @@
 #     --skip-gh          gh CLI のインストールをスキップ
 #     --skip-ghq         ghq のインストールをスキップ
 #     --skip-mkwork      mkwork のインストールをスキップ
+#     --skip-mise        mise (ツールバージョン管理) のインストールをスキップ
 #     --skip-roots       roots のインストールをスキップ
 #     --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
 #     --help             ヘルプを表示
@@ -32,6 +33,7 @@ SKIP_APT=0
 SKIP_GH=0
 SKIP_GHQ=0
 SKIP_MKWORK=0
+SKIP_MISE=0
 SKIP_ROOTS=0
 SKIP_INTERACTIVE=0
 
@@ -47,6 +49,7 @@ OPTIONS:
   --skip-gh          gh CLI のインストールをスキップ
   --skip-ghq         ghq のインストールをスキップ
   --skip-mkwork      mkwork のインストールをスキップ
+  --skip-mise        mise (ツールバージョン管理) のインストールをスキップ
   --skip-roots       roots のインストールをスキップ
   --skip-interactive 対話的な確認をスキップ (CI 用、 /dev/tty が利用できない場合も自動的に非対話モードになります)
   --help             このヘルプを表示
@@ -84,6 +87,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-mkwork)
       SKIP_MKWORK=1
+      shift
+      ;;
+    --skip-mise)
+      SKIP_MISE=1
       shift
       ;;
     --skip-roots)
@@ -412,6 +419,34 @@ install_apt_packages() {
   # パッケージのインストール
   log_info "パッケージをインストールしています: ${packages[*]}"
   run_command sudo apt install -y "${packages[@]}"
+}
+
+# mise のバージョン (Renovate で追跡するため固定文字列として記述する)
+MISE_VERSION="v2026.7.6"
+
+# mise のインストール
+install_mise() {
+  if [[ "$SKIP_MISE" == "1" ]]; then
+    log_info "mise のインストールをスキップします (--skip-mise)"
+    return 0
+  fi
+
+  log_info "mise をインストールしています..."
+
+  if command -v mise &> /dev/null; then
+    log_warn "mise は既にインストールされています ($(mise --version))"
+    return 0
+  fi
+
+  # 公式インストーラはパイプを使うため run_command でラップできず、DRY_RUN を手動で分岐する
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log_info "[DRY RUN] curl -fsSL https://mise.run | MISE_VERSION=$MISE_VERSION sh"
+    return 0
+  fi
+
+  curl -fsSL https://mise.run | MISE_VERSION="$MISE_VERSION" sh
+
+  log_info "mise が正常にインストールされました ($("$HOME/.local/bin/mise" --version))"
 }
 
 # gh CLI のインストール

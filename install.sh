@@ -702,7 +702,8 @@ install_gitleaks() {
     gitleaks_arch="x64"
   fi
 
-  local download_url="https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_${gitleaks_arch}.tar.gz"
+  local archive_filename="gitleaks_${version}_linux_${gitleaks_arch}.tar.gz"
+  local download_url="https://github.com/gitleaks/gitleaks/releases/download/v${version}/${archive_filename}"
 
   log_info "ダウンロード URL: $download_url"
 
@@ -719,13 +720,29 @@ install_gitleaks() {
 
   cd "$temp_dir" || { log_error "Failed to change directory to temporary directory"; return 1; }
 
-  if ! curl -fsSL -o gitleaks.tar.gz "$download_url"; then
+  if ! curl -fsSL -o "$archive_filename" "$download_url"; then
     log_error "Failed to download gitleaks archive"
     cd - > /dev/null || true
     return 1
   fi
 
-  if ! tar -xzf gitleaks.tar.gz; then
+  # 改ざん・アセット差し替えを検知するため、gitleaks が公開するチェックサムファイルと突合する
+  # (sha256sum -c はチェックサム行に記載されたファイル名で cwd を照合するため、
+  # ダウンロードしたアーカイブはリリースアセットと同じファイル名で保存する必要がある)
+  local checksums_url="https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_checksums.txt"
+  if ! curl -fsSL -o checksums.txt "$checksums_url"; then
+    log_error "Failed to download gitleaks checksums file"
+    cd - > /dev/null || true
+    return 1
+  fi
+
+  if ! grep -- "$archive_filename" checksums.txt | sha256sum -c - > /dev/null; then
+    log_error "gitleaks archive checksum verification failed"
+    cd - > /dev/null || true
+    return 1
+  fi
+
+  if ! tar -xzf "$archive_filename"; then
     log_error "Failed to extract gitleaks archive"
     cd - > /dev/null || true
     return 1

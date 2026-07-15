@@ -14,8 +14,10 @@ if ! command -v gitleaks > /dev/null 2>&1; then
 fi
 
 # リポジトリ自身の .gitleaks.toml があればそちらを gitleaks の自動検出に任せ、
-# 無ければグローバルのフォールバック設定 (~/.gitleaks.toml) を明示的に指定する
-GIT_ROOT=$(git rev-parse --show-toplevel 2> /dev/null) || exit 0
+# 無ければグローバルのフォールバック設定 (~/.gitleaks.toml) を明示的に指定する。
+# pre-commit フックは git により作業ツリーのルートを cwd として起動されるため
+# (githooks(5))、追加の git rev-parse 呼び出しは不要
+GIT_ROOT="$PWD"
 CONFIG_ARGS=()
 if [[ ! -f "$GIT_ROOT/.gitleaks.toml" ]] && [[ -f "$HOME/.gitleaks.toml" ]]; then
     CONFIG_ARGS=(--config "$HOME/.gitleaks.toml")

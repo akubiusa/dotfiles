@@ -249,6 +249,10 @@ EOF
       echo "❌ pre-commit hook did not fall back to the global gitleaks config"
       exit 1
     fi
+    if ! grep -q -- "protect --staged --redact -v" "$TEST_ARGS_LOG"; then
+      echo "❌ pre-commit hook did not pass protect --staged --redact -v to gitleaks"
+      exit 1
+    fi
   ); then
     FAILED=1
   else
@@ -275,12 +279,28 @@ EOF
       echo "❌ pre-commit hook overrode the repo's own .gitleaks.toml"
       exit 1
     fi
+    if ! grep -q -- "protect --staged --redact -v" "$TEST_ARGS_LOG"; then
+      echo "❌ pre-commit hook did not pass protect --staged --redact -v to gitleaks"
+      exit 1
+    fi
   ); then
     FAILED=1
   else
     echo "✅ pre-commit hook defers to the repo's own .gitleaks.toml when present"
   fi
   rm -rf "$TEST_REPO_DIR" "$TEST_BIN_DIR" "$TEST_ARGS_LOG"
+
+  # シナリオ 5: グローバルフォールバック設定 (home/dot_gitleaks.toml) が構文的に有効な TOML であること
+  # (gitleaks は設定エラーとシークレット検知の両方で同じ終了コードを返すため、構文エラーが
+  # 混入すると全リポジトリでコミットが無差別にブロックされる。real gitleaks は使わずに TOML
+  # 構文のみを検証する)
+  GITLEAKS_CONFIG="home/dot_gitleaks.toml"
+  if ! python3 -c "import tomllib, sys; tomllib.load(open(sys.argv[1], 'rb'))" "$GITLEAKS_CONFIG"; then
+    echo "❌ $GITLEAKS_CONFIG is not valid TOML"
+    FAILED=1
+  else
+    echo "✅ $GITLEAKS_CONFIG is valid TOML"
+  fi
 fi
 
 if [ $FAILED -eq 0 ]; then

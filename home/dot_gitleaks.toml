@@ -1,0 +1,10 @@
+title = "dotfiles gitleaks config (global fallback)"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Exclude dotfiles' own example/placeholder files from false positives"
+paths = [
+  '''\.example$''',
+]

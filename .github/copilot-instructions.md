@@ -22,6 +22,7 @@
 - トークン・Webhook URL・パスワード等を平文でコミットしていないか確認する。
 - `~/.env` や `~/.gitconfig.local` はリポジトリ管理外。`.env.example` / `.gitconfig.local.example` などサンプルのみを含める。
 - pre-commit フック(`home/dot_config/git/hooks/executable_pre-commit`)や `home/dot_gitleaks.toml` の allowlist を変更する場合、誤検知抑制が広すぎて実際のシークレット検知を無効化していないか確認する。
+- `gitleaks` コマンド自体は `install.sh` に直接インストールロジックを持たず、mise 経由でインストールされる(下記「mise 管理下のツール」参照)。
 
 ### テストの追随
 
@@ -29,7 +30,7 @@
 
 ### mise 管理下のツール
 
-- `gh`・`ghq`・`roots` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。`install.sh` に直接インストールロジックを追加していないか確認する。
+- `gh`・`ghq`・`roots`・`gitleaks` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。`install.sh` に直接インストールロジックを追加していないか確認する。
 - `install.sh` に固定記述された mise 本体のバージョン(`MISE_VERSION`)を変更する場合、`renovate.json` の対応する `regexManagers` エントリと矛盾していないか確認する。
 
 ## コーディング規約

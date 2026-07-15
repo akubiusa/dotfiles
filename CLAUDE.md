@@ -84,7 +84,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 - `.env.example` と `.gitconfig.local.example` をサンプルとして提供。
 - wakatime は別途管理するため、dotfiles での暗号化管理は行わない。
 - PR 作成先は `upstream` remote があればそれを既定とし、`home/bin/executable_gh-pr-target-repo.sh`（デプロイ後 `~/bin/gh-pr-target-repo.sh`）で解決する。
-- 依存バージョンの更新は `renovate.json` の Renovate (GitHub App) で管理する。`home/dot_claude/private_settings.json` の `statusLine.command` に埋め込まれた `ccstatusline` の npm バージョンなど、通常の `package.json` では追跡できない箇所は `regexManagers` で個別に対象化する。
+- 依存バージョンの更新は `renovate.json` の Renovate (GitHub App) で管理する。`home/dot_claude/private_settings.json` の `statusLine.command` に埋め込まれた `ccstatusline` の npm バージョンや、`install.sh` に固定記述された mise 本体のバージョンなど、通常の `package.json` では追跡できない箇所は `regexManagers` で個別に対象化する。`gh`/`ghq`/`roots` など mise 管理下のツールバージョンは `home/dot_config/mise/config.toml` への宣言により Renovate のネイティブな mise サポートで自動追跡される(`regexManagers` の追加設定は不要)。
 
 ## Claude Code フック / 通知機能
 

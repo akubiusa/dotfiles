@@ -72,6 +72,10 @@ export PATH="$HOME/.local/bin:$PATH"
 
 macOS と Windows は現在サポートされていません。
 
+## ツールバージョン管理
+
+`mise`（https://mise.jdx.dev/）を使用して、`gh`・`ghq`・`roots` などの CLI ツールおよび言語ランタイムのバージョンを管理しています。バージョンの宣言は `home/dot_config/mise/config.toml` で行い、Renovate が自動的に更新 PR を作成します。
+
 ## セキュリティに関する注意事項
 
 `curl | bash` 方式には以下のリスクがあります:

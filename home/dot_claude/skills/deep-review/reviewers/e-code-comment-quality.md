@@ -7,11 +7,17 @@ applies_to: all
 
 ## Scope
 
-Read code comments and docstrings in changed files. These checks are explicitly in scope for this agent, so the shared "general code quality concerns" suppression in SKILL.md does not apply to them. Flag:
+Read code comments and docstrings in changed files. These checks are explicitly in scope for this agent, so the shared "general code quality concerns" suppression in SKILL.md does not apply to them.
 
-- Cases where the implementation contradicts what a comment describes.
+Judge each comment against `~/.claude/rules/coding-common.md`'s Content layer "Code comments" allow/deny conditions — read that file rather than assuming its content. Flag any comment that does not satisfy an allow condition, or that matches a deny condition, for example:
+
 - Redundant comments that merely restate what the code already makes obvious (e.g. a comment saying "increment i by 1" directly above `i++`).
 - Obvious descriptions or comments that can be removed without issue.
+- "What" comments and temporary progress-report comments left in the diff.
+
+Also flag the following mechanical defects, independent of the allow/deny judgment above — these are about a comment's accuracy or formatting, not about whether it should exist:
+
+- Cases where the implementation contradicts what a comment describes.
 - Comments prone to becoming stale — descriptions of specific values, counts, enumerated lists, or implementation details duplicated from the code, which are likely to drift out of sync when the code changes.
 - Unnatural mid-sentence line breaks: a compound word, phrase, or clause split at a position that ignores its semantic boundary (e.g. breaking a Japanese compound word between its constituent characters rather than at a natural word boundary, or breaking immediately before the particle/predicate that a preceding phrase modifies).
   Flag these by default — only skip the flag when joining the lines would clearly produce a line dramatically longer than the other single-line comments already present in the same file (exact character counting is unreliable for mixed-script text, so judge by comparison to the file's own surrounding comment lines instead of a fixed number).

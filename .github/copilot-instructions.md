@@ -26,6 +26,11 @@
 
 - `home/dot_codex/`、`home/dot_claude/scripts/` など通知・フック関連スクリプトを変更・削除した場合、`tests/unit/`、`tests/integration/`、`tests/syntax/` 配下の対応するテストが古い参照を残していないか確認する。
 
+### mise 管理下のツール
+
+- `gh`・`ghq`・`roots` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。`install.sh` に直接インストールロジックを追加していないか確認する。
+- `install.sh` に固定記述された mise 本体のバージョン(`MISE_VERSION`)を変更する場合、`renovate.json` の対応する `regexManagers` エントリと矛盾していないか確認する。
+
 ## コーディング規約
 
 - コミットメッセージは Conventional Commits に従い、`<description>` は日本語で記載する。
@@ -36,7 +41,7 @@
 ## 技術スタック
 
 - 言語: Bash
-- ツール: chezmoi, git, tmux, jq
+- ツール: chezmoi, git, tmux, jq, mise
 
 ## ドキュメント整合性
 

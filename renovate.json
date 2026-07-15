@@ -10,7 +10,7 @@
     },
     {
       "fileMatch": ["^install\\.sh$"],
-      "matchStrings": ["MISE_VERSION=\"v(?<currentValue>[0-9.]+)\""],
+      "matchStrings": ["MISE_VERSION=\"(?<currentValue>v[0-9.]+)\""],
       "depNameTemplate": "jdx/mise",
       "datasourceTemplate": "github-releases"
     }

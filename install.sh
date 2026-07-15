@@ -445,12 +445,20 @@ install_mise() {
 
   curl -fsSL https://mise.run | MISE_VERSION="$MISE_VERSION" sh
 
-  log_info "mise が正常にインストールされました ($("$HOME/.local/bin/mise" --version))"
+  # コマンド置換をログ引数に埋め込むと set -e 下で失敗が握りつぶされるため、変数に代入してから渡す
+  local installed_version
+  installed_version=$("$HOME/.local/bin/mise" --version)
+  log_info "mise が正常にインストールされました ($installed_version)"
 }
 
-# mise 経由でのツールインストール (gh, ghq, roots)
+# mise 経由でのツールインストール
 # home/dot_config/mise/config.toml の宣言に従い、chezmoi apply 後に実行する
 install_mise_tools() {
+  if [[ "$SKIP_MISE" == "1" ]]; then
+    log_info "mise 未インストールのため、mise 経由のツールインストールをスキップします (--skip-mise)"
+    return 0
+  fi
+
   if [[ "$SKIP_GH" == "1" ]]; then
     log_info "gh CLI のインストールをスキップします (--skip-gh)"
   else
@@ -751,7 +759,7 @@ main() {
   setup_env
   copy_env_if_needed  # chezmoi apply 前に .env をコピー（テンプレート展開エラー回避）
   apply_chezmoi
-  install_mise_tools  # config.toml 配置後に mise 経由で gh/ghq/roots をインストール
+  install_mise_tools  # config.toml 配置後に mise 経由で対象ツールをインストール
 
   log_info ""
   log_info "✅ インストールが正常に完了しました!"

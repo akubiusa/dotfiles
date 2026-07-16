@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: gh-pr-target-repo.sh [--remote]
+Usage: gh-pr-target-repo.sh [--remote|--origin]
 
 Resolve the preferred GitHub repository for pull request creation.
 - If `upstream` exists and points to GitHub, prefer it
@@ -13,6 +13,11 @@ Resolve the preferred GitHub repository for pull request creation.
 
 Options:
   --remote  Print the preferred remote name instead of owner/repo
+  --origin  Resolve `origin` specifically, bypassing the upstream
+            preference above. Use this when a caller needs the local
+            checkout's own remote (e.g. fork-detection comparisons,
+            cleanup steps scoped to the local checkout) rather than the
+            PR's target repository.
 EOF
 }
 
@@ -26,6 +31,9 @@ if [[ $# -eq 1 ]]; then
   case "$1" in
     --remote)
       OUTPUT_MODE="remote"
+      ;;
+    --origin)
+      OUTPUT_MODE="origin"
       ;;
     -h|--help)
       usage
@@ -70,6 +78,18 @@ remote_to_repo() {
 
   printf '%s\n' "$remote_url"
 }
+
+if [[ "$OUTPUT_MODE" == "origin" ]]; then
+  # Bypass the upstream-preference loop below entirely — a caller asking
+  # for `origin` specifically needs the local checkout's own remote, not
+  # whichever remote this script would otherwise prefer.
+  if ! ORIGIN_REPO=$(remote_to_repo origin); then
+    echo "Error: Could not resolve GitHub repository from the 'origin' remote" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ORIGIN_REPO"
+  exit 0
+fi
 
 PREFERRED_REMOTE=""
 PREFERRED_REPO=""

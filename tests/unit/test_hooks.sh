@@ -59,6 +59,25 @@ else
 fi
 rm -rf "$TEST_REPO_DIR"
 
+echo "Testing gh-pr-target-repo helper --origin behavior..."
+TEST_REPO_DIR=$(mktemp -d)
+if ! (
+  cd "$TEST_REPO_DIR" || exit 1
+  git init -q
+  git remote add upstream git@github.com:book000/dotfiles.git
+  git remote add origin git@github.com:akubiusa/dotfiles.git
+  HELPER_OUTPUT=$(bash "$OLDPWD/home/bin/executable_gh-pr-target-repo.sh" --origin)
+  if [[ "$HELPER_OUTPUT" != "akubiusa/dotfiles" ]]; then
+    echo "❌ gh-pr-target-repo helper --origin did not resolve origin specifically"
+    exit 1
+  fi
+) ; then
+  FAILED=1
+else
+  echo "✅ gh-pr-target-repo helper --origin resolved origin regardless of upstream"
+fi
+rm -rf "$TEST_REPO_DIR"
+
 echo "Testing gh-pr-target-repo helper fallback behavior..."
 TEST_REPO_DIR=$(mktemp -d)
 TEST_BIN_DIR=$(mktemp -d)

@@ -29,16 +29,19 @@ can be invoked manually for any PR, or automatically by `wait-for-pr-close`.
 # grep -oP (PCRE) doesn't work on macOS's BSD grep, so use sed -E for a portable form
 PR_ARG="$ARGUMENTS"
 
-# Always resolve the local `origin` remote's owner/repo directly from its
-# URL, not via unqualified `gh repo view`. When both `origin` and `upstream`
-# remotes exist (the fork scenario), `gh repo view` with no repository
-# argument resolves ambiguously and can silently return `upstream`'s
-# owner/repo instead of `origin`'s — this previously broke the Step 4 fork
-# check (it read `upstream`'s own `parent`, which is `null`, and concluded
-# `origin` wasn't a fork when it actually was).
-ORIGIN_URL=$(git remote get-url origin)
-ORIGIN_OWNER=$(echo "$ORIGIN_URL" | sed -E 's#^(git@[^:]+:|https://[^/]+/)##; s#\.git$##' | cut -d/ -f1)
-ORIGIN_REPO=$(echo "$ORIGIN_URL" | sed -E 's#^(git@[^:]+:|https://[^/]+/)##; s#\.git$##' | cut -d/ -f2)
+# Always resolve the local `origin` remote's owner/repo via the shared
+# gh-pr-target-repo.sh script's `--origin` mode, not via unqualified
+# `gh repo view`. When both `origin` and `upstream` remotes exist (the
+# fork scenario), `gh repo view` with no repository argument resolves
+# ambiguously and can silently return `upstream`'s owner/repo instead of
+# `origin`'s — this previously broke the Step 4 fork check (it read
+# `upstream`'s own `parent`, which is `null`, and concluded `origin` wasn't
+# a fork when it actually was). `--origin` bypasses the script's default
+# upstream-preferring resolution and always targets `origin` specifically,
+# which is what this skill's fork-detection genuinely needs.
+ORIGIN_REPO_FULL=$(gh-pr-target-repo.sh --origin)
+ORIGIN_OWNER=${ORIGIN_REPO_FULL%%/*}
+ORIGIN_REPO=${ORIGIN_REPO_FULL#*/}
 
 if echo "$PR_ARG" | grep -q 'github\.com'; then
   OWNER=$(echo "$PR_ARG" | sed -E 's#.*github\.com/([^/]+)/.*#\1#')

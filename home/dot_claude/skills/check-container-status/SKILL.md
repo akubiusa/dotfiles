@@ -45,10 +45,10 @@ Let `STATE_FILE="$TARGET_DIR/STATE.md"`.
 ## Run Info
 - started_at: <ISO8601>
 - target_dir: <TARGET_DIR>
-- cron_job_id: (Phase C で追記)
+- cron_job_id: (appended in Phase C)
 
 ## Queue
-- pending: <COMPOSE_DIRS を1行1件で列挙>
+- pending: <enumerate COMPOSE_DIRS, one per line>
 - in_progress:
 - done:
 
@@ -67,7 +67,7 @@ Let `STATE_FILE="$TARGET_DIR/STATE.md"`.
        to pending and restart any in_progress directory whose started_at is
        more than 30 minutes ago with no response, and if pending entries
        remain, launch the next directory into an open parallel slot. If all
-       entries are done, delete this cron job via CronDelete(job_id=<this
+       entries are done, delete this cron job via CronDelete(id=<this
        job's id>) and then proceed to Phase D."
    })
    ```

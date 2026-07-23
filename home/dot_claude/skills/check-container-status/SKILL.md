@@ -38,12 +38,8 @@ If `LIST_EXIT_CODE` is 0 and `COMPOSE_DIRS` is empty (a valid, existing target d
 
 Let `STATE_FILE="$TARGET_DIR/STATE.md"`.
 
-- If `STATE_FILE` exists and `## Queue` still has `pending` or `in_progress`
-  entries remaining, treat this as resume mode. Move all `in_progress`
-  entries back to `pending` before resuming processing (the previous session
-  may have ended partway through, so err on the safe side).
-- If `STATE_FILE` doesn't exist, or all entries are `done`, recreate it as a
-  fresh run using the following format.
+- If `STATE_FILE` exists and `## Queue` still has `pending` or `in_progress` entries remaining, treat this as resume mode. Move all `in_progress` entries back to `pending` before resuming processing (the previous session may have ended partway through, so err on the safe side).
+- If `STATE_FILE` doesn't exist, or all entries are `done`, recreate it as a fresh run using the following format.
 
 ```markdown
 # Docker Container Status Check - STATE
@@ -80,9 +76,7 @@ Let `STATE_FILE="$TARGET_DIR/STATE.md"`.
 
    Record the returned job ID in `STATE_FILE`'s `cron_job_id`. `CronCreate` is only valid within this session and disappears when the session ends (it also auto-expires after 7 days). If the session ends, the user can resume from `STATE_FILE` by invoking `/check-container-status` again.
 
-2. Choose up to 5 entries from `pending` (minus however many are already
-   `in_progress`), and for each of them launch the `Agent` tool with
-   `run_in_background: true`.
+2. Choose up to 5 entries from `pending` (minus however many are already `in_progress`), and for each of them launch the `Agent` tool with `run_in_background: true`.
 
    ```
    Agent({
@@ -93,32 +87,17 @@ Let `STATE_FILE="$TARGET_DIR/STATE.md"`.
    })
    ```
 
-   Once launched, remove that directory from `STATE_FILE`'s `pending` and
-   add it to `in_progress` in the form
-   `<dir> (agent_id: <id>, started_at: <ISO8601>)`.
+   Once launched, remove that directory from `STATE_FILE`'s `pending` and add it to `in_progress` in the form `<dir> (agent_id: <id>, started_at: <ISO8601>)`.
 
-3. Every time a sub-agent reports completion, verify that a corresponding
-   `### <TARGET_DIR>` entry with a valid `status` now exists under
-   `## Results`. If it does, remove the directory from `STATE_FILE`'s
-   `in_progress` and add it to `done`. If it does not (the sub-agent's own
-   tooling failed and it recorded nothing usable), record the entry as
-   `status: check_failed` yourself before moving it to `done` — do not drop
-   it silently. Either way, if `pending` entries remain, launch the next one
-   the same way as Step 2 (always keep the same concurrency limit as Step 2).
+3. Every time a sub-agent reports completion, verify that a corresponding `### <TARGET_DIR>` entry with a valid `status` now exists under `## Results`. If it does, remove the directory from `STATE_FILE`'s `in_progress` and add it to `done`. If it does not (the sub-agent's own tooling failed and it recorded nothing usable), record the entry as `status: check_failed` yourself before moving it to `done` — do not drop it silently. Either way, if `pending` entries remain, launch the next one the same way as Step 2 (always keep the same concurrency limit as Step 2).
 
-4. When the 15-minute Cron check-in fires, move back to `pending` any
-   `in_progress` entry whose `started_at` is more than 30 minutes ago with
-   no response, and restart it the same way as Step 2.
+4. When the 15-minute Cron check-in fires, move back to `pending` any `in_progress` entry whose `started_at` is more than 30 minutes ago with no response, and restart it the same way as Step 2.
 
-5. Once both `pending` and `in_progress` are empty (all entries `done`), end
-   the loop and delete the check-in job with
-   `CronDelete({ id: <cron_job_id> })`.
+5. Once both `pending` and `in_progress` are empty (all entries `done`), end the loop and delete the check-in job with `CronDelete({ id: <cron_job_id> })`.
 
 ## Phase D: Error investigation (bulk, after completion)
 
-Check `STATE_FILE`'s `## Results`, and for every entry with
-`status: error` or `status: warning`, launch the
-`container-error-investigator` sub-agent.
+Check `STATE_FILE`'s `## Results`, and for every entry with `status: error` or `status: warning`, launch the `container-error-investigator` sub-agent.
 
 ```
 Agent({
@@ -134,13 +113,9 @@ Agent({
 
 Present the following as chat output.
 
-- Overall summary (number of target directories, breakdown of
-  `ok`/`expected_down`/`warning`/`error`/`check_failed`)
-- Per-directory status list (one line of `summary` each); list `check_failed`
-  entries distinctly rather than folding them into `ok`
-- For `warning`/`error` entries, the `diagnosis` (cause, fix, confidence
-  level) obtained in Phase D — present it to the user as a suggestion for
-  review, and never execute any command it contains automatically
+- Overall summary (number of target directories, breakdown of `ok`/`expected_down`/`warning`/`error`/`check_failed`)
+- Per-directory status list (one line of `summary` each); list `check_failed` entries distinctly rather than folding them into `ok`
+- For `warning`/`error` entries, the `diagnosis` (cause, fix, confidence level) obtained in Phase D — present it to the user as a suggestion for review, and never execute any command it contains automatically
 
 After reporting, rename `STATE_FILE` to `STATE.md.<run timestamp>.done`.
 
@@ -148,17 +123,10 @@ After reporting, rename `STATE_FILE` to `STATE.md.<run timestamp>.done`.
 mv "$STATE_FILE" "$STATE_FILE.$(date +%Y%m%d%H%M%S).done"
 ```
 
-If multiple `.done` files already exist in the same directory, delete all
-but the newest, keeping only the most recent generation.
+If multiple `.done` files already exist in the same directory, delete all but the newest, keeping only the most recent generation.
 
 ## Notes
 
-- Never run destructive commands (`docker compose restart`/`down`/`up`,
-  etc.) from either this skill or its sub-agents. Stick strictly to
-  read-only inspection and proposals.
-- Temporary directories such as `/mnt/hdd/work/*` are not included
-  automatically. If needed, specify that directory explicitly as the target
-  directory argument.
-- The parent session (the session running this skill) acts strictly as an
-  orchestrator; running `docker compose`, analyzing logs, checking
-  connectivity, and researching online are all delegated to sub-agents.
+- Never run destructive commands (`docker compose restart`/`down`/`up`, etc.) from either this skill or its sub-agents. Stick strictly to read-only inspection and proposals.
+- Temporary directories such as `/mnt/hdd/work/*` are not included automatically. If needed, specify that directory explicitly as the target directory argument.
+- The parent session (the session running this skill) acts strictly as an orchestrator; running `docker compose`, analyzing logs, checking connectivity, and researching online are all delegated to sub-agents.

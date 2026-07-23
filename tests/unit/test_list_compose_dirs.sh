@@ -14,6 +14,7 @@ if [ ! -f "$SCRIPT" ]; then
 fi
 
 TEST_DIR=$(mktemp -d)
+# shellcheck disable=SC2329
 cleanup() {
   rm -rf "$TEST_DIR"
 }

@@ -484,7 +484,7 @@ install_mise_tools() {
     log_info "roots のインストールをスキップします (--skip-roots)"
   else
     log_info "roots を mise 経由でインストールしています..."
-    run_command mise install ubi:k1LoW/roots
+    run_command mise install github:k1LoW/roots
   fi
 
   if [[ "$SKIP_GITLEAKS" == "1" ]]; then

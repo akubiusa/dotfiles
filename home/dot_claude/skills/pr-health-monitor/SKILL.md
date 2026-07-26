@@ -151,7 +151,7 @@ gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus --jq '{mergeable,merge
 
 If there are conflicts, merge the base branch to resolve them.
 
-This is a one-shot snapshot at PR-creation time, not continuous monitoring. When `pr-health-monitor` is invoked as part of `issue-pr-deep` or `issue-pr-lite`, those flows start `wait-for-pr-close`'s `Monitor` loop immediately afterward, and that loop continuously detects conflicts for as long as the session stays alive (see `wait-for-pr-close`'s SKILL.md). When `pr-health-monitor` is invoked standalone — for example in a later session, after the original `wait-for-pr-close` Monitor ended with the session or hit its 7-day `CronCreate` limit — this one-shot check is the only conflict detection available, so it is kept rather than removed.
+This is a one-shot snapshot at PR-creation time, not continuous monitoring. When `pr-health-monitor` is invoked as part of `issue-pr-deep` or `issue-pr-lite`, those flows start `wait-for-pr-close`'s `Monitor` loop immediately afterward, and that loop continuously detects conflicts for as long as the session stays alive (see `wait-for-pr-close`'s SKILL.md). When `pr-health-monitor` is invoked standalone — for example in a later session, after the original `wait-for-pr-close` Monitor ended along with its session (that Monitor does not persist across sessions) — this one-shot check is the only conflict detection available, so it is kept rather than removed.
 
 ### Task D: Update PR Body
 

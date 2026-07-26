@@ -71,24 +71,41 @@ literally before calling `Monitor`, the same way `<PR_NUMBER>` in
 Monitor({
   command: "
     fail_count=0
+    prev_mergeable=\"\"
     while true; do
       sleep 30
-      state=$(gh pr view \"$PR_NUMBER\" --repo \"$OWNER/$REPO\" --json state -q .state 2>/tmp/wait-pr-close-err.$$)
+      json=$(gh pr view \"$PR_NUMBER\" --repo \"$OWNER/$REPO\" --json state,mergeable,mergeStateStatus 2>/tmp/wait-pr-close-err.$$)
       rc=$?
-      if [[ $rc -ne 0 || -z \"$state\" ]]; then
+      if [[ $rc -ne 0 || -z \"$json\" ]]; then
         err_msg=$(tail -c 200 /tmp/wait-pr-close-err.$$ 2>/dev/null)
         fail_count=$((fail_count + 1))
         if [[ \"$fail_count\" -ge 5 ]]; then
           echo \"WARNING: gh pr view failed 5 times in a row - last error: ${err_msg:-unknown}\"
           fail_count=0
         fi
-      else
-        fail_count=0
+        rm -f /tmp/wait-pr-close-err.$$
+        continue
       fi
+      fail_count=0
       rm -f /tmp/wait-pr-close-err.$$
+      state=$(jq -r '.state' <<<\"$json\")
+      mergeable=$(jq -r '.mergeable' <<<\"$json\")
+      mergeStateStatus=$(jq -r '.mergeStateStatus' <<<\"$json\")
+      if [[ \"$mergeable\" == \"CONFLICTING\" && \"$mergeable\" != \"$prev_mergeable\" ]]; then
+        echo \"pr_conflict_detected mergeable=$mergeable mergeStateStatus=$mergeStateStatus\"
+        SCRIPT_DIR=\"$HOME/.claude/scripts/completion-notify\"
+        if [[ -x \"$SCRIPT_DIR/send-discord-notification.sh\" ]]; then
+          payload=$(jq -n \\
+            --arg title \"PR Conflict Detected\" \\
+            --arg desc \"PR #${PR_NUMBER} now has merge conflicts (mergeStateStatus: ${mergeStateStatus}).\" \\
+            --arg url \"https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}\" \\
+            '{embeds: [{title: $title, description: $desc, url: $url, color: 15158332}]}')
+          printf '%s\\n' \"$payload\" | \"$SCRIPT_DIR/send-discord-notification.sh\"
+        fi
+      fi
+      prev_mergeable=\"$mergeable\"
       if [[ \"$state\" == \"MERGED\" || \"$state\" == \"CLOSED\" ]]; then
         echo \"pr_closed state=$state\"
-        # Send a Discord notification, same as the old script did
         SCRIPT_DIR=\"$HOME/.claude/scripts/completion-notify\"
         if [[ -x \"$SCRIPT_DIR/send-discord-notification.sh\" ]]; then
           payload=$(jq -n \\
@@ -102,7 +119,7 @@ Monitor({
       fi
     done
   ",
-  description: "PR #<PR_NUMBER> merge/close",
+  description: "PR #<PR_NUMBER> merge/close/conflict",
   persistent: true,
 })
 ```
@@ -117,12 +134,15 @@ Monitor({
   including the last captured error — to the Monitor's stdout, so a
   failure streak is never silent, then resets the counter and keeps
   polling.
+- Each poll now fetches `mergeable`/`mergeStateStatus` alongside `state` in the same `gh pr view` call. A transition into `mergeable == "CONFLICTING"` emits a `pr_conflict_detected` event and a Discord notification, but does **not** `break` the loop — conflict detection runs alongside close detection, not instead of it. Re-notification is suppressed by comparing against the previous poll's `mergeable` value, the same de-duplication pattern `pr-health-monitor`'s CI-check Monitor uses for its `prev`/`cur` comparison.
 
 ### Step 2: On Detection
 
 When the monitor emits a `pr_closed` event (or Step 0 already found the PR
 closed), call `/pr-cleanup https://github.com/$OWNER/$REPO/pull/$PR_NUMBER`
 directly in the same conversation.
+
+When the monitor emits a `pr_conflict_detected` event, the caller (the session that started `pr-health-monitor`/this monitor) should resolve the conflict (e.g. merge the base branch into the PR branch). The monitor itself keeps running afterward — it only stops on `pr_closed`.
 
 ## Notes
 

@@ -108,6 +108,8 @@ chmod 600 ~/.claude/data/session-state.json
 Same as `issue-pr-deep`'s Phase 16: run `/pr-health-monitor <PR number>`
 immediately, without asking the user whether to run it.
 
+Same as `issue-pr-deep`'s Phase 16→17 transition: if requesting or obtaining a Copilot review fails or looks unlikely to ever arrive, do not pause to ask the user whether to keep waiting or give up — move on to Phase 10 unconditionally and immediately.
+
 ## Phase 10: Start the PR Close Monitor
 
 Same as `issue-pr-deep`'s Phase 17:

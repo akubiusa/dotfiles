@@ -122,6 +122,28 @@ Do NOT report the following:
 
 **Fixed reviewers:** see `~/.claude/skills/deep-review/reviewers/*.md` for the full list and scope of each (`a-claude-md-compliance`, `b-bugs-correctness`, `c-history-context`, `e-code-comment-quality`, `f-security`, `g-performance`, `h-error-handling`, `i-type-design-tests`).
 
+**Idle sub-agent follow-up:** these reviewer sub-agents run in the background per `rules/workflow-sub-agents.md`'s "Handling Idle Notifications from Background Sub-Agents" — apply that procedure here, made concrete for this step:
+
+- When dispatching the reviewers above, note which reviewer slug (e.g.
+  `f-security`) each sub-agent corresponds to.
+- On any idle notification from one of these sub-agents, nudge it
+  immediately via `SendMessage` — do not wait for the next check-in.
+- Right after dispatch, set up a `CronCreate` check-in every 15 minutes
+  with this prompt: "For any of the deep-review reviewer sub-agents from
+  Step 5 that are not yet completed: send a `SendMessage` nudge to any
+  that have gone idle and haven't been nudged yet, and re-dispatch (once,
+  same reviewer definition) any that are still not completed 30 minutes
+  after their nudge." This check-in exists both to catch any real-time
+  nudge that was missed and to perform the timeout/re-dispatch step.
+- If a reviewer still hasn't completed after its one re-dispatch, record
+  its findings as **unavailable** ("reviewer sub-agent did not respond;
+  its scope was not checked in this run") instead of silently omitting it
+  — carry that note through to Step 13's final report. Step 6 onward
+  proceeds with whichever reviewers did complete, so one unresponsive
+  reviewer never blocks the rest of the pipeline.
+- Once every reviewer is either completed or marked unavailable,
+  `CronDelete` the check-in created above.
+
 ### Step 6: Confidence scoring (batched)
 
 Launch a **single** Haiku sub-agent to score **all** findings returned by
@@ -254,6 +276,8 @@ When no issues were found:
 
 No issues found. Checked for bugs, CLAUDE.md compliance, security (incl. AI-PR risks), performance, error handling, silent failures, type design, and test coverage.
 ```
+
+If any reviewer sub-agent from Step 5 was marked unavailable (see Step 5's idle sub-agent follow-up), note it explicitly in the report so the reader knows that perspective was not checked in this run, e.g. add a line such as `Reviewer unavailable: <slug> (did not respond; its scope was not checked in this run)` alongside the findings.
 
 #### Formatting rules
 

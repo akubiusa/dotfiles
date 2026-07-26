@@ -313,6 +313,8 @@ SKILL.md) — there is no separate background process or log file to verify.
 Report the monitor as running; `/handle-pr-reviews` is called directly in
 this conversation when the monitor detects a review.
 
+If requesting or obtaining a Copilot review fails or looks unlikely to ever arrive (e.g. `request-review-copilot` missing, a permissions error, Copilot not enabled on the target repository), do not pause here to ask the user whether to keep waiting or give up. The Copilot review `Monitor` keeps running independently regardless, so move on to Phase 17 unconditionally and immediately.
+
 ## Phase 17: Start the PR Close Monitor
 
 Immediately after Phase 16, start the merge/close monitor so cleanup

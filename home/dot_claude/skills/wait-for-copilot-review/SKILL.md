@@ -175,3 +175,10 @@ event arrives in this conversation and this conversation acts on it.
 - No lock file / flock is used — Step 0's one-time existence check replaces
   it, since a `Monitor` loop only needs to run once per PR within a given
   session.
+- If requesting a Copilot review fails or Copilot code review isn't
+  available for the target repository (`request-review-copilot` missing,
+  a permissions error, Copilot not enabled on the repo, etc.), it is fine
+  to leave this `Monitor` running anyway. The caller must not wait for the
+  Copilot review to succeed before moving on to later phases (e.g.
+  starting the PR-close monitor) — there is no need to ask the user
+  whether to keep waiting or stop.

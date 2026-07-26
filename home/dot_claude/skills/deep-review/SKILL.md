@@ -277,7 +277,7 @@ When no issues were found:
 No issues found. Checked for bugs, CLAUDE.md compliance, security (incl. AI-PR risks), performance, error handling, silent failures, type design, and test coverage.
 ```
 
-If any reviewer sub-agent from Step 5 was marked unavailable (see Step 5's idle sub-agent follow-up), note it explicitly in the report so the reader knows that perspective was not checked in this run, e.g. add a line such as `⚠️ Reviewer unavailable: <slug> (did not respond; its scope was not checked in this run)` alongside the findings.
+If any reviewer sub-agent from Step 5 was marked unavailable (see Step 5's idle sub-agent follow-up), note it explicitly in the report so the reader knows that perspective was not checked in this run, e.g. add a line such as `Reviewer unavailable: <slug> (did not respond; its scope was not checked in this run)` alongside the findings.
 
 #### Formatting rules
 

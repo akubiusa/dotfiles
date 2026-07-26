@@ -81,17 +81,9 @@ For features spanning 5+ files or with security-critical paths:
 
 ## Handling Idle Notifications from Background Sub-Agents
 
-The `Agent` tool runs sub-agents in the background by default and notifies
-the parent session when one completes. If a sub-agent stops taking actions
-without calling `SendMessage` to report completion, the harness may deliver
-an **idle** notification instead of a **completed** one. Treat these as
-distinct: an idle notification means the sub-agent went quiet without
-finishing, not that it's done.
+The `Agent` tool runs sub-agents in the background by default and notifies the parent session when one completes. If a sub-agent stops taking actions without calling `SendMessage` to report completion, the harness may deliver an **idle** notification instead of a **completed** one. Treat these as distinct: an idle notification means the sub-agent went quiet without finishing, not that it's done.
 
-This applies whenever a background-mode sub-agent (the `Agent` tool's
-default, or explicit `run_in_background: true`) sends an idle notification.
-It does not apply to sync-mode (`run_in_background: false`) dispatches,
-since those block the calling turn until the sub-agent returns.
+This applies whenever a background-mode sub-agent (the `Agent` tool's default, or explicit `run_in_background: true`) sends an idle notification. It does not apply to sync-mode (`run_in_background: false`) dispatches, since those block the calling turn until the sub-agent returns.
 
 **Follow-up procedure:**
 

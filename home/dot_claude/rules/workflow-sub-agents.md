@@ -78,3 +78,45 @@ For features spanning 5+ files or with security-critical paths:
 | Implementation worker | Sonnet | Write, Edit, Bash |
 | Verification worker | Opus | Read, Grep, Bash |
 | Discovery worker | Haiku | Read, Grep |
+
+## Handling Idle Notifications from Background Sub-Agents
+
+The `Agent` tool runs sub-agents in the background by default and notifies
+the parent session when one completes. If a sub-agent stops taking actions
+without calling `SendMessage` to report completion, the harness may deliver
+an **idle** notification instead of a **completed** one. Treat these as
+distinct: an idle notification means the sub-agent went quiet without
+finishing, not that it's done.
+
+This applies whenever a background-mode sub-agent (the `Agent` tool's
+default, or explicit `run_in_background: true`) sends an idle notification.
+It does not apply to sync-mode (`run_in_background: false`) dispatches,
+since those block the calling turn until the sub-agent returns.
+
+**Follow-up procedure:**
+
+1. On receiving an idle notification, immediately send that sub-agent one
+   `SendMessage` nudge asking it to continue or report its current status.
+2. If no `completed` notification arrives within a timeout (default 15
+   minutes since the nudge; a calling skill may define its own threshold —
+   that takes precedence over this default), set up a `CronCreate`
+   check-in (default: every 15 minutes) if one isn't already running, to
+   track outstanding sub-agents.
+3. At each check-in, any sub-agent still not completed after its own
+   timeout (default 30 minutes since the nudge) is stopped (e.g. via
+   `TaskStop`) and re-dispatched once, with the same input.
+4. If the re-dispatch also times out, mark that sub-agent's task as
+   **unresolved** in the calling skill's final report — do not silently
+   drop it — and move on with the rest of the work instead of waiting
+   further.
+5. Once every sub-agent is either completed or marked unresolved, delete
+   the `CronCreate` check-in with `CronDelete`.
+
+**Notes:**
+
+- `CronCreate` jobs are session-scoped and auto-expire after 7 days (same
+  constraint as `check-container-status`'s use of `CronCreate`).
+- This rule sets the default cadence and retry count; it does not mandate
+  a specific state-tracking mechanism. A calling skill that already tracks
+  sub-agent progress (a state file like `STATE.md`, or the `Todo`/`Task`
+  tools) may reuse that instead of inventing a new one.

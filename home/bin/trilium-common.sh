@@ -27,14 +27,16 @@ trilium_validate_id() {
   fi
 }
 
-# $1 (topic) が安全な形式(英数字・ハイフン・アンダースコアのみ)を満たすか検証する。
-# 満たさない場合はエラーメッセージを出して終了する。Trilium の検索クエリ文字列に
-# そのまま埋め込まれるため、クエリ構文上のメタ文字(#、=、* 等)を拒否する。
+# $1 (topic) が安全な形式(英数字・ハイフン・アンダースコアのみ、最大25文字)を
+# 満たすか検証する。満たさない場合はエラーメッセージを出して終了する。Trilium の
+# 検索クエリ文字列にそのまま埋め込まれるため、クエリ構文上のメタ文字(#、=、* 等)
+# を拒否する。25文字上限は、"folder_" (7文字) を前置した folder noteId が
+# noteId の長さ上限(32文字)を超えないようにするため(trilium_resolve_folder 参照)。
 trilium_validate_topic() {
   local topic="$1"
 
-  if ! [[ "$topic" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-    echo "ERROR: invalid topic: '$topic' (must match ^[a-zA-Z0-9_-]+\$)" >&2
+  if ! [[ "$topic" =~ ^[a-zA-Z0-9_-]{1,25}$ ]]; then
+    echo "ERROR: invalid topic: '$topic' (must match ^[a-zA-Z0-9_-]{1,25}\$, max 25 characters)" >&2
     exit 1
   fi
 }
@@ -61,10 +63,10 @@ trilium_resolve_folder() {
   local folder_title="$2"
   local normalized folder_id auth_header status payload
 
-  # "folder_" プレフィックス(7文字)を除いた残り25文字に収まるよう切り詰める。
-  # 切り詰めない場合、正規化後の topic が26文字以上だと noteId の長さ上限(32文字)を
-  # 超えてエラー終了してしまう(旧 slug 方式の cut -c1-32 と同じ考え方)。
-  normalized=$(printf '%s' "$topic" | tr '-' '_' | tr -cd 'a-zA-Z0-9_' | cut -c1-25)
+  # topic は trilium_validate_topic により ^[a-zA-Z0-9_-]{1,25}$ であることが
+  # 呼び出し元で検証済みのため、ここでは切り詰めや文字除去を行わず、
+  # ハイフンをアンダースコアに変換するのみで足りる。
+  normalized=$(printf '%s' "$topic" | tr '-' '_')
   folder_id="folder_${normalized}"
   trilium_validate_id "$folder_id" "folder noteId"
 
@@ -94,6 +96,36 @@ trilium_resolve_folder() {
     "$TRILIUM_HTTP_URL/etapi/create-note" >/dev/null
 
   printf '%s\n' "$folder_id"
+}
+
+# $1 (note_json) の attributes 配列に $3 (label_name)=$4 (label_value) の label が
+# 既に存在するか確認し、無い場合(または値が異なる場合)のみ $2 (note_id) に対して
+# POST /etapi/attributes で付与する(冪等)。新規作成直後のノートのように
+# attributes を持たないことが確実な場合は、$1 に '{"attributes": []}' を渡せば
+# 常に POST される。
+trilium_upsert_label() {
+  local note_json="$1"
+  local note_id="$2"
+  local label_name="$3"
+  local label_value="$4"
+  local auth_header="$5"
+  local base_url="$6"
+  local label_payload
+
+  if printf '%s' "$note_json" | jq -e --arg name "$label_name" --arg value "$label_value" \
+      '.attributes | any(.[]; .type == "label" and .name == $name and .value == $value)' \
+      >/dev/null 2>&1; then
+    return 0
+  fi
+
+  label_payload=$(jq -n \
+    --arg noteId "$note_id" \
+    --arg name "$label_name" \
+    --arg value "$label_value" \
+    '{noteId: $noteId, type: "label", name: $name, value: $value}')
+  curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
+    --data "$label_payload" \
+    "$base_url/etapi/attributes" >/dev/null
 }
 
 # $1 (noteId) と同じ $2 (topic) を持ち、$3 (docType) とは

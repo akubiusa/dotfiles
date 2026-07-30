@@ -23,17 +23,17 @@ investigations, spec/plan documents not posted as Issue comments).
 
 1. **Scope check**: confirm the document is not tied to a GitHub Issue (see "When to
    Apply" above). If it is, stop and follow `rules/issue-comment-docs.md` instead.
-2. **Search for existing documents first**: run `bash ~/bin/trilium-search.sh <topic>`
-   before uploading anything. If it reports existing hits, tell the user about them before
-   proceeding — the upload may be a revision of one of those rather than a new document.
-3. **Determine `noteId` / `topic` / `docType`**: the caller (this skill's invoker) is
+2. **Determine `noteId` / `topic` / `docType`**: the caller (this skill's invoker) is
    responsible for constructing these:
    - `noteId`: must match `^[a-zA-Z0-9_]{4,32}$`. Recommended (not required) convention:
      `<docType>_<topic正規化>`, e.g. `spec_twitter_acct`.
-   - `topic`: a free-text project/topic identifier, reused across all documents for the
-     same project so they land in the same folder and get cross-linked, e.g.
-     `twitter-account-classifier`.
+   - `topic`: must match `^[a-zA-Z0-9_-]{1,25}$` (alphanumeric, hyphen, underscore only,
+     max 25 characters), reused across all documents for the same project so they land in
+     the same folder and get cross-linked, e.g. `twitter-acct-classifier`.
    - `docType`: one of `spec`, `plan`, `investigation`.
+3. **Search for existing documents first**: run `bash ~/bin/trilium-search.sh <topic>`
+   before uploading anything. If it reports existing hits, tell the user about them before
+   proceeding — the upload may be a revision of one of those rather than a new document.
 4. **Sensitive information check**: before uploading, verify the document contains no
    secrets (tokens, passwords, internal URLs, credentials) — same standard as
    `rules/security.md`.

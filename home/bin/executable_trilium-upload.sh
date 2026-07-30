@@ -93,6 +93,17 @@ if [ "$get_status" = "200" ]; then
   curl -sf -X PUT -H "$auth_header" -H "Content-Type: text/plain" \
     --data-binary "@$html_file" \
     "$TRILIUM_HTTP_URL/etapi/notes/$note_id/content" >/dev/null
+
+  # リファクタ前に作成された既存ノートには topic/docType/marker ラベルが
+  # 付与されていない場合があるため、不足していれば補完する(冪等)。
+  for label_name in "$marker_label" "docType" "topic"; do
+    case "$label_name" in
+      "$marker_label") label_value="1" ;;
+      docType) label_value="$doc_type" ;;
+      topic) label_value="$topic" ;;
+    esac
+    trilium_upsert_label "$note_json" "$note_id" "$label_name" "$label_value" "$auth_header" "$TRILIUM_HTTP_URL"
+  done
 elif [ "$get_status" = "404" ]; then
   # 新規作成: トピック単位のフォルダノート配下に、noteId を明示指定して作成する。
   # フォルダは "_share" の子孫のため、フォルダ配下のノートも自動的に共有される。
@@ -125,14 +136,7 @@ elif [ "$get_status" = "404" ]; then
       docType) label_value="$doc_type" ;;
       topic) label_value="$topic" ;;
     esac
-    label_payload=$(jq -n \
-      --arg noteId "$note_id" \
-      --arg name "$label_name" \
-      --arg value "$label_value" \
-      '{noteId: $noteId, type: "label", name: $name, value: $value}')
-    curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
-      --data "$label_payload" \
-      "$TRILIUM_HTTP_URL/etapi/attributes" >/dev/null
+    trilium_upsert_label '{"attributes": []}' "$note_id" "$label_name" "$label_value" "$auth_header" "$TRILIUM_HTTP_URL"
   done
 
   trilium_link_siblings "$note_id" "$topic" "$doc_type"

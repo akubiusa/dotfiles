@@ -31,8 +31,14 @@ jobs:
         background: true
         run: bash tests/unit/test_hooks.sh
 
+      - name: Run trilium validation unit test
+        id: run-trilium-validation-unit-test
+        background: true
+        run: bash tests/unit/test_trilium_validation.sh
+
       - name: Wait for unit tests
         wait:
           - run-install-sh-unit-test
           - run-notification-unit-test
           - run-hooks-unit-test
+          - run-trilium-validation-unit-test

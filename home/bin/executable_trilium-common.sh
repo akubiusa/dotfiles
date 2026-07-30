@@ -66,3 +66,46 @@ trilium_resolve_folder() {
 
   printf '%s\n' "$folder_id"
 }
+
+# $1 (noteId) と同じ $2 (topic) を持ち、$3 (docType) と異なる docType
+# を持つ既存ノートを検索し、見つかった場合は双方に ~relatedTo を張る。
+# 検索・属性付与の失敗はエラー終了させず、標準エラーに警告を出すのみに留める
+# (アップロード自体を失敗させないベストエフォート動作のため)。
+trilium_link_siblings() {
+  local note_id="$1"
+  local topic="$2"
+  local doc_type="$3"
+  local auth_header query response sibling_ids sibling_id rel_payload rev_payload
+
+  auth_header="Authorization: $TRILIUM_ETAPI_TOKEN"
+  query="#topic=${topic} #docType != ${doc_type}"
+
+  if ! response=$(curl -sf -G -H "$auth_header" \
+      --data-urlencode "search=$query" \
+      --data-urlencode "ancestorNoteId=_share" \
+      "$TRILIUM_HTTP_URL/etapi/notes"); then
+    echo "WARNING: trilium_link_siblings: search request failed; skipping cross-link for $note_id" >&2
+    return 0
+  fi
+
+  sibling_ids=$(printf '%s' "$response" | jq -r '.results[]?.noteId // empty')
+  if [ -z "$sibling_ids" ]; then
+    return 0
+  fi
+
+  while IFS= read -r sibling_id; do
+    [ -z "$sibling_id" ] && continue
+
+    rel_payload=$(jq -n --arg noteId "$note_id" --arg value "$sibling_id" \
+      '{noteId: $noteId, type: "relation", name: "relatedTo", value: $value}')
+    curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
+      --data "$rel_payload" "$TRILIUM_HTTP_URL/etapi/attributes" >/dev/null \
+      || echo "WARNING: trilium_link_siblings: failed to add relatedTo from $note_id to $sibling_id" >&2
+
+    rev_payload=$(jq -n --arg noteId "$sibling_id" --arg value "$note_id" \
+      '{noteId: $noteId, type: "relation", name: "relatedTo", value: $value}')
+    curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
+      --data "$rev_payload" "$TRILIUM_HTTP_URL/etapi/attributes" >/dev/null \
+      || echo "WARNING: trilium_link_siblings: failed to add relatedTo from $sibling_id to $note_id" >&2
+  done <<< "$sibling_ids"
+}

@@ -90,10 +90,10 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 
 ## Claude Code フック / 通知機能
 
-Claude Code のフックは `home/dot_claude/private_settings.json` で設定され、`Stop` / `PreToolUse` / `PostToolUse` / `PermissionRequest` / `Notification` / `UserPromptSubmit` を使う。役割は大きく 2 系統:
+Claude Code のフックは `home/dot_claude/private_settings.json` で設定され、`Stop` / `SubagentStop` / `PreToolUse` / `PostToolUse` / `PermissionRequest` / `Notification` / `UserPromptSubmit` を使う。役割は大きく 2 系統:
 
 - **Discord 通知**: `home/dot_claude/scripts/completion-notify/` 配下のスクリプト(セッション完了、権限リクエスト、AskUserQuestion、Notification 等)。`~/.env` の `DISCORD_CLAUDE_WEBHOOK` と `DISCORD_CLAUDE_MENTION_USER_ID` を使用する。
-- **レビュー強制など**: `home/dot_claude/hooks/` 配下のスクリプト(deep-review、レビュースレッド未解決チェック、rtk 書き換え、git config ガード等)。
+- **レビュー強制など**: `home/dot_claude/hooks/` 配下のスクリプト(deep-review、レビュースレッド未解決チェック、rtk 書き換え、git config ガード等)。加えて `executable_detect-leaked-toolcall.sh` は、レビュー強制とは別の関心事として、アシスタントメッセージへのツールコール XML マークアップの漏洩を `Stop` / `SubagentStop` の両方で検出する。
 
 フックのコマンドや対象スクリプトを変更したときは、`tests/unit/test_hooks.sh` / `test_notifications.sh` の参照が古くなっていないか確認する。
 

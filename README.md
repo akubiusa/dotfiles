@@ -287,6 +287,8 @@ applies_to: all        # all | pr-only（省略時は all）
 `~/.claude/hooks/deep-review-require-fixes.sh`（Stop）が設定されており、
 スコア 50 以上の指摘が未対応の場合は Claude の処理を一時ブロックして対応を促す。
 
+また、`~/.claude/hooks/detect-leaked-toolcall.sh`（Stop / SubagentStop）は、Claude Code の既知の不具合によりツールコールの XML マークアップがプレーンテキストとして最終アシスタントメッセージに漏れ出していないかを検出し、検出時は自己模倣による再発を防ぐよう促すメッセージでブロックする。
+
 これらのフックは公式フック契約（stdin JSON + `decision/reason` 出力）に準拠している。
 
 ## `/claude-md-maintainer` スキル

@@ -367,6 +367,58 @@ for cmd in \
   fi
 done
 
+echo "Testing detect-leaked-toolcall hook behavior..."
+DETECT_LEAKED_TOOLCALL="home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
+
+run_detect_leaked_toolcall() {
+  local transcript_path="$1"
+  local session_id="$2"
+  jq -n --arg sid "$session_id" --arg tp "$transcript_path" '{"session_id": $sid, "transcript_path": $tp}' \
+    | HOME="$TEST_HOOK_HOME" bash "$DETECT_LEAKED_TOOLCALL"
+}
+
+TEST_HOOK_HOME=$(mktemp -d)
+
+# シナリオ 1: 最終アシスタントメッセージにツールコールのマークアップが漏れている場合はブロックすること
+TEST_TRANSCRIPT=$(mktemp)
+cat > "$TEST_TRANSCRIPT" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"続けます。<invoke name=\"Write\">"}]}}
+EOF
+OUTPUT=$(run_detect_leaked_toolcall "$TEST_TRANSCRIPT" "test-session-leak")
+DECISION=$(echo "$OUTPUT" | jq -r '.decision // empty' 2>/dev/null)
+if [[ "$DECISION" != "block" ]]; then
+  echo "❌ detect-leaked-toolcall did not block a message with leaked tool-call markup"
+  FAILED=1
+else
+  echo "✅ detect-leaked-toolcall blocked a message with leaked tool-call markup"
+fi
+rm -f "$TEST_TRANSCRIPT"
+
+# シナリオ 2: 最終アシスタントメッセージが通常のプロースの場合はブロックしないこと
+TEST_TRANSCRIPT=$(mktemp)
+cat > "$TEST_TRANSCRIPT" <<'EOF'
+{"type":"assistant","message":{"content":[{"type":"text","text":"ordinary prose without any tool-call markup."}]}}
+EOF
+OUTPUT=$(run_detect_leaked_toolcall "$TEST_TRANSCRIPT" "test-session-clean")
+if [[ -n "$OUTPUT" ]]; then
+  echo "❌ detect-leaked-toolcall produced output for an ordinary message: $OUTPUT"
+  FAILED=1
+else
+  echo "✅ detect-leaked-toolcall stayed silent for an ordinary message"
+fi
+rm -f "$TEST_TRANSCRIPT"
+
+# シナリオ 3: transcript_path が存在しない場合はブロックしないこと
+OUTPUT=$(run_detect_leaked_toolcall "/nonexistent/path/transcript.jsonl" "test-session-missing")
+if [[ -n "$OUTPUT" ]]; then
+  echo "❌ detect-leaked-toolcall produced output for a missing transcript_path: $OUTPUT"
+  FAILED=1
+else
+  echo "✅ detect-leaked-toolcall stayed silent for a missing transcript_path"
+fi
+
+rm -rf "$TEST_HOOK_HOME"
+
 if [ $FAILED -eq 0 ]; then
   echo "✅ All hook tests passed"
 else

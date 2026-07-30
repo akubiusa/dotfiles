@@ -52,6 +52,8 @@ done
 
 trilium_load_env
 trilium_validate_id "$note_id" "noteId"
+trilium_validate_topic "$topic"
+trilium_validate_doc_type "$doc_type"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT

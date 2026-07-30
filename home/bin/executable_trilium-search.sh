@@ -23,6 +23,7 @@ for cmd in curl jq; do
   fi
 done
 
+trilium_validate_topic "$topic"
 trilium_load_env
 auth_header="Authorization: $TRILIUM_ETAPI_TOKEN"
 

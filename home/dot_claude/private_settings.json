@@ -38,6 +38,23 @@
             "type": "command",
             "command": "bash ~/.claude/hooks/require-review-thread-fixes.sh",
             "onFailure": "fail"
+          },
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
+            "onFailure": "ignore"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
+            "onFailure": "ignore"
           }
         ]
       }

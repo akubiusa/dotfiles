@@ -13,6 +13,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_require-code-review-fixes.sh"
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
   "home/dot_claude/hooks/executable_git-config-guard.sh"
+  "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
 )
 
 # 各フックの構文チェック

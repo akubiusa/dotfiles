@@ -26,3 +26,43 @@ trilium_validate_id() {
     exit 1
   fi
 }
+
+# $1 (topic) から folder_<正規化topic> の noteId を組み立て、既存なら再利用し、
+# 存在しなければ $2 (folder_title) で "_share" 直下に新規作成する。
+# 標準出力に noteId を1行出力する。$2 が空で新規作成が必要な場合はエラー終了する。
+trilium_resolve_folder() {
+  local topic="$1"
+  local folder_title="$2"
+  local normalized folder_id auth_header status payload
+
+  normalized=$(printf '%s' "$topic" | tr '-' '_' | tr -cd 'a-zA-Z0-9_')
+  folder_id="folder_${normalized}"
+  trilium_validate_id "$folder_id" "folder noteId"
+
+  auth_header="Authorization: $TRILIUM_ETAPI_TOKEN"
+  status=$(curl -s -o /dev/null -w '%{http_code}' -H "$auth_header" \
+    "$TRILIUM_HTTP_URL/etapi/notes/$folder_id")
+
+  if [ "$status" = "200" ]; then
+    printf '%s\n' "$folder_id"
+    return 0
+  elif [ "$status" != "404" ]; then
+    echo "ERROR: unexpected status $status from Trilium existence check ($TRILIUM_HTTP_URL/etapi/notes/$folder_id)" >&2
+    exit 1
+  fi
+
+  if [ -z "$folder_title" ]; then
+    echo "ERROR: folder note $folder_id does not exist and no --folder-title was given" >&2
+    exit 1
+  fi
+
+  payload=$(jq -n \
+    --arg noteId "$folder_id" \
+    --arg title "$folder_title" \
+    '{parentNoteId: "_share", noteId: $noteId, title: $title, type: "text", content: ""}')
+  curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
+    --data "$payload" \
+    "$TRILIUM_HTTP_URL/etapi/create-note" >/dev/null
+
+  printf '%s\n' "$folder_id"
+}

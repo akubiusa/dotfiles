@@ -1,17 +1,42 @@
 #!/usr/bin/env bash
 # Trilium へドキュメントをアップロードする(ETAPI 経由、pandoc で Markdown → HTML 変換)。
-# 使い方: trilium-upload.sh <file-path> <slug> <title>
+# 使い方: trilium-upload.sh <file-path> <noteId> <topic> <docType> <title> [--folder-title <title>]
 # 成功時は標準出力の最終行に共有 URL を出力する。
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-  echo "Usage: trilium-upload.sh <file-path> <slug> <title>" >&2
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=/dev/null
+source "$script_dir/trilium-common.sh"
+
+usage() {
+  echo "Usage: trilium-upload.sh <file-path> <noteId> <topic> <docType> <title> [--folder-title <title>]" >&2
   exit 1
+}
+
+if [ "$#" -lt 5 ]; then
+  usage
 fi
 
 file="$1"
-slug="$2"
-title="$3"
+note_id="$2"
+topic="$3"
+doc_type="$4"
+title="$5"
+shift 5
+
+folder_title=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --folder-title)
+      [ "$#" -ge 2 ] || usage
+      folder_title="$2"
+      shift 2
+      ;;
+    *)
+      usage
+      ;;
+  esac
+done
 
 if [ ! -f "$file" ]; then
   echo "ERROR: file not found: $file" >&2
@@ -25,21 +50,8 @@ for cmd in pandoc curl jq; do
   fi
 done
 
-# ~/.env を読み込む(completion-notify 配下のスクリプト群と同じパターン)。
-# shellcheck source=/dev/null
-source "$HOME/.env"
-
-if [ -z "${TRILIUM_HTTP_URL:-}" ] || [ -z "${TRILIUM_ETAPI_TOKEN:-}" ]; then
-  echo "ERROR: TRILIUM_HTTP_URL / TRILIUM_ETAPI_TOKEN must be set in ~/.env" >&2
-  exit 1
-fi
-
-# slug を ETAPI の noteId 形式([a-zA-Z0-9_]{4,32})に正規化する。
-note_id=$(printf '%s' "$slug" | tr '-' '_' | tr -cd 'a-zA-Z0-9_' | cut -c1-32)
-if [ "${#note_id}" -lt 4 ]; then
-  echo "ERROR: slug too short after normalization to a valid Trilium noteId: $slug" >&2
-  exit 1
-fi
+trilium_load_env
+trilium_validate_id "$note_id" "noteId"
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -80,20 +92,23 @@ if [ "$get_status" = "200" ]; then
     --data-binary "@$html_file" \
     "$TRILIUM_HTTP_URL/etapi/notes/$note_id/content" >/dev/null
 elif [ "$get_status" = "404" ]; then
-  # 新規作成: "_share" の直下に、noteId を明示指定して作成する。
-  # → "_share" の子孫に配置されたノートは自動的に共有(公開閲覧可能)になる。
+  # 新規作成: トピック単位のフォルダノート配下に、noteId を明示指定して作成する。
+  # フォルダは "_share" の子孫のため、フォルダ配下のノートも自動的に共有される。
+  folder_id=$(trilium_resolve_folder "$topic" "$folder_title")
+
   # NOTE: ETAPI の create-note は "attributes" プロパティを受け付けない
-  # (PROPERTY_NOT_ALLOWED) ため、マーカーラベルはノート作成後に
+  # (PROPERTY_NOT_ALLOWED) ため、メタデータラベルはノート作成後に
   # 別途 POST /etapi/attributes で付与する。
   # NOTE: --arg content "$(cat "$html_file")" だと本文がコマンドライン引数として
   # 渡され、大きいドキュメントで "Argument list too long" になる。--rawfile で
   # ファイルから直接読み込むことで引数長制限を回避する。
   payload_file="$tmpdir/create-note-payload.json"
   jq -n \
+    --arg parentNoteId "$folder_id" \
     --arg noteId "$note_id" \
     --arg title "$title" \
     --rawfile content "$html_file" \
-    '{parentNoteId: "_share", noteId: $noteId, title: $title, type: "text", content: $content}' \
+    '{parentNoteId: $parentNoteId, noteId: $noteId, title: $title, type: "text", content: $content}' \
     > "$payload_file"
   # NOTE: 同様に、curl --data "$payload" のようにシェル変数展開でコマンドライン
   # 引数として渡すと大きいドキュメントで "Argument list too long" になるため、
@@ -102,13 +117,23 @@ elif [ "$get_status" = "404" ]; then
     --data "@$payload_file" \
     "$TRILIUM_HTTP_URL/etapi/create-note" >/dev/null
 
-  label_payload=$(jq -n \
-    --arg noteId "$note_id" \
-    --arg markerLabel "$marker_label" \
-    '{noteId: $noteId, type: "label", name: $markerLabel, value: "1"}')
-  curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
-    --data "$label_payload" \
-    "$TRILIUM_HTTP_URL/etapi/attributes" >/dev/null
+  for label_name in "$marker_label" "docType" "topic"; do
+    case "$label_name" in
+      "$marker_label") label_value="1" ;;
+      docType) label_value="$doc_type" ;;
+      topic) label_value="$topic" ;;
+    esac
+    label_payload=$(jq -n \
+      --arg noteId "$note_id" \
+      --arg name "$label_name" \
+      --arg value "$label_value" \
+      '{noteId: $noteId, type: "label", name: $name, value: $value}')
+    curl -sf -X POST -H "$auth_header" -H "Content-Type: application/json" \
+      --data "$label_payload" \
+      "$TRILIUM_HTTP_URL/etapi/attributes" >/dev/null
+  done
+
+  trilium_link_siblings "$note_id" "$topic" "$doc_type"
 else
   echo "ERROR: unexpected status $get_status from Trilium existence check ($TRILIUM_HTTP_URL/etapi/notes/$note_id)" >&2
   exit 1

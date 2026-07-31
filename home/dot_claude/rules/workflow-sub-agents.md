@@ -93,10 +93,16 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
    minutes since the nudge; a calling skill may define its own threshold —
    that takes precedence over this default), set up a `CronCreate`
    check-in (default: every 15 minutes) if one isn't already running, to
-   track outstanding sub-agents.
+   track outstanding sub-agents. This timeout is purely elapsed wall-clock
+   time since the nudge was sent — it applies identically whether the
+   sub-agent acknowledged the nudge, produced other output, or gave zero
+   response of any kind; do not wait for an acknowledgment before starting
+   or continuing this clock.
 3. At each check-in, any sub-agent still not completed after its own
    timeout (default 30 minutes since the nudge) is stopped (e.g. via
-   `TaskStop`) and re-dispatched once, with the same input.
+   `TaskStop`) and re-dispatched once, with the same input — again based
+   solely on elapsed time, regardless of whether the sub-agent ever
+   responded to the nudge.
 4. If the re-dispatch also times out, mark that sub-agent's task as
    **unresolved** in the calling skill's final report — do not silently
    drop it — and move on with the rest of the work instead of waiting

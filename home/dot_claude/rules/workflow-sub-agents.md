@@ -118,3 +118,23 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
   a specific state-tracking mechanism. A calling skill that already tracks
   sub-agent progress (a state file like `STATE.md`, or the `Todo`/`Task`
   tools) may reuse that instead of inventing a new one.
+
+**Proactive complement — instruct named/teammate sub-agents to report before going idle:**
+
+Named/teammate sub-agents (dispatched via the `Agent` tool with a `name`
+parameter, meant to be resumed later via `SendMessage`) have no automatic
+"completed" notification the way anonymous one-shot `Agent` calls do — the
+only way the team-lead learns of their status is if the sub-agent itself
+calls `SendMessage` before going idle. So whenever dispatching a
+named/teammate sub-agent, always append an explicit instruction to its
+prompt along these lines: "Before you stop taking actions for any reason
+(completion, being blocked, uncertainty, or anything else), you MUST call
+SendMessage to report your status to team-lead. Never go idle without
+reporting." This does not apply to anonymous one-shot `Agent` calls without
+a `name` — those already return a result automatically when they stop.
+
+This is a preventive measure, not a replacement for the reactive follow-up
+procedure above: a sub-agent that stalls before it can even reason about
+stopping (e.g. blocked at a permission gate before its first tool call)
+can't act on an instruction in its own prompt either, so the nudge/timeout/
+re-dispatch path above remains the safety net for that case.

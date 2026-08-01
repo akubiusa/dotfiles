@@ -146,11 +146,13 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 
 - `$issue-pr <issue-number-or-url>`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。
 - `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
+- `$glitchtip-pr [issue-id-or-url]`: GlitchTip issue から PR 作成と PR マージ時の自動 Resolve までを進めます。
 - `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認します。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
 - `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
 - `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
 - `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
+- `$glitchtip-pr-deep <issue-id>` / `$glitchtip-pr-lite <issue-id>`: 規模に応じて GlitchTip issue から PR を作成します。
 - `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
 - `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。
 - `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
@@ -263,7 +265,7 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 1. **GlitchTip issue の特定・取得**: 引数があれば ID/URL から直接取得、なければ組織を解決して未解決 issue 一覧から選択
 2. **Worktree の作成**: `EnterWorktree` でこの issue 専用の作業ツリーを作成
 3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec/plan フル承認フロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
-4. **実装・PR 作成**: `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、PR を作成
+4. **実装・PR 作成**: `glitchtip-pr-deep` の場合は `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、`glitchtip-pr-lite` の場合は spec/plan を作らず直接実装したうえで、PR を作成
 5. **PR マージ時の自動 Resolve**: PR がマージされたことを検知すると、確認なしで GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
 
 **使用例:**

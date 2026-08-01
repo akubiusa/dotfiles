@@ -85,6 +85,7 @@ if [ ! -f "$CODEX_CONFIG" ]; then
 fi
 
 sed -i '/^\[features\]$/a codex_hooks = false\nremote_control = true' "$CODEX_CONFIG"
+sed -i '1i model = "gpt-5.4"' "$CODEX_CONFIG"
 printf '\n[projects."/tmp/codex-runtime-state"]\ntrust_level = "trusted"\n[hooks.state."/tmp/codex-runtime-hook"]\ntrusted_hash = "sha256:test"\n[notice.model_migrations]\ngpt_5_4 = "gpt-5.6"\n' >> "$CODEX_CONFIG"
 if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
   echo "❌ chezmoi apply failed while preserving Codex runtime state"
@@ -92,6 +93,7 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
 fi
 
 if ! grep -Fq 'web_search = "live"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'model = "gpt-5.4"' "$CODEX_CONFIG" \
   || ! grep -Fq 'hooks = true' "$CODEX_CONFIG" \
   || ! grep -Fq 'codex_hooks = false' "$CODEX_CONFIG" \
   || ! grep -Fq 'remote_control = true' "$CODEX_CONFIG" \

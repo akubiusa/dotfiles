@@ -1,0 +1,4 @@
+interface:
+  display_name: "AGENTS.md Maintainer"
+  short_description: "Maintain repository AGENTS.md guidance."
+  default_prompt: "Review and update the AGENTS.md guidance for this repository."

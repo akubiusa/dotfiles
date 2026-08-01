@@ -154,7 +154,7 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 - `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
 - `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。
 - `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
-- `$claude-md-maintainer`: エージェント向けガイダンスを保守します。
+- `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守します。
 - `$rtk`: RTK の利用手順を参照します。
 - `$trilium`: Trilium 連携の手順を実行します。
 

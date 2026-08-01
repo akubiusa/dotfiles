@@ -56,7 +56,7 @@ Codex CLI では任意の custom slash command ではなく、skill でコマン
 - `$pr-cleanup`: マージ済み PR の後処理を行う。
 - `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを監視する。
 - `$check-container-status`: Docker Compose プロジェクトの状態を確認する。
-- `$claude-md-maintainer`: エージェント向けガイダンスを保守する。
+- `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守する。
 - `$rtk`: RTK の利用手順を参照する。
 - `$trilium`: Trilium 連携の手順を実行する。
 - skill を更新しても一覧へ反映されない場合は Codex を再起動する。

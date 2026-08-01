@@ -148,6 +148,15 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 - `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
 - `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認します。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
+- `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
+- `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
+- `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
+- `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
+- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。
+- `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
+- `$claude-md-maintainer`: エージェント向けガイダンスを保守します。
+- `$rtk`: RTK の利用手順を参照します。
+- `$trilium`: Trilium 連携の手順を実行します。
 
 skill を更新しても Codex CLI の一覧に反映されない場合は、Codex を再起動してください。
 

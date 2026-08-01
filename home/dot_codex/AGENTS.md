@@ -22,6 +22,25 @@
 - 変更に対応する syntax、unit、integration テストを実行する。通知・フック・helper を変更または削除した場合は、テスト内の参照も確認する。
 - chezmoi では `executable_` 接頭辞が展開時に除去される。設定からスクリプトを参照するときは、展開後の名前を使う。
 
+## 追加ガイダンス
+
+- 外部ライブラリやフレームワークの API、設定、互換性、非推奨化、バージョン差異を扱うときは、プロジェクトの lockfile 等から対象バージョンを特定し、一次情報で確認する。特定できなければ不明と明記して分岐を示す。
+- ユーザーへの確認は、現在の対話環境で利用できる質問機能を使う。要件が複数に解釈できるときは、勝手に選ばない。
+- Markdown の段落途中で手動改行しない。箇条書き、表、見出し、コードブロックはこの制約の対象外とする。
+- GitHub Issue に紐付く仕様・計画・調査の成果物は、秘密情報を確認した上で Issue コメントへ投稿し、投稿後は URL のみを報告する。別々の文書は別コメントにし、更新時はそのコメント ID を指定する。Issue と無関係な文書の保存先は、利用可能な skill またはユーザーの指示に従う。
+- `docs/superpowers/specs/` または `docs/superpowers/plans/` を作成・更新した後、ユーザーへ提示する前に `spec_reviewer` または `plan_reviewer` agent にレビューと修正を依頼する。これらのローカル成果物が ignore 対象なら force-add しない。
+
+変更対象に応じて、以下の reference を先に読む。
+
+| 対象 | Reference |
+| --- | --- |
+| 共通のコード品質、秘密情報、破壊的操作、依存関係、入力処理 | `~/.codex/references/coding-and-security.md` |
+| TypeScript / JavaScript | `~/.codex/references/typescript-javascript.md` |
+| Python、Shell、Dockerfile | `~/.codex/references/python-shell-docker.md` |
+| C#、`.csproj`、`.sln`、`.editorconfig` | `~/.codex/references/csharp.md` |
+| GitHub Actions workflow | `~/.codex/references/github-actions.md` |
+| GitHub Issue 文書、Jira、agent 委譲 | `~/.codex/references/workflow.md` |
+
 ## Codex Skills
 
 Codex CLI では任意の custom slash command ではなく、skill でコマンド相当のワークフローを提供する。Codex は repo / user / admin / system scope の skill を読み込む。この dotfiles は user scope の `~/.agents/skills` を管理する。
@@ -32,4 +51,12 @@ Codex CLI では任意の custom slash command ではなく、skill でコマン
 - `$ticket-pr`: Jira チケットから実装、PR 作成、PR 後フロー開始までを行う。
 - `$pr-health-monitor`: PR の CI、競合、本文、Codex/Copilot レビューを確認する。
 - `$handle-pr-reviews`: 未解決レビュースレッドを修正、返信、resolve まで処理する。
+- `$deep-review` / `$lite-review`: 変更を複数観点または重点観点でレビューする。
+- `$issue-pr-deep` / `$issue-pr-lite`: 規模に応じて GitHub Issue から PR を作成する。
+- `$pr-cleanup`: マージ済み PR の後処理を行う。
+- `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを監視する。
+- `$check-container-status`: Docker Compose プロジェクトの状態を確認する。
+- `$claude-md-maintainer`: エージェント向けガイダンスを保守する。
+- `$rtk`: RTK の利用手順を参照する。
+- `$trilium`: Trilium 連携の手順を実行する。
 - skill を更新しても一覧へ反映されない場合は Codex を再起動する。

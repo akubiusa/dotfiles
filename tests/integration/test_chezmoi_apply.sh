@@ -165,17 +165,21 @@ fi
 rm -rf "$HOOK_TEST_REPO" "$HOOK_MOCK_BIN" "$HOOK_INVOKED_MARKER"
 echo "✅ pre-commit hook invoked by git via core.hooksPath end-to-end"
 
-if [ ! -f "$HOME/.claude/agents/spec-reviewer.md" ]; then
-  echo "❌ spec-reviewer agent definition not generated"
-  exit 1
-fi
+CODEX_AGENT_FILES=(
+  "spec_reviewer.toml"
+  "plan_reviewer.toml"
+  "container_status_checker.toml"
+  "container_error_investigator.toml"
+)
 
-if [ ! -f "$HOME/.claude/agents/plan-reviewer.md" ]; then
-  echo "❌ plan-reviewer agent definition not generated"
-  exit 1
-fi
+for agent_file in "${CODEX_AGENT_FILES[@]}"; do
+  if [ ! -f "$HOME/.codex/agents/$agent_file" ]; then
+    echo "❌ Codex agent definition not generated: $agent_file"
+    exit 1
+  fi
+done
 
-echo "✅ spec-reviewer / plan-reviewer agent definitions generated successfully"
+echo "✅ Codex agent definitions generated successfully"
 
 # Idempotency テスト: 2 回目の apply で差分がないことを確認
 echo "Testing idempotency..."

@@ -1,0 +1,62 @@
+{
+  "description": "Codex CLI lifecycle policies and Discord notifications. Codex has no Notification/idle_prompt event, so idle notifications cannot be configured here.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/git-config-guard.sh",
+            "timeout": 10,
+            "statusMessage": "Checking Git configuration policy"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/scripts/completion-notify/notify-permission-request.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/scripts/completion-notify/notify-user-prompt-submit.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/scripts/completion-notify/notify-completion.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

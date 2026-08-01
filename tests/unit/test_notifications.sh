@@ -52,6 +52,12 @@ if [[ "$COMPLETION_OUTPUT" != "{}" ]]; then
 else
   echo "✅ Codex completion hook returned valid Stop-hook JSON"
 fi
+if grep -Fq 'tool_input' home/dot_codex/scripts/completion-notify/executable_notify-permission-request.sh; then
+  echo "❌ Codex permission notification must not include tool input"
+  FAILED=1
+else
+  echo "✅ Codex permission notification excludes tool input"
+fi
 rm -rf "$TEST_HOME"
 
 echo "Testing check-notify.sh is safely sourceable (no side effects)..."

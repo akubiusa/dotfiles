@@ -16,6 +16,7 @@ SESSION_ID=$(jq -r '.session_id // "unknown"' <<<"$INPUT_JSON")
 CWD_PATH=$(jq -r '.cwd // "unknown"' <<<"$INPUT_JSON")
 MESSAGE=$(jq -r '.last_assistant_message // ""' <<<"$INPUT_JSON")
 MESSAGE=${MESSAGE:0:1500}
+rm -f "$HOME/.codex/scripts/completion-notify/data/pending-permission-${SESSION_ID}"
 MACHINE_NAME=$(hostname)
 CONTENT="Codex CLI finished (${MACHINE_NAME})\nSession: ${SESSION_ID}\nDirectory: ${CWD_PATH}"
 if [[ -n "${MENTION_USER_ID:-}" ]]; then

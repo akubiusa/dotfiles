@@ -14,7 +14,6 @@ fi
 INPUT_JSON=$(cat)
 SESSION_ID=$(jq -r '.session_id // "unknown"' <<<"$INPUT_JSON")
 TOOL_NAME=$(jq -r '.tool_name // "unknown"' <<<"$INPUT_JSON")
-TOOL_INPUT=$(jq -c '.tool_input // {}' <<<"$INPUT_JSON")
 DATA_DIR="$HOME/.codex/scripts/completion-notify/data"
 PENDING_FILE="$DATA_DIR/pending-permission-${SESSION_ID}"
 mkdir -p "$DATA_DIR"
@@ -29,6 +28,6 @@ touch "$PENDING_FILE"
     if [[ -n "${MENTION_USER_ID:-}" ]]; then
         CONTENT="<@${MENTION_USER_ID}> ${CONTENT}"
     fi
-    PAYLOAD=$(jq -n --arg content "$CONTENT" --arg input "$TOOL_INPUT" '{content: $content, embeds: [{title: "Requested input", description: $input, color: 16753920}]}')
+    PAYLOAD=$(jq -n --arg content "$CONTENT" '{content: $content, embeds: [{title: "Approval request", color: 16753920}]}')
     printf '%s\n' "$PAYLOAD" | "$SCRIPT_DIR/send-discord-notification.sh" >/dev/null 2>&1
 ) >/dev/null 2>&1 &

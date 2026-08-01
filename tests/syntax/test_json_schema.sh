@@ -42,6 +42,7 @@ if [ -f "home/dot_codex/modify_config.toml" ]; then
   printf '%s\n' \
     'web_search = "disabled"' \
     'model = "gpt-5.4"' \
+    'model_reasoning_effort = "medium"' \
     '[projects."/tmp/codex-runtime-state"]' \
     'trust_level = "trusted"' \
     '[hooks.state."/tmp/codex-runtime-hook"]' \
@@ -65,6 +66,7 @@ except ModuleNotFoundError:
 config = tomllib.loads(sys.stdin.read())
 assert config["web_search"] == "live"
 assert config["model"] == "gpt-5.4"
+assert config["model_reasoning_effort"] == "medium"
 assert config["features"]["hooks"] is True
 assert config["features"]["remote_control"] is True
 assert config["features"]["codex_hooks"] is False

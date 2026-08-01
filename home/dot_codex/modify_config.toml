@@ -4,7 +4,6 @@
 {{- $config = fromToml .chezmoi.stdin -}}
 {{- end -}}
 {{- $config = $config | setValueAtPath "web_search" "live" -}}
-{{- $config = $config | setValueAtPath "model_reasoning_effort" "high" -}}
 {{- $config = $config | setValueAtPath "model_reasoning_summary" "auto" -}}
 {{- $config = $config | setValueAtPath "project_doc_fallback_filenames" (list "AGENTS.local.md") -}}
 {{- $config = $config | setValueAtPath "notify" (list "codex-wakatime") -}}

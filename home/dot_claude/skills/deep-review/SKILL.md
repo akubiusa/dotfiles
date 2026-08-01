@@ -108,6 +108,17 @@ Then, using the exploration results and the diff information, use a Haiku sub-ag
      commands, not diff text): pass only the list of changed file paths
      (from the Step 3 change summary), not the full diff.
 
+   Every reviewer sub-agent is dispatched in background mode without a
+   `name`. Its initial prompt MUST also include this explicit reporting
+   instruction, verbatim: "Before you stop taking actions for any reason
+   (completion, being blocked, uncertainty, or anything else), you MUST
+   call SendMessage to report your findings to the parent session. Never
+   go idle without reporting — plain text output alone is not visible to
+   the caller." Without this, the sub-agent may write its findings as
+   plain text and stop without calling `SendMessage`, producing a
+   repeated idle notification instead of a completed result (see
+   `rules/workflow-sub-agents.md`'s "Proactive complement" section).
+
 Each agent returns findings as: *problem summary + evidence + file:line reference*.
 
 **Instructions passed to every agent (false-positive suppression):**

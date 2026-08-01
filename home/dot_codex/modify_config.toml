@@ -10,6 +10,7 @@
 {{- $config = $config | setValueAtPath "personality" "pragmatic" -}}
 {{- $config = $config | setValueAtPath "sandbox_workspace_write.network_access" true -}}
 {{- $config = $config | setValueAtPath "features.hooks" true -}}
+{{- $_ := unset (index $config "features") "codex_hooks" -}}
 {{- $config = $config | setValueAtPath "features.unified_exec" true -}}
 {{- $config = $config | setValueAtPath "features.shell_snapshot" true -}}
 {{- $config | toToml -}}

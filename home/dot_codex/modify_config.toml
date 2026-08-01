@@ -1,0 +1,17 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $config := dict -}}
+{{- if hasKey .chezmoi "stdin" -}}
+{{- $config = fromToml .chezmoi.stdin -}}
+{{- end -}}
+{{- $config = $config | setValueAtPath "web_search" "live" -}}
+{{- $config = $config | setValueAtPath "model" "gpt-5.4" -}}
+{{- $config = $config | setValueAtPath "model_reasoning_effort" "high" -}}
+{{- $config = $config | setValueAtPath "model_reasoning_summary" "auto" -}}
+{{- $config = $config | setValueAtPath "project_doc_fallback_filenames" (list "AGENTS.local.md") -}}
+{{- $config = $config | setValueAtPath "notify" (list "codex-wakatime") -}}
+{{- $config = $config | setValueAtPath "personality" "pragmatic" -}}
+{{- $config = $config | setValueAtPath "sandbox_workspace_write.network_access" true -}}
+{{- $config = $config | setValueAtPath "features.hooks" true -}}
+{{- $config = $config | setValueAtPath "features.unified_exec" true -}}
+{{- $config = $config | setValueAtPath "features.shell_snapshot" true -}}
+{{- $config | toToml -}}

@@ -76,6 +76,47 @@ fi
 
 echo "✅ Codex files generated successfully"
 
+# Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
+# modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。
+CODEX_CONFIG="$HOME/.codex/config.toml"
+if [ ! -f "$CODEX_CONFIG" ]; then
+  echo "❌ Codex config.toml not generated"
+  exit 1
+fi
+
+sed -i '/^\[features\]$/a codex_hooks = false\nremote_control = true' "$CODEX_CONFIG"
+printf '\n[projects."/tmp/codex-runtime-state"]\ntrust_level = "trusted"\n[hooks.state."/tmp/codex-runtime-hook"]\ntrusted_hash = "sha256:test"\n[notice.model_migrations]\ngpt_5_4 = "gpt-5.6"\n' >> "$CODEX_CONFIG"
+if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
+  echo "❌ chezmoi apply failed while preserving Codex runtime state"
+  exit 1
+fi
+
+if ! python3 - "$CODEX_CONFIG" <<'PY'
+import sys
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+with open(sys.argv[1], "rb") as fh:
+    config = tomllib.load(fh)
+
+assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
+assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
+assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"
+assert config["web_search"] == "live"
+assert config["features"]["hooks"] is True
+assert config["features"]["codex_hooks"] is False
+assert config["features"]["remote_control"] is True
+PY
+then
+  echo "❌ Codex runtime state was not preserved"
+  exit 1
+fi
+
+echo "✅ Codex runtime state preserved successfully"
+
 # シークレットスキャン pre-commit フックの検証
 if [ ! -x "$HOME/.config/git/hooks/pre-commit" ]; then
   echo "❌ pre-commit hook not generated or not executable"

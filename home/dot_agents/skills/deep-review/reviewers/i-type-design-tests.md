@@ -8,3 +8,8 @@ applies_to: all
 ## Scope
 
 Check changed APIs, type boundaries, validation, and tests for cases that allow invalid state or leave a changed behavior unprotected. Do not request generic test coverage; identify a specific missing test or type constraint.
+
+Check for:
+
+- Type invariants not expressed correctly (null/undefined leaking into types, etc.)
+- Missing tests for new features or critical paths — only when CLAUDE.md/AGENTS.md explicitly requires tests

@@ -5,7 +5,7 @@ description: GitHub PR の未解決レビュースレッドを GraphQL で取得
 
 # PR レビュー一括処理
 
-Claude Code の `/handle-pr-reviews` 相当を Codex で扱うための skill です。
+GitHub PR の未解決レビュースレッドを取得し、修正、返信、resolve、再確認、CI 再確認まで漏れなく処理する skill。
 
 ## 使い方
 

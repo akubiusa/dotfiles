@@ -7,7 +7,6 @@
 {{- $config = $config | setValueAtPath "model_reasoning_summary" "auto" -}}
 {{- $config = $config | setValueAtPath "project_doc_fallback_filenames" (list "AGENTS.local.md") -}}
 {{- $config = $config | setValueAtPath "notify" (list "codex-wakatime") -}}
-{{- $config = $config | setValueAtPath "personality" "pragmatic" -}}
 {{- $config = $config | setValueAtPath "sandbox_workspace_write.network_access" true -}}
 {{- $config = $config | setValueAtPath "features.hooks" true -}}
 {{- $_ := unset (index $config "features") "codex_hooks" -}}

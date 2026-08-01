@@ -108,16 +108,7 @@ Then, using the exploration results and the diff information, use a Haiku sub-ag
      commands, not diff text): pass only the list of changed file paths
      (from the Step 3 change summary), not the full diff.
 
-   Every reviewer sub-agent is dispatched in background mode without a
-   `name`. Its initial prompt MUST also include this explicit reporting
-   instruction, verbatim: "Before you stop taking actions for any reason
-   (completion, being blocked, uncertainty, or anything else), you MUST
-   call SendMessage to report your findings to the parent session. Never
-   go idle without reporting — plain text output alone is not visible to
-   the caller." Without this, the sub-agent may write its findings as
-   plain text and stop without calling `SendMessage`, producing a
-   repeated idle notification instead of a completed result (see
-   `rules/workflow-sub-agents.md`'s "Proactive complement" section).
+   Every reviewer sub-agent is dispatched in background mode, whether given a `name` or left anonymous. Its initial prompt MUST also include this explicit reporting instruction, verbatim: "Before you stop taking actions for any reason (completion, being blocked, uncertainty, or anything else), you MUST call SendMessage to report your findings to the parent session. Never go idle without reporting — plain text output alone is not visible to the caller." Without this, the sub-agent may write its findings as plain text and stop without calling `SendMessage`, producing a repeated idle notification instead of a completed result (see `rules/workflow-sub-agents.md`'s "Proactive complement" section).
 
 Each agent returns findings as: *problem summary + evidence + file:line reference*.
 
@@ -136,7 +127,9 @@ Do NOT report the following:
 **Idle sub-agent follow-up:** these reviewer sub-agents run in the background per `rules/workflow-sub-agents.md`'s "Handling Idle Notifications from Background Sub-Agents" — apply that procedure here, made concrete for this step:
 
 - When dispatching the reviewers above, note which reviewer slug (e.g.
-  `f-security`) each sub-agent corresponds to.
+  `f-security`) each sub-agent corresponds to, along with its dispatch
+  identifier — its `name` if one was assigned, otherwise its `agentId` —
+  so it can actually be nudged via `SendMessage` later.
 - On any idle notification from one of these sub-agents, nudge it
   immediately via `SendMessage` — do not wait for the next check-in.
 - Right after dispatch, set up a `CronCreate` check-in every 15 minutes

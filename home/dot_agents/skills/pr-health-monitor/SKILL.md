@@ -5,7 +5,7 @@ description: PR 作成直後に、PR 本文更新、コンフリクト確認、C
 
 # PR ヘルスモニター
 
-Claude Code の `/pr-health-monitor` 相当を Codex で扱うための skill です。
+PR 作成直後に必要な確認(コンフリクト、PR 本文更新、CI、コードレビュー、Copilot レビュー依頼と待機)を一括で進める skill。
 
 ## 使い方
 

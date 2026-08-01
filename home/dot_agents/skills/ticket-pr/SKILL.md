@@ -5,7 +5,7 @@ description: Jira チケットの調査、実装、ブランチ作成、PR 作�
 
 # Jira チケットから PR を作成
 
-Claude Code の `/ticket-pr` 相当を Codex で扱うための skill です。
+Jira チケットを起点に、要件整理からブランチ作成、実装、検証、コミット、PR 作成、PR 後フロー開始までを一気通貫で進める skill。
 
 ## 使い方
 

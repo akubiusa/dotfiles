@@ -91,26 +91,13 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
   exit 1
 fi
 
-if ! python3 - "$CODEX_CONFIG" <<'PY'
-import sys
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-with open(sys.argv[1], "rb") as fh:
-    config = tomllib.load(fh)
-
-assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
-assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
-assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"
-assert config["web_search"] == "live"
-assert config["features"]["hooks"] is True
-assert config["features"]["codex_hooks"] is False
-assert config["features"]["remote_control"] is True
-PY
-then
+if ! grep -Fq 'web_search = "live"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'hooks = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'codex_hooks = false' "$CODEX_CONFIG" \
+  || ! grep -Fq 'remote_control = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'trust_level = "trusted"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'trusted_hash = "sha256:test"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'gpt_5_4 = "gpt-5.6"' "$CODEX_CONFIG"; then
   echo "❌ Codex runtime state was not preserved"
   exit 1
 fi

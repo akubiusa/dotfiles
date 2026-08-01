@@ -5,6 +5,14 @@ set -euo pipefail
 
 echo "Validating AI agent configuration files..."
 
+# Codex の modify_ テンプレートを評価するため chezmoi を用意する。
+if ! command -v chezmoi &> /dev/null; then
+  CHEZMOI_BIN_DIR=$(mktemp -d)
+  trap 'rm -rf "$CHEZMOI_BIN_DIR"' EXIT
+  curl -sfL https://git.io/chezmoi | sh -s -- -b "$CHEZMOI_BIN_DIR"
+  PATH="$CHEZMOI_BIN_DIR:$PATH"
+fi
+
 # check-jsonschema のインストール確認
 if ! command -v check-jsonschema &> /dev/null; then
   echo "Installing check-jsonschema..."
@@ -30,7 +38,7 @@ fi
 if [ -f "home/dot_codex/modify_config.toml" ]; then
   echo "Validating Codex CLI config.toml..."
   CODEX_CONFIG_INPUT=$(mktemp)
-  trap 'rm -f "$CODEX_CONFIG_INPUT"' EXIT
+  trap 'rm -rf "${CHEZMOI_BIN_DIR:-}" "$CODEX_CONFIG_INPUT"' EXIT
   printf '%s\n' \
     'web_search = "disabled"' \
     '[projects."/tmp/codex-runtime-state"]' \

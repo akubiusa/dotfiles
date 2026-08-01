@@ -136,6 +136,30 @@ DISCORD_CLAUDE_WEBHOOK=https://discord.com/api/webhooks/...
 DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 ```
 
+## Codex CLI の設定、グローバルガイダンス、skill
+
+`~/.codex/config.toml` にはプロジェクトの信頼状態や hook の承認ハッシュなど、Codex が更新するマシン固有の状態が保存されます。`chezmoi apply` は [modify_ テンプレート](https://www.chezmoi.io/user-guide/manage-different-types-of-file/#manage-part-but-not-all-of-a-file)で dotfiles 管理対象のキーだけを反映するため、これらの実行時状態は上書きされません。新規環境では初回の適用時に設定ファイルを作成します。
+
+`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。
+
+Codex CLI では custom slash command の代わりに user scope の skill を使います。次の skill は `~/.agents/skills/` に展開され、`$` を付けて明示的に実行します。
+
+- `$issue-pr <issue-number-or-url>`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。
+- `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
+- `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認します。
+- `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
+- `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
+- `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
+- `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
+- `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
+- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。
+- `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
+- `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守します。
+- `$rtk`: RTK の利用手順を参照します。
+- `$trilium`: Trilium 連携の手順を実行します。
+
+skill を更新しても Codex CLI の一覧に反映されない場合は、Codex を再起動してください。
+
 ## Claude Code コマンド
 
 ### issue-pr

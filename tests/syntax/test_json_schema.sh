@@ -5,6 +5,14 @@ set -euo pipefail
 
 echo "Validating AI agent configuration files..."
 
+# Codex の modify_ テンプレートを評価するため chezmoi を用意する。
+if ! command -v chezmoi &> /dev/null; then
+  CHEZMOI_BIN_DIR=$(mktemp -d)
+  trap 'rm -rf "$CHEZMOI_BIN_DIR"' EXIT
+  curl -sfL https://git.io/chezmoi | sh -s -- -b "$CHEZMOI_BIN_DIR"
+  PATH="$CHEZMOI_BIN_DIR:$PATH"
+fi
+
 # check-jsonschema のインストール確認
 if ! command -v check-jsonschema &> /dev/null; then
   echo "Installing check-jsonschema..."
@@ -26,11 +34,26 @@ if [ -f "home/dot_claude/settings.json" ]; then
   FILES_CHECKED=$((FILES_CHECKED + 1))
 fi
 
-# Codex CLI config.toml
-if [ -f "home/dot_codex/config.toml" ]; then
+# Codex CLI config.toml modify template
+if [ -f "home/dot_codex/modify_config.toml" ]; then
   echo "Validating Codex CLI config.toml..."
-  if ! python3 - <<'PY'
-import pathlib
+  CODEX_CONFIG_INPUT=$(mktemp)
+  trap 'rm -rf "${CHEZMOI_BIN_DIR:-}" "$CODEX_CONFIG_INPUT"' EXIT
+  printf '%s\n' \
+    'web_search = "disabled"' \
+    'model = "gpt-5.4"' \
+    'model_reasoning_effort = "medium"' \
+    '[projects."/tmp/codex-runtime-state"]' \
+    'trust_level = "trusted"' \
+    '[hooks.state."/tmp/codex-runtime-hook"]' \
+    'trusted_hash = "sha256:test"' \
+    '[notice.model_migrations]' \
+    'gpt_5_4 = "gpt-5.6"' \
+    '[features]' \
+    'codex_hooks = false' \
+    'remote_control = true' > "$CODEX_CONFIG_INPUT"
+  if ! chezmoi execute-template --file --with-stdin home/dot_codex/modify_config.toml < "$CODEX_CONFIG_INPUT" | python3 -c '
+import sys
 
 try:
     import tomllib
@@ -40,9 +63,17 @@ except ModuleNotFoundError:
     except ModuleNotFoundError:
         raise SystemExit("tomllib or tomli is required to validate TOML but is not installed.")
 
-with pathlib.Path("home/dot_codex/config.toml").open("rb") as fh:
-    tomllib.load(fh)
-PY
+config = tomllib.loads(sys.stdin.read())
+assert config["web_search"] == "live"
+assert config["model"] == "gpt-5.4"
+assert config["model_reasoning_effort"] == "medium"
+assert config["features"]["hooks"] is True
+assert config["features"]["remote_control"] is True
+assert config["features"]["codex_hooks"] is False
+assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
+assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
+assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"
+'
   then
     echo "❌ Codex CLI config.toml validation failed"
     FAILED=1

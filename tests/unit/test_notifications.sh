@@ -16,6 +16,10 @@ NOTIFICATION_SCRIPTS=(
   "home/dot_claude/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
   "home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
   "home/dot_codex/scripts/completion-notify/executable_send-discord-notification.sh"
+  "home/dot_codex/scripts/completion-notify/executable_notify-completion.sh"
+  "home/dot_codex/scripts/completion-notify/executable_notify-permission-request.sh"
+  "home/dot_codex/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
+  "home/dot_codex/scripts/completion-notify/executable_notify-post-tool-use.sh"
 )
 
 # 各通知スクリプトの構文チェック
@@ -35,6 +39,26 @@ for script in "${NOTIFICATION_SCRIPTS[@]}"; do
     echo "✅ Syntax OK: $script"
   fi
 done
+
+echo "Testing Codex completion hook returns valid Stop-hook JSON..."
+TEST_HOME=$(mktemp -d)
+COMPLETION_OUTPUT=$(HOME="$TEST_HOME" bash home/dot_codex/scripts/completion-notify/executable_notify-completion.sh <<'EOF'
+{"session_id":"test-session","cwd":"/tmp/test","last_assistant_message":"done"}
+EOF
+)
+if [[ "$COMPLETION_OUTPUT" != "{}" ]]; then
+  echo "❌ Codex completion hook did not return an empty JSON object (got: $COMPLETION_OUTPUT)"
+  FAILED=1
+else
+  echo "✅ Codex completion hook returned valid Stop-hook JSON"
+fi
+if grep -Fq 'tool_input' home/dot_codex/scripts/completion-notify/executable_notify-permission-request.sh; then
+  echo "❌ Codex permission notification must not include tool input"
+  FAILED=1
+else
+  echo "✅ Codex permission notification excludes tool input"
+fi
+rm -rf "$TEST_HOME"
 
 echo "Testing check-notify.sh is safely sourceable (no side effects)..."
 TEST_HOME=$(mktemp -d)

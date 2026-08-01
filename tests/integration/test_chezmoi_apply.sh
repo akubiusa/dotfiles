@@ -76,6 +76,38 @@ fi
 
 echo "✅ Codex files generated successfully"
 
+# Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
+# modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。
+CODEX_CONFIG="$HOME/.codex/config.toml"
+if [ ! -f "$CODEX_CONFIG" ]; then
+  echo "❌ Codex config.toml not generated"
+  exit 1
+fi
+
+sed -i '/^\[features\]$/a codex_hooks = false\nremote_control = true' "$CODEX_CONFIG"
+sed -i '1i model = "gpt-5.4"' "$CODEX_CONFIG"
+sed -i '1i model_reasoning_effort = "medium"' "$CODEX_CONFIG"
+printf '\n[projects."/tmp/codex-runtime-state"]\ntrust_level = "trusted"\n[hooks.state."/tmp/codex-runtime-hook"]\ntrusted_hash = "sha256:test"\n[notice.model_migrations]\ngpt_5_4 = "gpt-5.6"\n' >> "$CODEX_CONFIG"
+if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
+  echo "❌ chezmoi apply failed while preserving Codex runtime state"
+  exit 1
+fi
+
+if ! grep -Fq 'web_search = "live"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'model = "gpt-5.4"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'model_reasoning_effort = "medium"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'hooks = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'codex_hooks = false' "$CODEX_CONFIG" \
+  || ! grep -Fq 'remote_control = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'trust_level = "trusted"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'trusted_hash = "sha256:test"' "$CODEX_CONFIG" \
+  || ! grep -Fq 'gpt_5_4 = "gpt-5.6"' "$CODEX_CONFIG"; then
+  echo "❌ Codex runtime state was not preserved"
+  exit 1
+fi
+
+echo "✅ Codex runtime state preserved successfully"
+
 # シークレットスキャン pre-commit フックの検証
 if [ ! -x "$HOME/.config/git/hooks/pre-commit" ]; then
   echo "❌ pre-commit hook not generated or not executable"
@@ -137,17 +169,21 @@ fi
 rm -rf "$HOOK_TEST_REPO" "$HOOK_MOCK_BIN" "$HOOK_INVOKED_MARKER"
 echo "✅ pre-commit hook invoked by git via core.hooksPath end-to-end"
 
-if [ ! -f "$HOME/.claude/agents/spec-reviewer.md" ]; then
-  echo "❌ spec-reviewer agent definition not generated"
-  exit 1
-fi
+CODEX_AGENT_FILES=(
+  "spec_reviewer.toml"
+  "plan_reviewer.toml"
+  "container_status_checker.toml"
+  "container_error_investigator.toml"
+)
 
-if [ ! -f "$HOME/.claude/agents/plan-reviewer.md" ]; then
-  echo "❌ plan-reviewer agent definition not generated"
-  exit 1
-fi
+for agent_file in "${CODEX_AGENT_FILES[@]}"; do
+  if [ ! -f "$HOME/.codex/agents/$agent_file" ]; then
+    echo "❌ Codex agent definition not generated: $agent_file"
+    exit 1
+  fi
+done
 
-echo "✅ spec-reviewer / plan-reviewer agent definitions generated successfully"
+echo "✅ Codex agent definitions generated successfully"
 
 # Idempotency テスト: 2 回目の apply で差分がないことを確認
 echo "Testing idempotency..."

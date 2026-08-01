@@ -5,7 +5,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")" || exit 1
 # shellcheck source=/dev/null
-source ./.env
+if [[ -f ./.env ]]; then
+    source ./.env
+else
+    source ./dot_env
+fi
 
 PAYLOAD=$(cat)
 if [[ -z "$PAYLOAD" ]]; then

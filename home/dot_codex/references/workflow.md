@@ -1,0 +1,8 @@
+# Workflow Rules
+
+- Use GitHub Issues as the default tracker. Use Jira only when explicitly requested; use its connected integration, write ticket text in Japanese, transition it to In Progress when implementation starts and Resolved with the PR URL when ready to merge, and never mention Jira in GitHub artifacts.
+- Before work, understand the repository, ensure the branch is not associated with a closed PR, start from the latest remote default branch, remove stale local branches, and install required dependencies.
+- Before committing, confirm Conventional Commits, no secrets, clean lint/format, and expected behavior. Before a PR, confirm the user requested it, no secrets/conflict risk, and perform a local review appropriate to the change. After opening it, run `$pr-health-monitor`; use `$handle-pr-reviews` for unresolved review threads.
+- Delegate only when parallelism, specialization, scale, or context isolation makes it worthwhile. Keep simple work direct. For Codex guidance, skills, hooks, settings, or agent definitions, delegate when a subagent is available so their prompt-file context stays isolated; otherwise state the limitation and work carefully in the chezmoi source path.
+- When delegating, give the complete concrete scope and request a completion/blocker report. Treat background agents that become idle as unfinished: prompt once to continue or report, then retry once after a bounded timeout before marking the result unresolved.
+- Before sharing a spec/plan, send ambiguities to the main agent for user clarification rather than silently choosing an interpretation.

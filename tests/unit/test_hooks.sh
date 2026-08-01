@@ -14,6 +14,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
   "home/dot_claude/hooks/executable_git-config-guard.sh"
   "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
+  "home/dot_codex/hooks/executable_git-config-guard.sh"
 )
 
 # 各フックの構文チェック
@@ -326,6 +327,7 @@ fi
 
 echo "Testing git-config-guard hook behavior..."
 GIT_CONFIG_GUARD="home/dot_claude/hooks/executable_git-config-guard.sh"
+CODEX_GIT_CONFIG_GUARD="home/dot_codex/hooks/executable_git-config-guard.sh"
 
 run_git_config_guard() {
   local cmd="$1"
@@ -346,6 +348,42 @@ for cmd in \
     echo "✅ git-config-guard allowed: $cmd"
   fi
 done
+
+echo "Testing Codex git-config-guard hook behavior..."
+for cmd in \
+  'git config --get user.name' \
+  'git config user.name' \
+  'git config user.name "Foo"' \
+  'git config --global user.email foo@example.com'; do
+  OUTPUT=$(jq -n --arg cmd "$cmd" '{tool_input: {command: $cmd}}' | bash "$CODEX_GIT_CONFIG_GUARD")
+  DECISION=$(echo "$OUTPUT" | jq -r '.hookSpecificOutput.permissionDecision // empty' 2>/dev/null)
+  if [[ "$cmd" == *'"Foo"'* || "$cmd" == *'foo@example.com'* ]]; then
+    if [[ "$DECISION" != "deny" ]]; then
+      echo "❌ Codex git-config-guard did not deny: $cmd"
+      FAILED=1
+    fi
+  elif [[ -n "$OUTPUT" ]]; then
+    echo "❌ Codex git-config-guard denied: $cmd"
+    FAILED=1
+  fi
+done
+
+if ! jq empty home/dot_codex/hooks.json; then
+  echo "❌ Codex hooks.json is invalid JSON"
+  FAILED=1
+elif ! jq -e '
+  .hooks.PreToolUse[0].matcher == "^Bash$"
+  and .hooks.PreToolUse[0].hooks[0].command == "bash ~/.codex/hooks/git-config-guard.sh"
+  and .hooks.PostToolUse[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh"
+  and .hooks.PermissionRequest[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-permission-request.sh"
+  and .hooks.UserPromptSubmit[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-user-prompt-submit.sh"
+  and .hooks.Stop[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-completion.sh"
+' home/dot_codex/hooks.json >/dev/null; then
+  echo "❌ Codex hooks.json does not register the expected lifecycle hooks"
+  FAILED=1
+else
+  echo "✅ Codex hooks.json registers the expected lifecycle hooks"
+fi
 
 # 書き込み系: permissionDecision: deny が出力される
 # (回避策として、読み取りコマンドとの連結や、書き込みコマンドへの

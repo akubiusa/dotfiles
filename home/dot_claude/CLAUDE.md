@@ -35,6 +35,7 @@
 |---|---|
 | `/issue-pr <number>` | Issue → implementation → PR |
 | `/ticket-pr <key or URL>` | Jira ticket → implementation → PR |
+| `/glitchtip-pr [issue-id or URL]` | GlitchTip issue → implementation → PR → auto-resolve on merge |
 | `/pr-health-monitor <number>` | Post-PR: CI, Copilot review, conflicts |
 | `/handle-pr-reviews <URL>` | Reply and resolve review threads |
 | `/wait-for-copilot-review <number>` | Background wait for Copilot review |
@@ -45,7 +46,7 @@ Not auto-loaded. Read the relevant file only when the situation applies:
 
 | When | Read |
 |---|---|
-| Checklists / Jira rules needed | `rules/workflow.md` |
+| Checklists / Jira / GlitchTip rules needed | `rules/workflow.md` |
 | Deciding whether to delegate to a sub-agent (esp. any work touching Claude Code's own prompt files: `CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) | `rules/workflow-sub-agents.md` |
 | An idle notification arrives from a background sub-agent | `rules/workflow-sub-agents.md` ("Handling Idle Notifications from Background Sub-Agents" section) |
 | Writing/reviewing code, comments, tests, commits | `rules/coding-common.md` |

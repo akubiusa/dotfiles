@@ -39,7 +39,7 @@
 | Python、Shell、Dockerfile | `~/.codex/references/python-shell-docker.md` |
 | C#、`.csproj`、`.sln`、`.editorconfig` | `~/.codex/references/csharp.md` |
 | GitHub Actions workflow | `~/.codex/references/github-actions.md` |
-| GitHub Issue 文書、Jira、agent 委譲 | `~/.codex/references/workflow.md` |
+| GitHub Issue 文書、Jira、GlitchTip、agent 委譲 | `~/.codex/references/workflow.md` |
 
 ## Codex Skills
 
@@ -49,10 +49,12 @@ Codex CLI では任意の custom slash command ではなく、skill でコマン
 - 明示的な実行には `$` で skill を指定する。
 - `$issue-pr`: GitHub Issue から実装、PR 作成、PR 後フロー開始までを行う。
 - `$ticket-pr`: Jira チケットから実装、PR 作成、PR 後フロー開始までを行う。
+- `$glitchtip-pr`: GlitchTip issue から実装、PR 作成、マージ時の自動 Resolve までを行う。
 - `$pr-health-monitor`: PR の CI、競合、本文、Codex/Copilot レビューを確認する。
 - `$handle-pr-reviews`: 未解決レビュースレッドを修正、返信、resolve まで処理する。
 - `$deep-review` / `$lite-review`: 変更を複数観点または重点観点でレビューする。
 - `$issue-pr-deep` / `$issue-pr-lite`: 規模に応じて GitHub Issue から PR を作成する。
+- `$glitchtip-pr-deep` / `$glitchtip-pr-lite`: 規模に応じて GlitchTip issue から PR を作成する。
 - `$pr-cleanup`: マージ済み PR の後処理を行う。
 - `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを監視する。
 - `$check-container-status`: Docker Compose プロジェクトの状態を確認する。

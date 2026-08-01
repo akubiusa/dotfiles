@@ -69,7 +69,7 @@ assert config["model"] == "gpt-5.4"
 assert config["model_reasoning_effort"] == "medium"
 assert config["features"]["hooks"] is True
 assert config["features"]["remote_control"] is True
-assert config["features"]["codex_hooks"] is False
+assert "codex_hooks" not in config["features"]
 assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
 assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
 assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"

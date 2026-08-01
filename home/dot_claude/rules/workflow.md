@@ -51,6 +51,8 @@ Rules and checklists for the full development workflow.
 
 ## Post-PR checklist
 
+**Once `gh pr create` (or any other PR-creating operation) succeeds, continue directly into this checklist before reporting completion to the user — do not treat PR creation itself as the end of the task.**
+
 Run `/pr-health-monitor <PR number>` to automate, or manually:
 
 1. Verify no merge conflicts.

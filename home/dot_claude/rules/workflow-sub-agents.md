@@ -87,8 +87,7 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
 
 **Follow-up procedure:**
 
-1. On receiving an idle notification, immediately send that sub-agent one
-   `SendMessage` nudge asking it to continue or report its current status.
+1. On receiving an idle notification, immediately send that sub-agent one `SendMessage` nudge that explicitly names `SendMessage` as the required mechanism for reporting — e.g. "You must call `SendMessage` to report your result or current status; plain text output alone is not visible to the caller." A generic "please continue or report status" nudge that does not name `SendMessage` is insufficient — it was tried in practice and did not resolve repeated idling (see the incident behind this rule's "Proactive complement" section below).
 2. If no `completed` notification arrives within a timeout (default 15
    minutes since the nudge; a calling skill may define its own threshold —
    that takes precedence over this default), set up a `CronCreate`
@@ -119,19 +118,9 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
   sub-agent progress (a state file like `STATE.md`, or the `Todo`/`Task`
   tools) may reuse that instead of inventing a new one.
 
-**Proactive complement — instruct named/teammate sub-agents to report before going idle:**
+**Proactive complement — instruct every background-mode sub-agent to report before going idle:**
 
-Named/teammate sub-agents (dispatched via the `Agent` tool with a `name`
-parameter, meant to be resumed later via `SendMessage`) have no automatic
-"completed" notification the way anonymous one-shot `Agent` calls do — the
-only way the team-lead learns of their status is if the sub-agent itself
-calls `SendMessage` before going idle. So whenever dispatching a
-named/teammate sub-agent, always append an explicit instruction to its
-prompt along these lines: "Before you stop taking actions for any reason
-(completion, being blocked, uncertainty, or anything else), you MUST call
-SendMessage to report your status to team-lead. Never go idle without
-reporting." This does not apply to anonymous one-shot `Agent` calls without
-a `name` — those already return a result automatically when they stop.
+Named/teammate sub-agents (dispatched via the `Agent` tool with a `name` parameter, meant to be resumed later via `SendMessage`) have no automatic "completed" notification the way a *sync-mode* `Agent` call does — the only way the team-lead learns of their status is if the sub-agent itself calls `SendMessage` before going idle. The same gap applies to anonymous one-shot `Agent` calls dispatched in background mode (the `Agent` tool's default): in practice, background-mode reviewer sub-agents dispatched without a `name` (e.g. `deep-review`'s Step 5 parallel reviewers) have also repeatedly gone idle without calling `SendMessage`, instead of returning a result automatically, when their initial prompt did not explicitly require it. So whenever dispatching **any** background-mode sub-agent — named/teammate or anonymous one-shot alike — always append an explicit instruction to its prompt along these lines: "Before you stop taking actions for any reason (completion, being blocked, uncertainty, or anything else), you MUST call SendMessage to report your result or status to the parent session (use `to: "team-lead"` for named/teammate sub-agents, or the caller's default target for anonymous one-shot calls). Never go idle without reporting — plain text output alone is not visible to the caller." This does not apply to **sync-mode** (`run_in_background: false`) dispatches, since those already block the calling turn until the sub-agent returns its result directly. It also does not apply to sub-agents whose completion is instead tracked via a shared state-tracking mechanism (a state file such as `STATE.md`, or the `Todo`/`Task` tools) that the parent session polls directly — mirroring the existing reactive-procedure carve-out noted above — since in that case the parent doesn't rely on the sub-agent's own `SendMessage` call to learn of completion.
 
 This is a preventive measure, not a replacement for the reactive follow-up
 procedure above: a sub-agent that stalls before it can even reason about

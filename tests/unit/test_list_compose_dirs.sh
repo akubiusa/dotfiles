@@ -6,12 +6,17 @@ set -euo pipefail
 echo "Testing list-compose-dirs.sh..."
 
 FAILED=0
-SCRIPT="home/dot_claude/skills/check-container-status/scripts/executable_list-compose-dirs.sh"
+SCRIPTS=(
+  "home/dot_claude/skills/check-container-status/scripts/executable_list-compose-dirs.sh"
+  "home/dot_agents/skills/check-container-status/scripts/executable_list-compose-dirs.sh"
+)
 
-if [ ! -f "$SCRIPT" ]; then
-  echo "❌ Script not found: $SCRIPT"
-  exit 1
-fi
+for script in "${SCRIPTS[@]}"; do
+  if [ ! -f "$script" ]; then
+    echo "❌ Script not found: $script"
+    exit 1
+  fi
+done
 
 TEST_DIR=$(mktemp -d)
 # shellcheck disable=SC2317,SC2329
@@ -45,6 +50,8 @@ touch "$TEST_DIR/proj-duplicate-compose/docker-compose.yml"
 # サブディレクトリを持たない空の対象ディレクトリのテスト用
 EMPTY_DIR=$(mktemp -d)
 
+for SCRIPT in "${SCRIPTS[@]}"; do
+echo "Testing: $SCRIPT"
 echo "Test 1: explicit target directory argument"
 ACTUAL=$(bash "$SCRIPT" "$TEST_DIR" | sort)
 EXPECTED=$(printf '%s\n' \
@@ -76,7 +83,6 @@ fi
 
 echo "Test 3: directory with no compose subdirectories"
 ACTUAL=$(bash "$SCRIPT" "$EMPTY_DIR")
-rm -rf "$EMPTY_DIR"
 if [ -z "$ACTUAL" ]; then
   echo "✅ empty target directory test passed"
 else
@@ -105,5 +111,9 @@ else
   echo "❌ duplicate compose filenames test failed (expected exactly 1 line, got: $ACTUAL)"
   FAILED=1
 fi
+
+done
+
+rm -rf "$EMPTY_DIR"
 
 exit $FAILED

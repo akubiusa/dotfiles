@@ -247,6 +247,35 @@ Jira チケットを確認し、対応のためのブランチを作成して PR
 /ticket-pr https://company.atlassian.net/browse/PROJECT-123
 ```
 
+### glitchtip-pr
+
+GlitchTip の issue を調査し、対応のためのブランチを作成して PR を作成し、PR マージ時に GlitchTip issue を自動的に Resolved にする Claude Code スキルです。
+`issue-pr` の GlitchTip 版ですが、GlitchTip issue は GitHub リポジトリとの紐付け情報を持たないため、実行中のカレントリポジトリを対象とする点が異なります(`ticket-pr` と同様の前提)。
+
+```
+/glitchtip-pr [issue-id-or-url]
+```
+
+引数には GlitchTip issue ID(例: `4821`)または issue の URL を指定します。省略した場合は、未解決 issue の一覧から対話的に選択します。
+
+このコマンドは以下の流れで動作します:
+
+1. **GlitchTip issue の特定・取得**: 引数があれば ID/URL から直接取得、なければ組織を解決して未解決 issue 一覧から選択
+2. **Worktree の作成**: `EnterWorktree` でこの issue 専用の作業ツリーを作成
+3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec/plan フル承認フロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
+4. **実装・PR 作成**: `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、PR を作成
+5. **PR マージ時の自動 Resolve**: PR がマージされたことを検知すると、確認なしで GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
+
+**使用例:**
+
+```bash
+# issue ID で指定
+/glitchtip-pr 4821
+
+# 未解決 issue 一覧から選択
+/glitchtip-pr
+```
+
 ## `/deep-review` スキル
 
 外部プラグインに依存しない自前のコードレビュースキル。

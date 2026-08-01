@@ -35,6 +35,7 @@
 |---|---|
 | `/issue-pr <number>` | Issue → implementation → PR |
 | `/ticket-pr <key or URL>` | Jira ticket → implementation → PR |
+| `/glitchtip-pr [issue-id or URL]` | GlitchTip issue → implementation → PR → auto-resolve on merge |
 | `/pr-health-monitor <number>` | Post-PR: CI, Copilot review, conflicts |
 | `/handle-pr-reviews <URL>` | Reply and resolve review threads |
 | `/wait-for-copilot-review <number>` | Background wait for Copilot review |

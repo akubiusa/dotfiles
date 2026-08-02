@@ -39,6 +39,15 @@ DISCORD_CODEX_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEB
 DISCORD_CODEX_MENTION_USER_ID=""
 
 # -----------------------------------------
+# Discord Webhooks - Codex CLI limit-unlocked
+# -----------------------------------------
+# Codex CLI の制限解除を通知する Webhook URL
+DISCORD_CODEX_LIMIT_WEBHOOK="https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+
+# Discord でメンションするユーザー ID（オプション）
+DISCORD_CODEX_LIMIT_MENTION_USER_ID=""
+
+# -----------------------------------------
 # Trilium Notes - ドキュメントアップロード用
 # -----------------------------------------
 # Trilium サーバーの HTTP ベース URL（末尾スラッシュなし）

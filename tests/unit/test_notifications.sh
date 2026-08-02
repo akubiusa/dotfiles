@@ -15,6 +15,7 @@ NOTIFICATION_SCRIPTS=(
   "home/dot_claude/scripts/completion-notify/executable_notify-permission-request.sh"
   "home/dot_claude/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
   "home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+  "home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
   "home/dot_codex/scripts/completion-notify/executable_send-discord-notification.sh"
   "home/dot_codex/scripts/completion-notify/executable_notify-completion.sh"
   "home/dot_codex/scripts/completion-notify/executable_notify-permission-request.sh"
@@ -91,7 +92,15 @@ TEST_HOME=$(mktemp -d)
 TEST_BIN_DIR=$(mktemp -d)
 mkdir -p "$TEST_HOME/.claude/sessions"
 
-CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" sleep 60 &
+# resolve_claude_pid は /proc/<pid>/comm が実際に "claude" であることを検証するため、
+# 単なる sleep ではなく "claude" という名前の実行ファイルとして起動する
+cat > "$TEST_BIN_DIR/claude" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/claude"
+
+CLAUDE_CONFIG_DIR="$TEST_HOME/.claude" "$TEST_BIN_DIR/claude" &
 FAKE_CLAUDE_PID=$!
 echo '{}' > "$TEST_HOME/.claude/sessions/${FAKE_CLAUDE_PID}.json"
 
@@ -107,7 +116,13 @@ chmod +x "$TEST_BIN_DIR/tmux"
 
 cat > "$TEST_BIN_DIR/pgrep" <<EOF
 #!/bin/bash
-echo "$FAKE_CLAUDE_PID"
+# collect_descendant_pids は pane pid から再帰的に子を辿るため、pane pid (12345)
+# へのクエリにのみ子として \$FAKE_CLAUDE_PID を返し、それ以外(\$FAKE_CLAUDE_PID 自身
+# への再帰クエリ含む)には子なしを返して探索を打ち切る
+if [[ "\$2" == "12345" ]]; then
+  echo "$FAKE_CLAUDE_PID"
+fi
+exit 0
 EOF
 chmod +x "$TEST_BIN_DIR/pgrep"
 
@@ -128,6 +143,59 @@ else
   echo "✅ resolve_config_dir resolved the mocked claude process's CLAUDE_CONFIG_DIR"
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
+echo "Testing resolve_claude_pid matches a claude process invoked via a resolved absolute path, even as a grandchild of the pane pid..."
+TEST_BIN_DIR=$(mktemp -d)
+
+# 実際の cron ジョブ (CLAUDE_BIN="$(command -v claude)"; ... "$CLAUDE_BIN" ...) を模し、
+# 絶対パスで実行される実体を「claude」という名前の実ファイルとして用意する。
+# Linux では shebang スクリプトの comm はインタプリタ名ではなく実行された
+# ファイルのベース名になるため、この方法で実際の comm=claude プロセスを再現できる
+cat > "$TEST_BIN_DIR/claude" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/claude"
+
+# pane pid 自体ではなく、その子プロセス(ラッパー)がさらに claude を起動する
+# 孫プロセスの構成にして、collect_descendant_pids の再帰走査を検証する
+PIDFILE=$(mktemp)
+bash -c '
+  "'"$TEST_BIN_DIR"'/claude" &
+  echo $! > "'"$PIDFILE"'"
+  wait
+' &
+WRAPPER_PID=$!
+sleep 0.3
+CLAUDE_PID=$(cat "$PIDFILE")
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  echo "$WRAPPER_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_claude_pid "dummy-session"
+  '
+)
+
+kill "$CLAUDE_PID" "$WRAPPER_PID" 2>/dev/null || true
+wait "$WRAPPER_PID" 2>/dev/null || true
+
+if [[ "$RESULT" != "$CLAUDE_PID" ]]; then
+  echo "❌ resolve_claude_pid did not find the path-invoked, grandchild claude process (got: '$RESULT', want: '$CLAUDE_PID')"
+  FAILED=1
+else
+  echo "✅ resolve_claude_pid found the path-invoked claude process via comm, even as a grandchild of the pane pid"
+fi
+rm -rf "$TEST_BIN_DIR" "$PIDFILE"
 
 echo "Testing fetch_usage_status..."
 TEST_HOME=$(mktemp -d)
@@ -493,6 +561,294 @@ else
 fi
 
 rm -rf "$TEST_HOME"
+
+echo "Testing Codex check-notify.sh is safely sourceable (no side effects)..."
+TEST_HOME=$(mktemp -d)
+if ! (
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    if declare -p STATE_FILE >/dev/null 2>&1; then
+      echo "STATE_FILE should not be set when sourced" >&2
+      exit 1
+    fi
+    if ! declare -F resolve_rollout_path >/dev/null 2>&1; then
+      echo "resolve_rollout_path should be defined after sourcing" >&2
+      exit 1
+    fi
+  '
+); then
+  echo "❌ Codex check-notify.sh executed main logic (or failed) when sourced"
+  FAILED=1
+else
+  echo "✅ Codex check-notify.sh only defines functions when sourced"
+fi
+if [ -d "$TEST_HOME/.codex/scripts/limit-unlocked/data" ]; then
+  echo "❌ Codex check-notify.sh created state directory as a side effect of sourcing"
+  FAILED=1
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex check_limit_status parses a usage_limit_exceeded task_complete with a token_count resets_at..."
+TEST_HOME=$(mktemp -d)
+FIXTURE_JSONL="$TEST_HOME/fixture-rollout.jsonl"
+cat > "$FIXTURE_JSONL" <<'EOF'
+{"timestamp":"2026-08-02T11:47:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":100.0,"window_minutes":10080,"resets_at":1786165193},"secondary":null,"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"individual_limit":null,"spend_control_reached":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+{"timestamp":"2026-08-02T11:47:24.660Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 8th, 2026 1:59 PM.","codex_error_info":"usage_limit_exceeded"},"started_at":1785671243,"completed_at":1785671244,"duration_ms":1410}}
+EOF
+
+RESULT=$(
+  bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    check_limit_status "'"$FIXTURE_JSONL"'"
+  '
+)
+IFS=$'\t' read -r is_limited reset_epoch reset_text <<< "$RESULT"
+
+if [[ "$is_limited" != "1" ]]; then
+  echo "❌ check_limit_status did not detect a usage_limit_exceeded task_complete (got: '$RESULT')"
+  FAILED=1
+else
+  echo "✅ check_limit_status detected a usage_limit_exceeded task_complete"
+fi
+
+if [[ "$reset_epoch" != "1786165193" ]]; then
+  echo "❌ check_limit_status did not use the token_count rate_limits.primary.resets_at epoch (got: '$reset_epoch')"
+  FAILED=1
+else
+  echo "✅ check_limit_status used the token_count rate_limits.primary.resets_at epoch"
+fi
+
+if [[ "$reset_text" != *"usage limit"* ]]; then
+  echo "❌ check_limit_status did not carry through the error message text (got: '$reset_text')"
+  FAILED=1
+else
+  echo "✅ check_limit_status carried through the error message text"
+fi
+
+echo "Testing Codex check_limit_status treats error:null task_complete as not limited..."
+FIXTURE_JSONL_OK="$TEST_HOME/fixture-rollout-ok.jsonl"
+cat > "$FIXTURE_JSONL_OK" <<'EOF'
+{"timestamp":"2026-08-02T11:50:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":"done","error":null,"started_at":1785671300,"completed_at":1785671301,"duration_ms":900}}
+EOF
+
+RESULT_OK=$(
+  bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    check_limit_status "'"$FIXTURE_JSONL_OK"'"
+  '
+)
+
+if [[ "$RESULT_OK" != $'0\t-\t-' ]]; then
+  echo "❌ check_limit_status incorrectly reported a limited state for an error:null task_complete (got: '$RESULT_OK')"
+  FAILED=1
+else
+  echo "✅ check_limit_status correctly reported not-limited for an error:null task_complete"
+fi
+
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex resolve_rollout_path discovers the rollout jsonl via /proc fd scan and picks the newest mtime..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME") # /proc/<pid>/fd の readlink -f 結果と文字列比較できるよう正規化する
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+OLD_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-1785660000-old.jsonl"
+NEW_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-1785671200-new.jsonl"
+echo '{}' > "$OLD_ROLLOUT"
+touch -d "-1 hour" "$OLD_ROLLOUT"
+echo '{}' > "$NEW_ROLLOUT"
+
+# 実際に fd を開いたまま維持するバックグラウンドプロセスを立て、fd スキャンが
+# 実プロセスの /proc/<pid>/fd を正しく辿れることを end-to-end で検証する
+# (同一 pid が複数の rollout fd を開いたままにする、という実運用のケースを再現する)。
+# 新しい方の rollout を若い fd 番号(3)に、古い方を後の fd 番号(4)に割り当てることで、
+# /proc/<pid>/fd の走査順(数字の小さい順)と mtime の新旧が逆になるようにし、
+# 「単に最後に見つかったものを採用する」実装ではこのテストを通せないようにする
+bash -c "exec 3<'$NEW_ROLLOUT' 4<'$OLD_ROLLOUT'; sleep 60" &
+FAKE_CODEX_PID=$!
+sleep 0.2
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  echo "$FAKE_CODEX_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path "dummy-session"
+  '
+)
+
+kill "$FAKE_CODEX_PID" 2>/dev/null || true
+wait "$FAKE_CODEX_PID" 2>/dev/null || true
+
+if [[ "$RESULT" != "$NEW_ROLLOUT" ]]; then
+  echo "❌ resolve_rollout_path did not pick the rollout jsonl with the newest mtime via /proc fd scan (got: '$RESULT', want: '$NEW_ROLLOUT')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path discovered the rollout jsonl via /proc fd scan and picked the newest mtime"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
+echo "Testing Codex check_limit_status reports status=2 (undetermined) when jq fails to parse the scanned window..."
+TEST_HOME=$(mktemp -d)
+FIXTURE_JSONL_BROKEN="$TEST_HOME/fixture-rollout-broken.jsonl"
+printf '{not valid json\n' > "$FIXTURE_JSONL_BROKEN"
+
+RESULT_BROKEN=$(
+  bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    check_limit_status "'"$FIXTURE_JSONL_BROKEN"'"
+  '
+)
+
+if [[ "$RESULT_BROKEN" != $'2\t-\t-' ]]; then
+  echo "❌ check_limit_status did not report status=2 for an unparseable jsonl window (got: '$RESULT_BROKEN')"
+  FAILED=1
+else
+  echo "✅ check_limit_status reported status=2 (undetermined) instead of silently treating a parse failure as not-limited"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex check_limit_status prefers the rate-limit window actually at 100% used_percent over an unconditional primary preference..."
+TEST_HOME=$(mktemp -d)
+FIXTURE_JSONL_SECONDARY="$TEST_HOME/fixture-rollout-secondary.jsonl"
+cat > "$FIXTURE_JSONL_SECONDARY" <<'EOF'
+{"timestamp":"2026-08-02T11:47:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":40.0,"window_minutes":300,"resets_at":1111111111},"secondary":{"used_percent":100.0,"window_minutes":10080,"resets_at":2222222222},"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"individual_limit":null,"spend_control_reached":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+{"timestamp":"2026-08-02T11:47:24.660Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"usage limit hit","codex_error_info":"usage_limit_exceeded"},"started_at":1785671243,"completed_at":1785671244,"duration_ms":1410}}
+EOF
+
+RESULT_SECONDARY=$(
+  bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    check_limit_status "'"$FIXTURE_JSONL_SECONDARY"'"
+  '
+)
+IFS=$'\t' read -r _ reset_epoch_secondary _ <<< "$RESULT_SECONDARY"
+
+if [[ "$reset_epoch_secondary" != "2222222222" ]]; then
+  echo "❌ check_limit_status did not prefer the secondary window's resets_at even though only secondary is at 100% used_percent (got: '$reset_epoch_secondary')"
+  FAILED=1
+else
+  echo "✅ check_limit_status preferred the at-cap secondary window's resets_at over an unconditional primary preference"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex already_resumed_for / record_resumed_for dedup resume_session for the same reset_epoch..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_DEDUP=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    already_resumed_for "sess-1" "1700000000" && echo "unexpected-already-resumed"
+    record_resumed_for "sess-1" "1700000000"
+    already_resumed_for "sess-1" "1700000000" && echo "resumed-for-same-epoch"
+    already_resumed_for "sess-1" "1700000001" || echo "not-resumed-for-different-epoch"
+  '
+)
+if [[ "$RESULT_RESUME_DEDUP" != $'resumed-for-same-epoch\nnot-resumed-for-different-epoch' ]]; then
+  echo "❌ already_resumed_for/record_resumed_for did not correctly dedup resume attempts per reset_epoch (got: '$RESULT_RESUME_DEDUP')"
+  FAILED=1
+else
+  echo "✅ already_resumed_for/record_resumed_for correctly dedup resume attempts keyed by reset_epoch"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex already_notified_for / record_notified_for dedup Discord notifications for the same reset_epoch..."
+TEST_HOME=$(mktemp -d)
+RESULT_NOTIFY_DEDUP=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    already_notified_for "sess-1" "1700000000" && echo "unexpected-already-notified"
+    record_notified_for "sess-1" "1700000000"
+    already_notified_for "sess-1" "1700000000" && echo "notified-for-same-epoch"
+    already_notified_for "sess-1" "1700000001" || echo "not-notified-for-different-epoch"
+  '
+)
+if [[ "$RESULT_NOTIFY_DEDUP" != $'notified-for-same-epoch\nnot-notified-for-different-epoch' ]]; then
+  echo "❌ already_notified_for/record_notified_for did not correctly dedup notifications per reset_epoch (got: '$RESULT_NOTIFY_DEDUP')"
+  FAILED=1
+else
+  echo "✅ already_notified_for/record_notified_for correctly dedup notifications keyed by reset_epoch"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex send_discord returns failure on a non-2xx HTTP response instead of silently swallowing it..."
+TEST_BIN_DIR=$(mktemp -d)
+cat > "$TEST_BIN_DIR/curl" <<'EOF'
+#!/bin/bash
+echo -n "500"
+EOF
+chmod +x "$TEST_BIN_DIR/curl"
+
+if PATH="$TEST_BIN_DIR:$PATH" bash -c '
+  source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+  DISCORD_WEBHOOK_URL="https://example.invalid/webhook"
+  send_discord "title" "description" 123
+' 2>/dev/null; then
+  echo "❌ send_discord did not report failure for a non-2xx Discord HTTP response"
+  FAILED=1
+else
+  echo "✅ send_discord reported failure for a non-2xx Discord HTTP response"
+fi
+rm -rf "$TEST_BIN_DIR"
+
+echo "Testing Codex carry_forward_previous_entry drops a session after enough consecutive resolve failures instead of preserving it forever..."
+TEST_HOME=$(mktemp -d)
+STATE_FILE_STALE="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_STALE="${STATE_FILE_STALE}.new"
+printf 'stale-sess\t/tmp/proj\t1111111111\tsome text\t1\n' > "$STATE_FILE_STALE"
+: > "$NEW_STATE_FILE_STALE"
+
+RESULT_STALE=$(
+  HOME="$TEST_HOME" STATE_FILE="$STATE_FILE_STALE" NEW_STATE_FILE="$NEW_STATE_FILE_STALE" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    for _ in $(seq 1 12); do
+      : > "$NEW_STATE_FILE"
+      carry_forward_previous_entry "stale-sess"
+    done
+    cat "$NEW_STATE_FILE"
+  '
+)
+
+if [[ -n "$RESULT_STALE" ]]; then
+  echo "❌ carry_forward_previous_entry kept carrying a session forward past the consecutive-failure threshold (got: '$RESULT_STALE')"
+  FAILED=1
+else
+  echo "✅ carry_forward_previous_entry stopped carrying a session forward after the consecutive-failure threshold was reached"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex detect_limited_sessions preserves STATE_FILE when tmux list-sessions itself fails..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN_DIR=$(mktemp -d)
+STATE_FILE_ENUM_FAIL="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_ENUM_FAIL="${STATE_FILE_ENUM_FAIL}.new"
+printf 'tracked-sess\t/tmp/proj\t1111111111\tsome text\t1\n' > "$STATE_FILE_ENUM_FAIL"
+
+cat > "$TEST_BIN_DIR/tmux" <<'EOF'
+#!/bin/bash
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+if PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" STATE_FILE="$STATE_FILE_ENUM_FAIL" NEW_STATE_FILE="$NEW_STATE_FILE_ENUM_FAIL" bash -c '
+  source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+  detect_limited_sessions
+'; then
+  echo "❌ detect_limited_sessions did not report failure when tmux list-sessions failed with existing tracked state"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions reported failure instead of silently wiping tracked state when tmux list-sessions failed"
+fi
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
 if [ $FAILED -eq 0 ]; then
   echo "✅ All notification script tests passed"

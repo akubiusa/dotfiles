@@ -6,15 +6,51 @@
 # 表示内容が一時的に切り替わることで誤検出（フラッピング）が起きるため採用しない。
 # 代わりに、tmux セッションが起動している claude プロセスの pid から会話ログの
 # jsonl ファイルを一意に特定し、その内容でリミット状態を判定する。
+# 指定した pid とその子孫すべての pid を列挙する(自分自身を含む)。
+# cron ジョブが CLAUDE_BIN="$(command -v claude)" のように解決した絶対パスで
+# claude を起動する場合など、claude プロセスが pane の直接の子とは限らず
+# シェルのラッパー経由の孫プロセスになりうるため、再帰的にすべて集める。
+# _collect_descendant_pids_seen は訪問済み pid の重複防止用(グローバル)
+collect_descendant_pids() {
+    local root_pid="$1"
+    declare -A -g _collect_descendant_pids_seen=()
+    _collect_descendant_pids_impl "$root_pid"
+}
+
+_collect_descendant_pids_impl() {
+    local root_pid="$1" children child
+
+    [ -n "${_collect_descendant_pids_seen[$root_pid]:-}" ] && return 0
+    _collect_descendant_pids_seen[$root_pid]=1
+
+    echo "$root_pid"
+    children=$(pgrep -P "$root_pid" 2>/dev/null) || return 0
+    for child in $children; do
+        _collect_descendant_pids_impl "$child"
+    done
+}
+
 # tmux セッション名から、対応する claude プロセスの pid を特定する
 resolve_claude_pid() {
-    local session="$1" pane_pid
+    local session="$1" pane_pid pid comm
 
     # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
     # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
     # ため、末尾に ":" を付けてセッション名指定であることを明示する
     pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
-    pgrep -P "$pane_pid" -f "^claude" | head -1
+
+    # /proc/<pid>/comm はカーネルが実行ファイルのベース名から設定するプロセス名
+    # フィールドで、起動経路(絶対パス経由か否か)によらず常に "claude" になる。
+    # pgrep -f のような argv 全体への正規表現マッチと異なり、絶対パス起動で
+    # argv[0] がフルパスになっても影響を受けない
+    for pid in $(collect_descendant_pids "$pane_pid"); do
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+        if [ "$comm" = "claude" ]; then
+            echo "$pid"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # claude プロセスの pid から、実際に sessions/<pid>.json が存在する
@@ -176,7 +212,7 @@ check_limit_status() {
 
     [ -f "$jsonl" ] || { echo -e "0\t-\t-"; return; }
 
-    # jsonl は会話全体（数MB〜数十MBになりうる）だが直近の実メッセージが分かればよいため、
+    # jsonl は会話全体で大きくなりうるが直近の実メッセージが分かればよいため、
     # 末尾のみを走査対象にして cron の定期実行での毎回フルパースを避ける
     last_msg=$(tail -n 50 "$jsonl" | jq -c 'select(.type == "assistant" or .type == "user")' 2>/dev/null | tail -1)
     [ -n "$last_msg" ] || { echo -e "0\t-\t-"; return; }

@@ -13,7 +13,7 @@
 - 実装前に、リポジトリ構成、作業ブランチ、最新のリモート既定ブランチ、不要なローカルブランチ、必要な依存関係を確認する。調査目的の GitHub リポジトリは一時ディレクトリへ clone する。
 - コミット前に、秘密情報、lint/format エラー、必要な検証、期待どおりの動作を確認する。
 - PR 作成前に、ユーザーの依頼、秘密情報、競合リスク、変更内容に応じたローカルコードレビューを確認する。PR 作成先は `gh-pr-target-repo.sh` を優先し、GitHub の `upstream` remote があればそれを既定にする。
-- PR 本文には現在の状態のみを記載し、更新履歴を列挙しない。PR 作成後は `$pr-health-monitor` を実行し、CI、競合、Codex/Copilot レビューを確認する。未解決レビューの対応は `$handle-pr-reviews` を使う。
+- PR 本文には現在の状態のみを記載し、更新履歴を列挙しない。PR 作成後は `$pr-health-monitor` を実行して CI、競合、Codex/Copilot レビューを確認する。external scheduler がない `start` は `foreground_required` を返すため、detached watcher を開始したと報告しない。持続した terminal を user が明示的に用意できる場合だけ `watch` を foreground で実行し、それ以外は ChatGPT Desktop/Web の Scheduled Tasks が利用可能なら project context の resume を予定するか、`$resume-pr-monitor` で pending event を再検証して処理する。watcher は action を実行しない。未解決レビューの対応は `$handle-pr-reviews` を使う。
 
 ## 実装と検証
 
@@ -49,14 +49,15 @@ Codex CLI では任意の custom slash command ではなく、skill でコマン
 - 明示的な実行には `$` で skill を指定する。
 - `$issue-pr`: GitHub Issue から実装、PR 作成、PR 後フロー開始までを行う。
 - `$ticket-pr`: Jira チケットから実装、PR 作成、PR 後フロー開始までを行う。
-- `$glitchtip-pr`: GlitchTip issue から実装、PR 作成、マージ時の自動 Resolve までを行う。
-- `$pr-health-monitor`: PR の CI、競合、本文、Codex/Copilot レビューを確認する。
+- `$glitchtip-pr`: GlitchTip issue から実装、PR 作成、明示的な verified Resolve までを行う。
+- `$pr-health-monitor`: PR の CI、競合、本文、Codex/Copilot レビューを確認し、XDG state の観測専用 watcher を開始する。
+- `$resume-pr-monitor`: pending PR monitor event を fresh GitHub state で再確認し、成功した後処理だけを acknowledge する。
 - `$handle-pr-reviews`: 未解決レビュースレッドを修正、返信、resolve まで処理する。
 - `$deep-review` / `$lite-review`: 変更を複数観点または重点観点でレビューする。
 - `$issue-pr-deep` / `$issue-pr-lite`: 規模に応じて GitHub Issue から PR を作成する。
 - `$glitchtip-pr-deep` / `$glitchtip-pr-lite`: 規模に応じて GlitchTip issue から PR を作成する。
 - `$pr-cleanup`: マージ済み PR の後処理を行う。
-- `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを監視する。
+- `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを durable event として監視する。
 - `$check-container-status`: Docker Compose プロジェクトの状態を確認する。
 - `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守する。
 - `$rtk`: RTK の利用手順を参照する。

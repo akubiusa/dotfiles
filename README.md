@@ -146,15 +146,16 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 
 - `$issue-pr <issue-number-or-url>`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。
 - `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
-- `$glitchtip-pr [issue-id-or-url]`: GlitchTip issue から PR 作成と PR マージ時の自動 Resolve までを進めます。
-- `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認し、同一 Codex session の PR close monitoring agent を best-effort で 1 回開始します。GlitchTip 連携では `--on-merged glitchtip-resolve --glitchtip-issue-id <id>` を追加し、PR body の GlitchTip permalink と照合します。
+- `$glitchtip-pr [issue-id-or-url]`: GlitchTip issue から PR 作成と、user が明示的に要求した verified Resolve までを進めます。
+- `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認し、XDG state に close/merge、CI failure、conflict、Copilot review を記録します。external scheduler がない `start` は `foreground_required` を返します。持続した terminal を user が明示的に用意できる場合だけ `watch` を foreground で実行します。GlitchTip callback は state に保存しません。
+- `$resume-pr-monitor <pr-number-or-url>`: restart、agent capacity 不足、tmux 非対応、watcher 停止後に fresh GitHub state から event を reconcile し、lease を取得した pending action だけを処理します。watcher は action を実行しません。ChatGPT Desktop/Web の Scheduled Tasks を利用できる場合は project context の resume を予定できますが、local shell の detached watcher として扱いません。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
 - `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
 - `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
 - `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
 - `$glitchtip-pr-deep <issue-id>` / `$glitchtip-pr-lite <issue-id>`: 規模に応じて GlitchTip issue から PR を作成します。
 - `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
-- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。`wait-for-pr-close` の merge callback は `pr-health-monitor` が GlitchTip flow 用に開始した monitoring agent だけで、`glitchtip-resolve` と GlitchTip issue ID の組み合わせを受け付けます。
+- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を durable event として監視します。PR watcher は detached 起動を行わず、persistent terminal の foreground `watch` または resume fallback を使います。watcher は GlitchTip callback descriptor を受け付けず、保存・実行もしません。merge 後の GlitchTip Resolve は `$resume-pr-monitor` の後に user が明示的に開始する verified GlitchTip flow でのみ行います。
 - `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
 - `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守します。
 - `$rtk`: RTK の利用手順を参照します。
@@ -251,7 +252,7 @@ Jira チケットを確認し、対応のためのブランチを作成して PR
 
 ### glitchtip-pr
 
-GlitchTip の issue を調査し、対応のためのブランチを作成して PR を作成し、PR マージ時に GlitchTip issue を自動的に Resolved にする Claude Code スキルです。
+GlitchTip の issue を調査し、対応のためのブランチを作成して PR を作成し、user が明示的に要求した場合に検証済みの GlitchTip Resolve を行うスキルです。
 `issue-pr` の GlitchTip 版ですが、GlitchTip issue は GitHub リポジトリとの紐付け情報を持たないため、実行中のカレントリポジトリを対象とする点が異なります(`ticket-pr` と同様の前提)。
 
 ```
@@ -266,7 +267,7 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 2. **Worktree の作成**: `EnterWorktree` でこの issue 専用の作業ツリーを作成
 3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec/plan フル承認フロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
 4. **実装・PR 作成**: `glitchtip-pr-deep` の場合は `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、`glitchtip-pr-lite` の場合は spec/plan を作らず直接実装したうえで、PR を作成
-5. **PR マージ時の自動 Resolve**: PR がマージされたことを検知すると、確認なしで GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
+5. **PR マージ後の verified Resolve**: user が明示的に要求した場合だけ、PR がマージされたこと、issue permalink、PR body を再確認して GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
 
 **使用例:**
 

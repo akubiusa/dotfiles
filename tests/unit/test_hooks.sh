@@ -182,11 +182,19 @@ else
     echo "✅ wait-for-copilot-review.sh included the configured mention in Discord payload"
   fi
 
-  if ! grep -Fq "\$handle-pr-reviews https://github.com/book000/dotfiles/pull/121" "$TEST_CAPTURE_DIR/tmux.log"; then
-    echo "❌ wait-for-copilot-review.sh did not send the expected tmux command"
+  COPILOT_STATE="$TEST_HOME/.local/state/codex-pr-monitor/$(printf '%s' 'https://github.com/book000/dotfiles/pull/121' | sha256sum | awk '{print $1}').json"
+  if ! jq -e '.events.copilot_review.status == "pending"' "$COPILOT_STATE" >/dev/null; then
+    echo "❌ wait-for-copilot-review.sh did not record a durable Copilot event"
     FAILED=1
   else
-    echo "✅ wait-for-copilot-review.sh sent the expected tmux command"
+    echo "✅ wait-for-copilot-review.sh recorded a durable Copilot event"
+  fi
+
+  if [ -f "$TEST_CAPTURE_DIR/tmux.log" ]; then
+    echo "❌ wait-for-copilot-review.sh attempted a tmux action handoff"
+    FAILED=1
+  else
+    echo "✅ wait-for-copilot-review.sh did not attempt a tmux action handoff"
   fi
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR" "$TEST_CAPTURE_DIR"

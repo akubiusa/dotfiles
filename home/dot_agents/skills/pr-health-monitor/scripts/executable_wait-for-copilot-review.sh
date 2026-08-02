@@ -10,6 +10,11 @@ fi
 
 PR_ARG="$1"
 DISCORD_MENTION_PREFIX=""
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+STATE_HELPER="$SCRIPT_DIR/pr-monitor-state.sh"
+if [[ ! -x "$STATE_HELPER" ]]; then
+  STATE_HELPER="$SCRIPT_DIR/executable_pr-monitor-state.sh"
+fi
 
 parse_remote_url() {
   local remote_name="$1"
@@ -104,6 +109,20 @@ load_codex_mention_prefix() {
   fi
 }
 
+record_copilot_event() {
+  local pr_url="https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
+
+  if [[ ! -x "$STATE_HELPER" ]]; then
+    echo "Warning: PR monitor state helper is unavailable" >> "$LOG_FILE"
+    return 0
+  fi
+
+  if ! "$STATE_HELPER" init --pr-url "$pr_url" >/dev/null \
+    || ! "$STATE_HELPER" transition --pr-url "$pr_url" --event copilot --value detected; then
+    echo "Warning: Failed to record durable Copilot review event" >> "$LOG_FILE"
+  fi
+}
+
 if [[ "$PR_ARG" =~ ^[0-9]+$ ]]; then
   PR_NUMBER="$PR_ARG"
   if ! resolve_repo_from_preferred_remote; then
@@ -166,28 +185,6 @@ GRAPHQL_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
 
 JQ_FILTER='[.data.repository.pullRequest.reviews.nodes[] | select(.author.__typename == "Bot" and (.author.login | ascii_downcase | contains("copilot")) and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED") and .submittedAt != null)] | length'
 
-notify_tmux() {
-  local message="$1"
-  local session
-
-  if ! session=$(tmux display-message -p '#{session_name}' 2>/dev/null); then
-    return 0
-  fi
-
-  tmux send-keys -t "${session}:" "$message" && sleep 3 && tmux send-keys -t "${session}:" Enter
-}
-
-notify_tmux_status() {
-  local message="$1"
-  local session
-
-  if ! session=$(tmux display-message -p '#{session_name}' 2>/dev/null); then
-    return 0
-  fi
-
-  tmux display-message -t "${session}:" "$message" 2>/dev/null || tmux display-message "$message" 2>/dev/null || true
-}
-
 notify_discord() {
   local title="$1"
   local desc="$2"
@@ -240,10 +237,9 @@ echo "Initial Copilot reviews: ${INITIAL_REVIEWS}" >> "$LOG_FILE"
 
 if [[ "$INITIAL_REVIEWS" -gt 0 ]]; then
   DISCORD_MSG="PR #${PR_NUMBER} に Copilot レビューが既に投稿されています（${INITIAL_REVIEWS} 件）。"
-  TMUX_CMD="\$handle-pr-reviews https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
   echo "$DISCORD_MSG" >> "$LOG_FILE"
+  record_copilot_event
   notify_discord "GitHub Copilot Review Already Posted" "$DISCORD_MSG"
-  notify_tmux "$TMUX_CMD"
   exit 0
 fi
 
@@ -266,15 +262,14 @@ while [[ $ELAPSED -lt $MAX_WAIT ]]; do
   if [[ "$CURRENT_REVIEWS" -gt "$INITIAL_REVIEWS" ]]; then
     NEW_REVIEWS=$((CURRENT_REVIEWS - INITIAL_REVIEWS))
     DISCORD_MSG="PR #${PR_NUMBER} に Copilot レビューが ${NEW_REVIEWS} 件投稿されました。"
-    TMUX_CMD="\$handle-pr-reviews https://github.com/${OWNER}/${REPO}/pull/${PR_NUMBER}"
     echo "$DISCORD_MSG" >> "$LOG_FILE"
+    record_copilot_event
     notify_discord "GitHub Copilot Review Detected" "$DISCORD_MSG"
-    notify_tmux "$TMUX_CMD"
     exit 0
   fi
 done
 
 TIMEOUT_MSG="PR #${PR_NUMBER}: ${MAX_WAIT} 秒以内に Copilot レビューが投稿されませんでした。手動で確認してください。"
 echo "Timeout: No new Copilot reviews detected within ${MAX_WAIT}s" >> "$LOG_FILE"
-notify_tmux_status "$TIMEOUT_MSG"
+echo "$TIMEOUT_MSG" >> "$LOG_FILE"
 exit 0

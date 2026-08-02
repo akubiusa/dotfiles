@@ -11,6 +11,6 @@ description: 非自明な GitHub Issue を仕様・計画・実装・深いレ�
 4. Conventional Branch を作成し、計画を実装する。各変更を検証し、失敗や未解決の不確実性があれば PR 作成前に停止する。
 5. `$deep-review` をローカル差分に実行し、50 以上の指摘を解消する。確認後に日本語 Conventional Commit でコミットし SSH push する。
 6. `Closes #<issue>`、概要、変更内容、検証、前提を含む PR を、`--owner`/`--repo` で解決済みの target repository に明示して作成する。
-7. 続けて `$pr-health-monitor <PR 番号または URL>` を実行する。PR close の monitoring agent と close 検出時の `$pr-cleanup` はこの skill に一本化される。active な同一 PR 用 agent がある間は重複して開始しない。Codex にはセッションを跨ぐ永続監視がないため、これは現在の session が生きている間の best-effort であり、session 終了後は手動で `$wait-for-pr-close`/`$pr-cleanup` を呼び直す必要がある。
+7. 続けて `$pr-health-monitor <PR 番号または URL>` を実行する。XDG state の watcher は close、CI failure、conflict、Copilot review を durable event として記録する。session 終了後、agent capacity がない場合、または watcher 停止後は `$resume-pr-monitor <PR URL>` を実行し、再確認済みの event だけを安全に処理する。
 
 Claude 専用の superpowers、EnterWorktree、AskUserQuestion は使用しない。Codex の plan、sub-agent、`request_user_input` ツールに置き換える。仕様・計画レビューは `home/dot_codex/AGENTS.md` の追加ガイダンスに従い `spec_reviewer`/`plan_reviewer` agent を使う。

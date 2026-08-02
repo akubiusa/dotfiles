@@ -19,9 +19,10 @@ GitHub PR の未解決レビュースレッドを取得し、修正、返信、r
 1. PR 情報を解決する。
    - 番号のみなら `gh-pr-target-repo.sh` の結果を優先して使う
    - つまり `upstream` remote があるリポジトリでは upstream PR を既定対象にする
+   - `gh pr view` で canonical PR URL、target repository、head/base branch を取得する
+   - ローカル worktree の `git remote -v` と現在 branch が target repository/head に対応するか確認する。対応しない checkout で修正、commit、push を推測実行しない。必要なら target repository を明示して clone/worktree を作成してから再開する
 2. 全未解決レビュースレッドを GraphQL で取得する。
-   - `reviewThreads(first: 100)` を使用する
-   - 100 件を超える可能性がある場合はページネーションも考慮する
+   - `reviewThreads(first: 100)` を使用し、`hasNextPage` が true の間は `endCursor` を渡してページネーションする
 3. 各スレッドを 1 件ずつ処理する。
    - 最新コメントを確認する
    - 修正が必要ならコードを直す
@@ -41,3 +42,4 @@ GitHub PR の未解決レビュースレッドを取得し、修正、返信、r
 - 返信してから resolve する順序を守る
 - 1 件だけ見て終わらず、全スレッドを再取得して漏れを確認する
 - レビュー対応後は PR 本文も最新状態に合わせて更新する
+- 対応する local checkout が取得できない場合は、未解決 thread と必要な checkout を報告する。Copilot durable event は `$resume-pr-monitor <PR URL>` で pending のまま保持し、対応完了後だけ acknowledge する

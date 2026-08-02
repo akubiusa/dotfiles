@@ -147,14 +147,14 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 - `$issue-pr <issue-number-or-url>`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。
 - `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
 - `$glitchtip-pr [issue-id-or-url]`: GlitchTip issue から PR 作成と PR マージ時の自動 Resolve までを進めます。
-- `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認します。
+- `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認し、同一 Codex session の PR close monitoring agent を best-effort で 1 回開始します。GlitchTip 連携では `--on-merged glitchtip-resolve --glitchtip-issue-id <id>` を追加し、PR body の GlitchTip permalink と照合します。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
 - `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
 - `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
 - `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
 - `$glitchtip-pr-deep <issue-id>` / `$glitchtip-pr-lite <issue-id>`: 規模に応じて GlitchTip issue から PR を作成します。
 - `$pr-cleanup <pr-number-or-url>`: マージ済み PR の後処理を行います。
-- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。
+- `$wait-for-copilot-review <pr-number-or-url>` / `$wait-for-pr-close <pr-number-or-url>`: PR の状態を監視します。`wait-for-pr-close` の merge callback は `pr-health-monitor` が GlitchTip flow 用に開始した monitoring agent だけで、`glitchtip-resolve` と GlitchTip issue ID の組み合わせを受け付けます。
 - `$check-container-status [directory]`: Docker Compose プロジェクトの状態を確認します。
 - `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守します。
 - `$rtk`: RTK の利用手順を参照します。

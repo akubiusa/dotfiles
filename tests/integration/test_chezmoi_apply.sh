@@ -76,6 +76,67 @@ fi
 
 echo "✅ Codex files generated successfully"
 
+# PR 後フローの skill 契約が chezmoi 展開後も保持されることを確認する。
+PR_HEALTH_SKILL="$HOME/.agents/skills/pr-health-monitor/SKILL.md"
+PR_CLOSE_SKILL="$HOME/.agents/skills/wait-for-pr-close/SKILL.md"
+ISSUE_PR_SKILLS=(
+  "$HOME/.agents/skills/issue-pr-deep/SKILL.md"
+  "$HOME/.agents/skills/issue-pr-lite/SKILL.md"
+)
+GLITCHTIP_PR_SKILLS=(
+  "$HOME/.agents/skills/glitchtip-pr-deep/SKILL.md"
+  "$HOME/.agents/skills/glitchtip-pr-lite/SKILL.md"
+)
+
+PR_CLOSE_AGENT_COUNT=$(grep -Fc "Codex の \`spawn_agent\` を 1 回だけ呼び" "$PR_HEALTH_SKILL" || true)
+PR_CLOSE_AGENT_LINE=$(grep -Fn "Codex の \`spawn_agent\` を 1 回だけ呼び" "$PR_HEALTH_SKILL" | head -n 1 | cut -d: -f1 || true)
+PR_CI_WATCH_COUNT=$(grep -Fc "gh pr checks \"\$PR_NUMBER\" --watch" "$PR_HEALTH_SKILL" || true)
+PR_CI_WATCH_LINE=$(grep -Fn "gh pr checks \"\$PR_NUMBER\" --watch" "$PR_HEALTH_SKILL" | head -n 1 | cut -d: -f1 || true)
+
+if [ "$PR_CLOSE_AGENT_COUNT" -ne 1 ] \
+  || [ "$PR_CI_WATCH_COUNT" -ne 1 ] \
+  || [ "$PR_CLOSE_AGENT_LINE" -ge "$PR_CI_WATCH_LINE" ] \
+  || ! grep -Fq 'list_agents' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq "dedicated task \`pr_close_monitor_<OWNER>_<REPO>_<PR_NUMBER>\`" "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'Do not wait for the parent health workflow.' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'gh pr checks --watch' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'active task がない invocation では monitoring agent を正確に 1 件起動し' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq -- '--on-merged glitchtip-resolve --glitchtip-issue-id <ID>' "$PR_HEALTH_SKILL"; then
+  echo "❌ PR health monitor close-monitor contract not generated"
+  exit 1
+fi
+
+if ! grep -Fq 'registered callback name, not a shell command' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'Reject callback arguments in a standalone' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq "re-fetch \`get_issue(issue_id)\`" "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'GlitchTip Issue: <permalink URL>' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'not a cryptographic binding' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'update_issue(issue_id, status: "resolved")' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq "\`CLOSED\`: \`\$pr-cleanup <PR URL>\` だけを 1 回実行" "$PR_CLOSE_SKILL"; then
+  echo "❌ PR close monitor callback contract not generated"
+  exit 1
+fi
+
+for skill in "${ISSUE_PR_SKILLS[@]}"; do
+  if grep -Fq "さらに \`\$wait-for-pr-close" "$skill"; then
+    echo "❌ Duplicate close monitor remains in $skill"
+    exit 1
+  fi
+done
+
+for skill in "${GLITCHTIP_PR_SKILLS[@]}"; do
+  if ! grep -Fq "\$pr-health-monitor <PR URL> --on-merged glitchtip-resolve --glitchtip-issue-id <ID>" "$skill" \
+    || ! grep -Fq "この flow で \`get_issue\` により取得した issue ID" "$skill" \
+    || ! grep -Fq 'GlitchTip Issue: <permalink URL>' "$skill" \
+    || ! grep -Fq 'active な同一 PR 用 agent がある間は重複して開始しない' "$skill" \
+    || ! grep -Fq "\`CLOSED\`" "$skill"; then
+    echo "❌ GlitchTip PR callback flow not generated in $skill"
+    exit 1
+  fi
+done
+
+echo "✅ PR post-creation skill contracts generated successfully"
+
 # Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
 # modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。
 CODEX_CONFIG="$HOME/.codex/config.toml"

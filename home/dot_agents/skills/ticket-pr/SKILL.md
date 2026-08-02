@@ -75,6 +75,7 @@ Jira の課題タイプからブランチタイプを決定する:
    - `mcp__atlassian__addCommentToJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>", commentBody: "<PR URL を含む完了メッセージ>" })` で投稿
 10. PR 作成後は直ちに `$pr-health-monitor` を使う。
     - 例: `$pr-health-monitor 456`
+    - restart、agent capacity 不足、または watcher 停止後は `$resume-pr-monitor <PR URL>` で pending event を再確認して処理する。
 
 ## 注意事項
 

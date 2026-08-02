@@ -5,7 +5,7 @@ description: GlitchTip issue を PR にするための起点 skill。issue を�
 
 # GlitchTip issue から PR を作成
 
-この skill 自身は薄いディスパッチャーであり、GlitchTip issue の特定・取得と規模判断までを行い、実際の仕様策定・実装・レビュー・PR 作成・自動 Resolve は `$glitchtip-pr-deep` または `$glitchtip-pr-lite` に委譲する。
+この skill 自身は薄いディスパッチャーであり、GlitchTip issue の特定・取得と規模判断までを行い、実際の仕様策定・実装・レビュー・PR 作成・verified Resolve は `$glitchtip-pr-deep` または `$glitchtip-pr-lite` に委譲する。
 
 GlitchTip issue は GitHub の owner/repo のような紐付け情報を持たない。この skill は常に、issue が属するコードのリポジトリ内で実行されている前提で動く(`ticket-pr` が Jira チケットに対して置く前提と同じ)。フォークシナリオのベースブランチ調整は行わず、PR の作成先は `gh-pr-target-repo.sh` で解決する。
 
@@ -40,7 +40,7 @@ GlitchTip issue は GitHub の owner/repo のような紐付け情報を持た�
    - それ以外: `$glitchtip-pr-deep <issue ID>`
    - 取得済みの issue/event データ(タイトル・例外メッセージ・スタックトレース・culprit・permalink)は明示的に渡す。issue ID もこの会話の文脈に残っているものをそのまま使わせる。
 
-この skill 自身にはこれ以降のフェーズ(仕様・実装・PR 作成・自動 Resolve)はない。すべて委譲先の責任とする。
+この skill 自身にはこれ以降のフェーズ(仕様・実装・PR 作成・verified Resolve)はない。すべて委譲先の責任とする。
 
 ## 注意事項
 

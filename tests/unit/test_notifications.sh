@@ -144,6 +144,51 @@ else
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
+echo "Testing resolve_jsonl_path prefers a parked/background session JSONL..."
+TEST_HOME=$(mktemp -d)
+TEST_CONFIG_DIR="$TEST_HOME/.claude"
+mkdir -p "$TEST_CONFIG_DIR/sessions" "$TEST_HOME/.claude/projects/test-project"
+
+cat > "$TEST_CONFIG_DIR/sessions/4242.json" <<'EOF'
+{"pid":4242,"sessionId":"interactive-session","parkedJobId":"job-123"}
+EOF
+cat > "$TEST_CONFIG_DIR/sessions/5252.json" <<'EOF'
+{"pid":5252,"sessionId":"background-session","kind":"bg","jobId":"job-123"}
+EOF
+touch "$TEST_HOME/.claude/projects/test-project/interactive-session.jsonl"
+touch "$TEST_HOME/.claude/projects/test-project/background-session.jsonl"
+
+RESULT=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_jsonl_path "dummy-session" 4242 "'"$TEST_CONFIG_DIR"'"
+  '
+)
+EXPECTED="$TEST_HOME/.claude/projects/test-project/background-session.jsonl"
+if [[ "$RESULT" != "$EXPECTED" ]]; then
+  echo "❌ resolve_jsonl_path did not prefer the parked/background session JSONL (got: '$RESULT', want: '$EXPECTED')"
+  FAILED=1
+else
+  echo "✅ resolve_jsonl_path preferred the parked/background session JSONL"
+fi
+
+echo "Testing resolve_jsonl_path falls back to the interactive session when the parked session cannot be resolved..."
+rm -f "$TEST_CONFIG_DIR/sessions/5252.json"
+RESULT=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_claude/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_jsonl_path "dummy-session" 4242 "'"$TEST_CONFIG_DIR"'"
+  '
+)
+EXPECTED="$TEST_HOME/.claude/projects/test-project/interactive-session.jsonl"
+if [[ "$RESULT" != "$EXPECTED" ]]; then
+  echo "❌ resolve_jsonl_path did not fall back to the interactive session JSONL (got: '$RESULT', want: '$EXPECTED')"
+  FAILED=1
+else
+  echo "✅ resolve_jsonl_path fell back to the interactive session JSONL"
+fi
+rm -rf "$TEST_HOME"
+
 echo "Testing resolve_claude_pid matches a claude process invoked via a resolved absolute path, even as a grandchild of the pane pid..."
 TEST_BIN_DIR=$(mktemp -d)
 

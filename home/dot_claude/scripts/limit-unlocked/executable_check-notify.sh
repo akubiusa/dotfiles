@@ -185,6 +185,7 @@ record_usage_checked() {
 # 既に解決済みの値を再利用でき、pgrep・/proc・sessions ファイル探索の再実行を避けられる。
 resolve_jsonl_path() {
     local session="$1" claude_pid="${2:-}" config_dir="${3:-}" session_file session_id jsonl
+    local parked_job_id parked_session_id
 
     if [ -z "$claude_pid" ]; then
         claude_pid=$(resolve_claude_pid "$session") || return 1
@@ -195,6 +196,25 @@ resolve_jsonl_path() {
         config_dir=$(resolve_config_dir_for_pid "$claude_pid") || return 1
     fi
     session_file="$config_dir/sessions/${claude_pid}.json"
+
+    # Claude Code が interactive session を parked/background job に移した場合、
+    # rate limit は元 session ではなく background session 側の JSONL に記録される。
+    # metadata の parkedJobId と background session の jobId を対応付けて優先する。
+    parked_job_id=$(jq -r '.parkedJobId // empty' "$session_file" 2>/dev/null)
+    if [ -n "$parked_job_id" ]; then
+        while IFS= read -r parked_session_id; do
+            [ -n "$parked_session_id" ] || continue
+            jsonl=$(find "$HOME/.claude/projects" -maxdepth 2 -name "${parked_session_id}.jsonl" -print -quit 2>/dev/null)
+            if [ -n "$jsonl" ]; then
+                echo "$jsonl"
+                return 0
+            fi
+        done < <(
+            find "$config_dir/sessions" -maxdepth 1 -type f -name '*.json' -exec \
+                jq -r --arg job_id "$parked_job_id" \
+                    'select(.kind == "bg" and .jobId == $job_id) | .sessionId // empty' {} + 2>/dev/null
+        )
+    fi
 
     session_id=$(jq -r '.sessionId // empty' "$session_file" 2>/dev/null)
     [ -n "$session_id" ] || return 1

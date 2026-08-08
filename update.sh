@@ -8,10 +8,31 @@ CACHE_DIR="$HOME/.cache/chezmoi-update"
 TIMESTAMP_FILE="$CACHE_DIR/last-update"
 CHEZMOI_BIN="$HOME/.local/bin/chezmoi"
 LEGACY_CHEZMOI_BIN="$HOME/bin/chezmoi"
+FORCE_UPDATE=0
+
+if [[ $# -gt 0 ]]; then
+  if [[ "$1" == "--force" ]]; then
+    FORCE_UPDATE=1
+    shift
+  else
+    echo "Unknown option: $1" >&2
+    exit 2
+  fi
+fi
+if [[ $# -gt 0 ]]; then
+  echo "Unexpected argument: $1" >&2
+  exit 2
+fi
 
 mkdir -p "$CACHE_DIR"
 
-if [[ -f "$TIMESTAMP_FILE" ]]; then
+# AI CLI 起動時更新と systemd timer が重なっても source state を同時更新しない。
+exec 9>"$CACHE_DIR/update.lock"
+if ! flock -n 9; then
+  exit 0
+fi
+
+if [[ $FORCE_UPDATE -eq 0 && -f "$TIMESTAMP_FILE" ]]; then
   last_update=$(cat "$TIMESTAMP_FILE" 2>/dev/null || echo "")
   # 非数値・空の場合は 0 扱いにして算術展開エラーを防ぐ
   [[ "$last_update" =~ ^[0-9]+$ ]] || last_update=0

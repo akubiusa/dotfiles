@@ -1,0 +1,11 @@
+[Unit]
+Description=Update chezmoi-managed dotfiles daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+Unit=chezmoi-update.service
+
+[Install]
+WantedBy=timers.target

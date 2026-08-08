@@ -26,6 +26,7 @@
 
 ### テストの追随
 
+- `update.sh` や user systemd timer を変更する場合、scheduled `--force`、AI CLI の throttle、同時実行ロック、timer の `Persistent=true` が維持されているか確認する。
 - `home/dot_codex/`、`home/dot_claude/scripts/` など通知・フック関連スクリプトを変更・削除した場合、`tests/unit/`、`tests/integration/`、`tests/syntax/` 配下の対応するテストが古い参照を残していないか確認する。
 
 ### mise 管理下のツール

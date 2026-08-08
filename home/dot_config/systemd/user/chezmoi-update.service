@@ -1,0 +1,5 @@
+[Unit]
+Description=Update chezmoi-managed dotfiles
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/chezmoi/update.sh --force

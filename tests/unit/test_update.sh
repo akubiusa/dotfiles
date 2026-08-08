@@ -8,6 +8,10 @@ make_fake_curl() {
   local bin_dir="$1"
   cat > "$bin_dir/curl" <<'EOF'
 #!/bin/bash
+printf 'curl\n' >> "$HOME/curl-invocation"
+if [[ -n "${FAKE_CURL_SLEEP:-}" ]]; then
+  sleep "$FAKE_CURL_SLEEP"
+fi
 if [[ "${FAKE_CURL_FAIL:-0}" == "1" ]]; then
   exit 22
 fi
@@ -35,7 +39,7 @@ EOF
 run_update() {
   local home="$1"
   local bin_dir="$2"
-  HOME="$home" PATH="$bin_dir:/usr/bin:/bin" bash "$SCRIPT"
+  HOME="$home" PATH="$bin_dir:/usr/bin:/bin" bash "$SCRIPT" "${@:3}"
 }
 
 echo "Testing update.sh canonical chezmoi path..."
@@ -78,3 +82,49 @@ set -e
 [[ ! -f "$TEST_HOME/.cache/chezmoi-update/last-update" ]] || { echo "❌ update.sh recorded success after chezmoi failure"; exit 1; }
 rm -rf "$TEST_HOME" "$TEST_BIN"
 echo "✅ chezmoi failure propagation test passed"
+
+
+echo "Testing update.sh --force bypasses the 24-hour throttle..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN=$(mktemp -d)
+make_fake_curl "$TEST_BIN"
+mkdir -p "$TEST_HOME/.cache/chezmoi-update"
+date +%s > "$TEST_HOME/.cache/chezmoi-update/last-update"
+run_update "$TEST_HOME" "$TEST_BIN" --force
+[[ "$(wc -l < "$TEST_HOME/curl-invocation" | tr -d ' ')" == "1" ]] || { echo "❌ --force did not run an update"; exit 1; }
+[[ "$(cat "$TEST_HOME/chezmoi-invocation")" == "update" ]] || { echo "❌ --force did not invoke chezmoi update"; exit 1; }
+rm -rf "$TEST_HOME" "$TEST_BIN"
+echo "✅ --force bypass test passed"
+
+echo "Testing update.sh serializes concurrent updates..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN=$(mktemp -d)
+make_fake_curl "$TEST_BIN"
+FAKE_CURL_SLEEP=1 run_update "$TEST_HOME" "$TEST_BIN" &
+FIRST_PID=$!
+for _ in $(seq 1 50); do
+  [[ -f "$TEST_HOME/curl-invocation" ]] && break
+  sleep 0.02
+done
+run_update "$TEST_HOME" "$TEST_BIN"
+wait "$FIRST_PID"
+[[ "$(wc -l < "$TEST_HOME/curl-invocation" | tr -d ' ')" == "1" ]] || { echo "❌ concurrent updates were not serialized"; exit 1; }
+rm -rf "$TEST_HOME" "$TEST_BIN"
+echo "✅ concurrent update serialization test passed"
+
+echo "Testing systemd timer deployment contract..."
+SERVICE="home/dot_config/systemd/user/chezmoi-update.service"
+TIMER="home/dot_config/systemd/user/chezmoi-update.timer"
+ENABLE_LINK="home/dot_config/systemd/user/timers.target.wants/symlink_chezmoi-update.timer"
+RELOAD_SCRIPT="home/run_onchange_after_20-reload-chezmoi-update-timer.sh.tmpl"
+[[ -f "$SERVICE" ]] || { echo "❌ systemd service is missing"; exit 1; }
+[[ -f "$TIMER" ]] || { echo "❌ systemd timer is missing"; exit 1; }
+[[ -f "$ENABLE_LINK" ]] || { echo "❌ timer enable symlink source is missing"; exit 1; }
+[[ -f "$RELOAD_SCRIPT" ]] || { echo "❌ timer reload script is missing"; exit 1; }
+grep -Fq 'ExecStart=%h/.local/share/chezmoi/update.sh --force' "$SERVICE" || { echo "❌ service does not force the scheduled update"; exit 1; }
+grep -Fq 'OnCalendar=daily' "$TIMER" || { echo "❌ timer is not daily"; exit 1; }
+grep -Fq 'Persistent=true' "$TIMER" || { echo "❌ timer is not persistent"; exit 1; }
+[[ "$(cat "$ENABLE_LINK")" == "../chezmoi-update.timer" ]] || { echo "❌ timer enable symlink target is incorrect"; exit 1; }
+grep -Fq 'systemctl --user daemon-reload' "$RELOAD_SCRIPT" || { echo "❌ reload script does not reload the user manager"; exit 1; }
+grep -Fq 'systemctl --user start chezmoi-update.timer' "$RELOAD_SCRIPT" || { echo "❌ reload script does not start the timer"; exit 1; }
+echo "✅ systemd timer deployment contract passed"

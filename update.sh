@@ -2,8 +2,11 @@
 # chezmoi の自動更新スクリプト
 # 24 時間以内に実行済みの場合はスキップする
 
+set -euo pipefail
+
 CACHE_DIR="$HOME/.cache/chezmoi-update"
 TIMESTAMP_FILE="$CACHE_DIR/last-update"
+CHEZMOI_BIN="$HOME/.local/bin/chezmoi"
 
 mkdir -p "$CACHE_DIR"
 
@@ -17,10 +20,11 @@ if [[ -f "$TIMESTAMP_FILE" ]]; then
   fi
 fi
 
-cd "$HOME" || exit
-# curl の失敗を検知するため先にインストーラを取得し、成功した場合のみ実行する
-if installer=$(curl -fsSL get.chezmoi.io); then
-  if sh -c "$installer" -- update; then
-    date +%s > "$TIMESTAMP_FILE"
-  fi
-fi
+# chezmoi の公式インストーラで ~/.local/bin の単一バイナリを更新する。
+installer=$(curl -fsSL https://get.chezmoi.io)
+sh -c "$installer" -- -b "$HOME/.local/bin"
+
+# インストーラ経由の暗黙実行に依存せず、管理対象のバイナリを明示して更新する。
+"$CHEZMOI_BIN" update
+
+date +%s > "$TIMESTAMP_FILE"

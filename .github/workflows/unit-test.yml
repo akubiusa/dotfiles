@@ -21,6 +21,11 @@ jobs:
         background: true
         run: bash tests/unit/test_install.sh
 
+      - name: Run update.sh unit test
+        id: run-update-sh-unit-test
+        background: true
+        run: bash tests/unit/test_update.sh
+
       - name: Run notification unit test
         id: run-notification-unit-test
         background: true
@@ -44,6 +49,7 @@ jobs:
       - name: Wait for unit tests
         wait:
           - run-install-sh-unit-test
+          - run-update-sh-unit-test
           - run-notification-unit-test
           - run-hooks-unit-test
           - run-pr-monitor-unit-test

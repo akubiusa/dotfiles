@@ -30,6 +30,21 @@ fi
 SOURCE_DIR="$(pwd)"
 "$CHEZMOI_BIN" init --source="$SOURCE_DIR"
 
+# 旧 managed file と意図的な unmanaged file を用意し、削除追従を検証する。
+STALE_TARGETS=(
+  "$HOME/.bashrc.d/91-tmux-ipc.sh"
+  "$HOME/.claude/RTK.md"
+  "$HOME/.claude/commands/issue-pr.md"
+  "$HOME/.codex/hooks/tmux-ipc-check.sh"
+  "$HOME/bin/tmux-ipc-send.sh"
+)
+for target in "${STALE_TARGETS[@]}"; do
+  mkdir -p "$(dirname "$target")"
+  printf 'stale\n' > "$target"
+done
+LOCAL_RUNTIME_FILE="$HOME/.claude/local-runtime-state.keep"
+printf 'keep\n' > "$LOCAL_RUNTIME_FILE"
+
 # chezmoi apply を実行 (dry-run)
 if ! "$CHEZMOI_BIN" apply --dry-run --source="$SOURCE_DIR"; then
   echo "❌ chezmoi apply dry-run failed"
@@ -45,6 +60,18 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
 fi
 
 echo "✅ chezmoi apply passed"
+
+for target in "${STALE_TARGETS[@]}"; do
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    echo "❌ stale managed target was not removed: $target"
+    exit 1
+  fi
+done
+if [ ! -f "$LOCAL_RUNTIME_FILE" ]; then
+  echo "❌ intentionally unmanaged runtime file was removed"
+  exit 1
+fi
+echo "✅ stale managed targets removed while local runtime file was preserved"
 
 # 生成されたファイルの検証
 if [ ! -f "$HOME/.bashrc" ]; then

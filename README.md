@@ -2,6 +2,8 @@
 
 このリポジトリは、chezmoi を使用して dotfiles と AI エージェント設定を管理するものです。
 
+chezmoi 管理から削除・rename した旧ファイルは `home/.chezmoiremove` に旧 target path を記録し、次回の `chezmoi apply` / `chezmoi update` で自動削除します。Claude Code / Codex の session・cache・plugin などの runtime state は対象外です。
+
 ## インストール方法
 
 ### 推奨: 3 ステップインストール（より安全）

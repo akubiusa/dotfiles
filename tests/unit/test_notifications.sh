@@ -690,6 +690,27 @@ else
   echo "✅ check_limit_status correctly reported not-limited for an error:null task_complete"
 fi
 
+echo "Testing Codex check_limit_status clears a stale usage_limit_exceeded state after a later below-cap token_count..."
+FIXTURE_JSONL_STALE_LIMIT="$TEST_HOME/fixture-rollout-stale-limit.jsonl"
+cat > "$FIXTURE_JSONL_STALE_LIMIT" <<'EOF'
+{"timestamp":"2026-08-02T11:47:24.660Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"usage limit hit","codex_error_info":"usage_limit_exceeded"},"started_at":1785671243,"completed_at":1785671244,"duration_ms":1410}}
+{"timestamp":"2026-08-08T05:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"primary":{"used_percent":1.0,"window_minutes":300,"resets_at":1786168800},"secondary":null}}}
+EOF
+
+RESULT_STALE_LIMIT=$(
+  bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    check_limit_status "'"$FIXTURE_JSONL_STALE_LIMIT"'"
+  '
+)
+
+if [[ "$RESULT_STALE_LIMIT" != $'0\t-\t-' ]]; then
+  echo "❌ check_limit_status did not clear a stale usage_limit_exceeded state (got: '$RESULT_STALE_LIMIT')"
+  FAILED=1
+else
+  echo "✅ check_limit_status cleared a stale usage_limit_exceeded state"
+fi
+
 rm -rf "$TEST_HOME"
 
 echo "Testing Codex resolve_rollout_path discovers the rollout jsonl via /proc fd scan and picks the newest mtime..."

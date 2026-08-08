@@ -416,6 +416,7 @@ install_apt_packages() {
     "fzf"
     "powerline"
     "jq"
+    "libatomic1"
   )
 
   # apt update

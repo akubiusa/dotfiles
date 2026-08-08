@@ -15,5 +15,9 @@ if ! systemctl --user show-environment >/dev/null 2>&1; then
 fi
 
 systemctl --user daemon-reload
+if ! systemctl --user cat chezmoi-update.timer >/dev/null 2>&1; then
+  echo "chezmoi update timer is not visible to the current user manager; skipping immediate start" >&2
+  exit 0
+fi
 systemctl --user start chezmoi-update.timer
 {{- end }}

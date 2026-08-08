@@ -128,3 +128,25 @@ grep -Fq 'Persistent=true' "$TIMER" || { echo "❌ timer is not persistent"; exi
 grep -Fq 'systemctl --user daemon-reload' "$RELOAD_SCRIPT" || { echo "❌ reload script does not reload the user manager"; exit 1; }
 grep -Fq 'systemctl --user start chezmoi-update.timer' "$RELOAD_SCRIPT" || { echo "❌ reload script does not start the timer"; exit 1; }
 echo "✅ systemd timer deployment contract passed"
+
+
+echo "Testing timer reload script skips start when the unit is not visible to the user manager..."
+TEST_BIN=$(mktemp -d)
+START_MARKER=$(mktemp)
+rm -f "$START_MARKER"
+cat > "$TEST_BIN/systemctl" <<EOF
+#!/bin/bash
+case "\$*" in
+  "--user show-environment"|"--user daemon-reload") exit 0 ;;
+  "--user cat chezmoi-update.timer") exit 1 ;;
+  "--user start chezmoi-update.timer") touch "$START_MARKER"; exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$TEST_BIN/systemctl"
+RENDERED_RELOAD_SCRIPT=$(mktemp)
+sed '1d;$d' "$RELOAD_SCRIPT" > "$RENDERED_RELOAD_SCRIPT"
+PATH="$TEST_BIN:/usr/bin:/bin" bash "$RENDERED_RELOAD_SCRIPT"
+[[ ! -e "$START_MARKER" ]] || { echo "❌ reload script tried to start a timer that the user manager cannot see"; exit 1; }
+rm -rf "$TEST_BIN" "$START_MARKER" "$RENDERED_RELOAD_SCRIPT"
+echo "✅ invisible timer unit is skipped safely"

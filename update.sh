@@ -7,6 +7,7 @@ set -euo pipefail
 CACHE_DIR="$HOME/.cache/chezmoi-update"
 TIMESTAMP_FILE="$CACHE_DIR/last-update"
 CHEZMOI_BIN="$HOME/.local/bin/chezmoi"
+LEGACY_CHEZMOI_BIN="$HOME/bin/chezmoi"
 
 mkdir -p "$CACHE_DIR"
 
@@ -26,5 +27,8 @@ sh -c "$installer" -- -b "$HOME/.local/bin"
 
 # インストーラ経由の暗黙実行に依存せず、管理対象のバイナリを明示して更新する。
 "$CHEZMOI_BIN" update
+
+# 旧 updater が作成した ~/bin/chezmoi は、正常更新後に削除して二重管理を解消する。
+rm -f -- "$LEGACY_CHEZMOI_BIN"
 
 date +%s > "$TIMESTAMP_FILE"

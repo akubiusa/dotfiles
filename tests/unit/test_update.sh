@@ -42,9 +42,12 @@ echo "Testing update.sh canonical chezmoi path..."
 TEST_HOME=$(mktemp -d)
 TEST_BIN=$(mktemp -d)
 make_fake_curl "$TEST_BIN"
+mkdir -p "$TEST_HOME/bin"
+printf '#!/bin/bash\nexit 0\n' > "$TEST_HOME/bin/chezmoi"
+chmod +x "$TEST_HOME/bin/chezmoi"
 run_update "$TEST_HOME" "$TEST_BIN"
 [[ -x "$TEST_HOME/.local/bin/chezmoi" ]] || { echo "❌ update.sh did not install chezmoi to ~/.local/bin"; exit 1; }
-[[ ! -e "$TEST_HOME/bin/chezmoi" ]] || { echo "❌ update.sh installed a second chezmoi under ~/bin"; exit 1; }
+[[ ! -e "$TEST_HOME/bin/chezmoi" ]] || { echo "❌ update.sh did not remove the legacy ~/bin/chezmoi"; exit 1; }
 [[ "$(cat "$TEST_HOME/chezmoi-invocation")" == "update" ]] || { echo "❌ update.sh did not invoke the canonical chezmoi binary with update"; exit 1; }
 [[ -f "$TEST_HOME/.cache/chezmoi-update/last-update" ]] || { echo "❌ update.sh did not record successful update"; exit 1; }
 rm -rf "$TEST_HOME" "$TEST_BIN"

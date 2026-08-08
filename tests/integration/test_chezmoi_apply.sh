@@ -86,6 +86,18 @@ fi
 
 echo "✅ Basic files generated successfully"
 
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+if [ ! -f "$SYSTEMD_USER_DIR/chezmoi-update.service" ] || [ ! -f "$SYSTEMD_USER_DIR/chezmoi-update.timer" ]; then
+  echo "❌ chezmoi update systemd units were not generated"
+  exit 1
+fi
+TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
+if [ ! -L "$TIMER_WANTS_LINK" ] || [ "$(readlink "$TIMER_WANTS_LINK")" != "../chezmoi-update.timer" ]; then
+  echo "❌ chezmoi update timer enable symlink was not generated correctly"
+  exit 1
+fi
+echo "✅ chezmoi update systemd timer generated and enabled declaratively"
+
 if [ ! -f "$HOME/.agents/skills/issue-pr/SKILL.md" ]; then
   echo "❌ Codex issue-pr skill not generated"
   exit 1

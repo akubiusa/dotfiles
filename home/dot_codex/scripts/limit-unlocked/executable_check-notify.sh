@@ -47,12 +47,14 @@ collect_descendant_pids() {
 # パスを特定する。Codex には Claude Code の sessions/<pid>.json のような
 # pid→セッション対応表が存在しないため、pane の pid とその子孫すべての
 # オープン fd を走査し、rollout-*.jsonl を指しているものを集めた上で、
+# 親セッションの rollout を subagent の rollout より優先し、同種の候補内では
 # 最終更新時刻が最も新しいもの(実際に追記され続けている rollout)を選ぶ。
 # fd ごとに readlink -f を fork する方式は procfs 上のソケット・パイプ等の
 # 無関係な fd も含めて全数チェックしてしまい低速なため、find -lname による
 # シンボリックリンク先パターンマッチ 1 回にまとめている
 resolve_rollout_path() {
-    local session="$1" pane_pid home_real fd_dirs=() pid best_path best_mtime target mtime
+    local session="$1" pane_pid home_real fd_dirs=() pid best_path best_mtime best_is_subagent
+    local target mtime thread_source is_subagent
 
     # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
     # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
@@ -72,12 +74,25 @@ resolve_rollout_path() {
 
     best_path=""
     best_mtime=-1
+    best_is_subagent=1
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         mtime=$(stat -c %Y "$target" 2>/dev/null) || continue
-        if [ "$mtime" -gt "$best_mtime" ]; then
+
+        # multi-agent 実行では親と subagent の rollout が同時に開かれる。subagent が
+        # 親より数秒遅く完了すると mtime だけでは subagent を選び、親側に記録された
+        # usage_limit_exceeded を見落とすため session_meta で親を優先する。
+        thread_source=$(head -n 1 "$target" 2>/dev/null | jq -r 'select(.type == "session_meta") | .payload.thread_source // empty' 2>/dev/null)
+        is_subagent=0
+        [ "$thread_source" = "subagent" ] && is_subagent=1
+
+        if [ -z "$best_path" ] \
+            || { [ "$best_is_subagent" -eq 1 ] && [ "$is_subagent" -eq 0 ]; } \
+            || { [ "$best_is_subagent" -eq "$is_subagent" ] && [ "$mtime" -gt "$best_mtime" ]; }
+        then
             best_mtime="$mtime"
             best_path="$target"
+            best_is_subagent="$is_subagent"
         fi
     done < <(find "${fd_dirs[@]}" -lname "${home_real}/.codex/sessions/*/*/*/rollout-*.jsonl" -printf '%l\n' 2>/dev/null)
 

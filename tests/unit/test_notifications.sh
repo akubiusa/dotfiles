@@ -743,6 +743,51 @@ fi
 
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
+echo "Testing Codex resolve_rollout_path prefers the root session rollout over a newer subagent rollout..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+ROOT_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-root.jsonl"
+SUBAGENT_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-subagent.jsonl"
+printf '%s\n' '{"type":"session_meta","payload":{"id":"root","session_id":"root","source":"cli","thread_source":"user"}}' > "$ROOT_ROLLOUT"
+touch -d "-1 minute" "$ROOT_ROLLOUT"
+printf '%s\n' '{"type":"session_meta","payload":{"id":"subagent","session_id":"root","source":{"subagent":{}},"thread_source":"subagent"}}' > "$SUBAGENT_ROLLOUT"
+
+bash -c "exec 3<'$SUBAGENT_ROLLOUT' 4<'$ROOT_ROLLOUT'; sleep 60" &
+FAKE_CODEX_PID=$!
+sleep 0.2
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  echo "$FAKE_CODEX_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT_ROOT=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path "dummy-session"
+  '
+)
+
+kill "$FAKE_CODEX_PID" 2>/dev/null || true
+wait "$FAKE_CODEX_PID" 2>/dev/null || true
+
+if [[ "$RESULT_ROOT" != "$ROOT_ROLLOUT" ]]; then
+  echo "❌ resolve_rollout_path preferred a newer subagent rollout over the root session rollout (got: '$RESULT_ROOT', want: '$ROOT_ROLLOUT')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path preferred the root session rollout over a newer subagent rollout"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 echo "Testing Codex check_limit_status reports status=2 (undetermined) when jq fails to parse the scanned window..."
 TEST_HOME=$(mktemp -d)
 FIXTURE_JSONL_BROKEN="$TEST_HOME/fixture-rollout-broken.jsonl"

@@ -42,6 +42,52 @@ if ! grep -qw "libatomic1" <<< "$APT_INSTALL_LINE"; then
 fi
 echo "✅ apt package list includes libatomic1"
 
+# テスト 2.7: 開発用 CLI が mise config に宣言されていること
+echo "Test 2.7: mise config includes development tools"
+MISE_CONFIG="home/dot_config/mise/config.toml"
+MISE_TOOLS=(maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta)
+for tool in "${MISE_TOOLS[@]}"; do
+  if ! grep -Eq "^\"?${tool}\"? = " "$MISE_CONFIG"; then
+    echo "❌ mise config does not include $tool"
+    exit 1
+  fi
+done
+echo "✅ mise config includes development tools"
+
+# テスト 2.7.1: mise 管理ツールに latest 指定が残っていないこと
+echo "Test 2.7.1: mise config has no latest versions"
+if grep -Eq '= "latest"$' "$MISE_CONFIG"; then
+  echo "❌ mise config contains unpinned latest versions"
+  grep -En '= "latest"$' "$MISE_CONFIG"
+  exit 1
+fi
+echo "✅ mise config has no latest versions"
+
+# テスト 2.7.2: mise 管理 CLI の smoke test が Integration Test で実行されること
+echo "Test 2.7.2: integration workflow runs mise CLI smoke test"
+if ! grep -Fq "bash tests/integration/test_mise_tools.sh" .github/workflows/integration-test.yml; then
+  echo "❌ integration workflow does not run mise CLI smoke test"
+  exit 1
+fi
+echo "✅ integration workflow runs mise CLI smoke test"
+
+# テスト 2.8: install フローが開発用 CLI を mise 経由で導入すること
+echo "Test 2.8: install flow installs development tools via mise"
+MISE_DRY_RUN=$(bash install.sh --dry-run --skip-interactive --skip-apt --skip-gh --skip-ghq --skip-mkwork --skip-roots --skip-gitleaks 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+MISE_DIRECT_TOOLS=(maven ripgrep yq actionlint hadolint shfmt delta)
+for tool in "${MISE_DIRECT_TOOLS[@]}"; do
+  if ! grep -Fq "[DRY RUN] mise install $tool" <<< "$MISE_DRY_RUN"; then
+    echo "❌ install flow does not install $tool via mise"
+    exit 1
+  fi
+done
+if ! grep -Fq "[DRY RUN] mise install node" <<< "$MISE_DRY_RUN" \
+  || ! grep -Fq "[DRY RUN] mise exec node -- mise install devcontainer-cli" <<< "$MISE_DRY_RUN"; then
+  echo "❌ install flow does not bootstrap devcontainer-cli with mise-managed Node"
+  exit 1
+fi
+echo "✅ install flow installs development tools via mise"
+
 # テスト 3: 無効なオプション
 echo "Test 3: invalid option"
 # install.sh は無効なオプションで exit 1 を返すため、終了コードを無視

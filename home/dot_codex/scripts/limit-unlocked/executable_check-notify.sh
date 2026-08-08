@@ -106,8 +106,8 @@ resolve_rollout_path() {
 # jq が解析できなかった等)。2 を 0 と区別せず返すと、解析エラーを「解除」と誤判定して
 # しまうため、呼び出し元(detect_limited_sessions)は 2 を resolve 失敗と同様に扱う
 check_limit_status() {
-    local jsonl="$1" tail_lines last_task_complete jq_exit is_err text completed_at
-    local token_line reset_epoch date_text
+    local jsonl="$1" tail_lines last_task_complete last_task_complete_line jq_exit is_err text completed_at
+    local token_line later_token_line reset_epoch date_text
 
     [ -f "$jsonl" ] || { printf '0\t-\t-\n'; return; }
 
@@ -115,7 +115,7 @@ check_limit_status() {
     # 末尾のみを走査対象にして cron の定期実行での毎回フルパースを避ける
     tail_lines=$(tail -n 200 "$jsonl")
 
-    last_task_complete=$(echo "$tail_lines" | jq -c 'select(.type == "event_msg" and .payload.type == "task_complete")' 2>/dev/null)
+    last_task_complete=$(echo "$tail_lines" | jq -c 'select(.type == "event_msg" and .payload.type == "task_complete") | {event: ., line: input_line_number}' 2>/dev/null)
     jq_exit=$?
     if [ "$jq_exit" -ne 0 ]; then
         printf '2\t-\t-\n'
@@ -123,6 +123,8 @@ check_limit_status() {
     fi
     last_task_complete=$(echo "$last_task_complete" | tail -1)
     [ -n "$last_task_complete" ] || { printf '0\t-\t-\n'; return; }
+    last_task_complete_line=$(echo "$last_task_complete" | jq -r '.line' 2>/dev/null)
+    last_task_complete=$(echo "$last_task_complete" | jq -c '.event' 2>/dev/null)
 
     is_err=$(echo "$last_task_complete" | jq -r '(.payload.error != null) and (.payload.error.codex_error_info == "usage_limit_exceeded")' 2>/dev/null)
     if [ "$is_err" != "true" ]; then
@@ -136,6 +138,23 @@ check_limit_status() {
     # 通知文言としての可読性は保ったまま、区切り文字だけを空白に置き換える
     text=$(echo "$text" | tr '\t\n' '  ')
     completed_at=$(echo "$last_task_complete" | jq -r '.payload.completed_at // empty' 2>/dev/null)
+
+    later_token_line=$(echo "$tail_lines" | jq -c --argjson task_complete_line "$last_task_complete_line" 'select(input_line_number > $task_complete_line and .type == "event_msg" and .payload.type == "token_count")' 2>/dev/null | tail -1)
+    if [ -n "$later_token_line" ] && [ "$(echo "$later_token_line" | jq -r '
+        (.payload.rate_limits? // null) as $rate_limits
+        | if ($rate_limits | type) != "object" then false
+          else [
+              $rate_limits.primary?,
+              $rate_limits.secondary?
+              | select(type == "object")
+          ] as $windows
+          | ($windows | length) > 0
+            and all($windows[]; (.used_percent? | type) == "number" and .used_percent < 100)
+          end
+    ' 2>/dev/null)" = "true" ]; then
+        printf '0\t-\t-\n'
+        return
+    fi
 
     token_line=$(echo "$tail_lines" | jq -c 'select(.type == "event_msg" and .payload.type == "token_count")' 2>/dev/null | tail -1)
     reset_epoch=""

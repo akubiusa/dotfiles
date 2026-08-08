@@ -88,6 +88,7 @@ macOS と Windows は現在サポートされていません。
 ## コミット時のシークレットスキャン
 
 `git commit` 実行時に、ステージ済み差分内のシークレット(API キー、トークンなど)を [gitleaks](https://github.com/gitleaks/gitleaks) で検知し、検知した場合はコミットをブロックします。`git config --global core.hooksPath` を `~/.config/git/hooks` に設定することで、dotfiles を導入した全 Git リポジトリで有効になります。
+gitleaks は `home/dot_config/mise/config.toml` で検証済みバージョンに固定し、Renovate の mise manager で更新します。更新 PR では既知形式のダミーシークレットを実バイナリで検知できることを統合テストで確認します。
 
 **既知の制約:**
 

@@ -63,8 +63,8 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 
 - `tests/` 配下にシェルスクリプトのテストがあり、以下の 3 系統に分かれる:
   - `tests/syntax/`: `test_bash_syntax.sh` / `test_shellcheck.sh` / `test_json_schema.sh`(構文・shellcheck・JSON スキーマ)。
-  - `tests/unit/`: `test_install.sh` / `test_notifications.sh` / `test_hooks.sh`(単体テスト)。
-  - `tests/integration/`: `test_chezmoi_apply.sh`(`chezmoi apply` の統合テスト)。
+  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh`(単体テスト)。
+  - `tests/integration/`: `test_chezmoi_apply.sh`(`chezmoi apply` の統合テスト) / `test_gitleaks.sh`(固定した gitleaks 実バイナリの回帰テスト)。
 - CI は `.github/workflows/` の `unit-test.yml` / `integration-test.yml` / `pr-checks.yml` で pull_request 時に自動実行される(`unit-test.yml` / `integration-test.yml` は master への push 時にも実行)。
 - 通知・フック関連スクリプト(`home/dot_claude/scripts/`、`home/dot_claude/hooks/`、`home/dot_codex/` 等)や `home/bin/` のヘルパーを変更・削除した場合、対応するテストの参照が古くなっていないか確認する。
 - 変更後はローカルでも Docker 上で `chezmoi apply` を実行して結果を確認する。
@@ -101,4 +101,4 @@ Claude Code のフックは `home/dot_claude/private_settings.json` で設定さ
 
 `home/dot_config/git/hooks/executable_pre-commit`(デプロイ後 `~/.config/git/hooks/pre-commit`)が `core.hooksPath` 経由でグローバル pre-commit フックとして登録され、`gitleaks` によるステージ済み差分のシークレットスキャンを行う。フォールバック設定は `home/dot_gitleaks.toml`(デプロイ後 `~/.gitleaks.toml`)。
 
-このフックや `gitleaks` コマンド自体のインストール方法(`home/dot_config/mise/config.toml` 経由の mise 管理、`install.sh` の `install_mise_tools`)を変更した場合、`tests/unit/test_hooks.sh` / `tests/unit/test_install.sh` / `tests/integration/test_chezmoi_apply.sh` の参照が古くなっていないか確認する。
+このフックや `gitleaks` コマンド自体のインストール方法(`home/dot_config/mise/config.toml` 経由の mise 管理、`install.sh` の `install_mise_tools`)を変更した場合、`tests/unit/test_hooks.sh` / `tests/unit/test_install.sh` / `tests/integration/test_chezmoi_apply.sh` / `tests/integration/test_gitleaks.sh` の参照が古くなっていないか確認する。

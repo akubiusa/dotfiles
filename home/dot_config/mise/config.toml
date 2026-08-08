@@ -7,7 +7,7 @@ pnpm = "latest"
 ghq = "latest"
 gh = "latest"
 "github:k1LoW/roots" = "latest"
-gitleaks = "latest"
+gitleaks = "8.22.1"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node"]

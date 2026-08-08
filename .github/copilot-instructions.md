@@ -22,7 +22,7 @@
 - トークン・Webhook URL・パスワード等を平文でコミットしていないか確認する。
 - `~/.env` や `~/.gitconfig.local` はリポジトリ管理外。`.env.example` / `.gitconfig.local.example` などサンプルのみを含める。
 - pre-commit フック(`home/dot_config/git/hooks/executable_pre-commit`)や `home/dot_gitleaks.toml` の allowlist を変更する場合、誤検知抑制が広すぎて実際のシークレット検知を無効化していないか確認する。
-- `gitleaks` コマンド自体は `install.sh` に直接インストールロジックを持たず、mise 経由でインストールされる(下記「mise 管理下のツール」参照)。
+- `gitleaks` コマンド自体は `install.sh` に直接インストールロジックを持たず、mise 経由で固定バージョンをインストールする(下記「mise 管理下のツール」参照)。バージョン更新時は `tests/integration/test_gitleaks.sh` の実検知テストが通ることを確認する。
 
 ### テストの追随
 
@@ -30,7 +30,7 @@
 
 ### mise 管理下のツール
 
-- `gh`・`ghq`・`roots`・`gitleaks` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。`install.sh` に直接インストールロジックを追加していないか確認する。
+- `gh`・`ghq`・`roots`・`gitleaks` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。gitleaks は検証済みの exact version とし、Renovate の mise manager で更新する。`install.sh` に直接インストールロジックを追加していないか確認する。
 - `install.sh` に固定記述された mise 本体のバージョン(`MISE_VERSION`)を変更する場合、`renovate.json` の対応する `regexManagers` エントリと矛盾していないか確認する。
 
 ### エージェント定義

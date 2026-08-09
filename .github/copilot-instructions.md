@@ -26,7 +26,7 @@
 
 ### テストの追随
 
-- `update.sh` や user systemd timer を変更する場合、scheduled `--force`、AI CLI の throttle、同時実行ロック、timer の `Persistent=true` が維持されているか確認する。
+- `update.sh` や user systemd timer を変更する場合、scheduled `--force`、AI CLI の throttle、同時実行ロック、timer の `Persistent=true`、`chezmoi update` 後の managed global config に対する `mise install` が維持されているか確認する。
 - `home/dot_codex/`、`home/dot_claude/scripts/` など通知・フック関連スクリプトを変更・削除した場合、`tests/unit/`、`tests/integration/`、`tests/syntax/` 配下の対応するテストが古い参照を残していないか確認する。
 - managed file の rename / delete では、旧 target が残らないよう `home/.chezmoiremove` の更新が必要か確認する。`.claude` / `.codex` 全体を `exact_` にして runtime state を削除しない。
 

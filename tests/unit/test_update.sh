@@ -36,11 +36,40 @@ EOF
   chmod +x "$bin_dir/curl"
 }
 
+make_fake_mise() {
+  local home="$1"
+  mkdir -p "$home/.local/bin"
+  cat > "$home/.local/bin/mise" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" > "$HOME/mise-invocation"
+printf '%s\n' "${MISE_GLOBAL_CONFIG_FILE:-}" > "$HOME/mise-global-config"
+exit "${FAKE_MISE_EXIT:-0}"
+EOF
+  chmod +x "$home/.local/bin/mise"
+}
+
 run_update() {
   local home="$1"
   local bin_dir="$2"
+  if [[ ! -x "$home/.local/bin/mise" ]]; then
+    make_fake_mise "$home"
+  fi
   HOME="$home" PATH="$bin_dir:/usr/bin:/bin" bash "$SCRIPT" "${@:3}"
 }
+
+echo "Testing update.sh mise failure propagation..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN=$(mktemp -d)
+make_fake_curl "$TEST_BIN"
+set +e
+FAKE_MISE_EXIT=43 run_update "$TEST_HOME" "$TEST_BIN"
+RC=$?
+set -e
+[[ $RC -eq 43 ]] || { echo "❌ update.sh did not return mise exit code (got $RC)"; exit 1; }
+[[ "$(cat "$TEST_HOME/mise-invocation")" == "install" ]] || { echo "❌ update.sh did not invoke mise before returning failure"; exit 1; }
+[[ ! -f "$TEST_HOME/.cache/chezmoi-update/last-update" ]] || { echo "❌ update.sh recorded success after mise failure"; exit 1; }
+rm -rf "$TEST_HOME" "$TEST_BIN"
+echo "✅ mise failure propagation test passed"
 
 echo "Testing update.sh canonical chezmoi path..."
 TEST_HOME=$(mktemp -d)
@@ -53,6 +82,8 @@ run_update "$TEST_HOME" "$TEST_BIN"
 [[ -x "$TEST_HOME/.local/bin/chezmoi" ]] || { echo "❌ update.sh did not install chezmoi to ~/.local/bin"; exit 1; }
 [[ ! -e "$TEST_HOME/bin/chezmoi" ]] || { echo "❌ update.sh did not remove the legacy ~/bin/chezmoi"; exit 1; }
 [[ "$(cat "$TEST_HOME/chezmoi-invocation")" == "update" ]] || { echo "❌ update.sh did not invoke the canonical chezmoi binary with update"; exit 1; }
+[[ "$(cat "$TEST_HOME/mise-invocation")" == "install" ]] || { echo "❌ update.sh did not invoke mise install"; exit 1; }
+[[ "$(cat "$TEST_HOME/mise-global-config")" == "$TEST_HOME/.config/mise/config.toml" ]] || { echo "❌ update.sh did not point mise at the managed global config"; exit 1; }
 [[ -f "$TEST_HOME/.cache/chezmoi-update/last-update" ]] || { echo "❌ update.sh did not record successful update"; exit 1; }
 rm -rf "$TEST_HOME" "$TEST_BIN"
 echo "✅ canonical chezmoi path test passed"

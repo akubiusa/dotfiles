@@ -7,6 +7,8 @@ set -euo pipefail
 CACHE_DIR="$HOME/.cache/chezmoi-update"
 TIMESTAMP_FILE="$CACHE_DIR/last-update"
 CHEZMOI_BIN="$HOME/.local/bin/chezmoi"
+MISE_BIN="$HOME/.local/bin/mise"
+MISE_GLOBAL_CONFIG_FILE="$HOME/.config/mise/config.toml"
 LEGACY_CHEZMOI_BIN="$HOME/bin/chezmoi"
 FORCE_UPDATE=0
 
@@ -48,6 +50,9 @@ sh -c "$installer" -- -b "$HOME/.local/bin"
 
 # インストーラ経由の暗黙実行に依存せず、管理対象のバイナリを明示して更新する。
 "$CHEZMOI_BIN" update
+
+# chezmoi で反映された global config に宣言済みの tool を揃える。
+MISE_GLOBAL_CONFIG_FILE="$MISE_GLOBAL_CONFIG_FILE" "$MISE_BIN" install
 
 # 旧 updater が作成した ~/bin/chezmoi は、正常更新後に削除して二重管理を解消する。
 rm -f -- "$LEGACY_CHEZMOI_BIN"

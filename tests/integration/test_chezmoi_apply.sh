@@ -45,6 +45,13 @@ done
 LOCAL_RUNTIME_FILE="$HOME/.claude/local-runtime-state.keep"
 printf 'keep\n' > "$LOCAL_RUNTIME_FILE"
 
+# dotfiles 管理から外した chezmoi updater unit は既存 target を保持する。
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+mkdir -p "$SYSTEMD_USER_DIR/timers.target.wants"
+printf 'local-service\n' > "$SYSTEMD_USER_DIR/chezmoi-update.service"
+printf 'local-timer\n' > "$SYSTEMD_USER_DIR/chezmoi-update.timer"
+ln -s ../chezmoi-update.timer "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
+
 # chezmoi apply を実行 (dry-run)
 if ! "$CHEZMOI_BIN" apply --dry-run --source="$SOURCE_DIR"; then
   echo "❌ chezmoi apply dry-run failed"
@@ -86,17 +93,15 @@ fi
 
 echo "✅ Basic files generated successfully"
 
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-if [ ! -f "$SYSTEMD_USER_DIR/chezmoi-update.service" ] || [ ! -f "$SYSTEMD_USER_DIR/chezmoi-update.timer" ]; then
-  echo "❌ chezmoi update systemd units were not generated"
-  exit 1
-fi
 TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
-if [ ! -L "$TIMER_WANTS_LINK" ] || [ "$(readlink "$TIMER_WANTS_LINK")" != "../chezmoi-update.timer" ]; then
-  echo "❌ chezmoi update timer enable symlink was not generated correctly"
+if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
+  || [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.timer")" != "local-timer" ] \
+  || [ ! -L "$TIMER_WANTS_LINK" ] \
+  || [ "$(readlink "$TIMER_WANTS_LINK")" != "../chezmoi-update.timer" ]; then
+  echo "❌ existing unmanaged chezmoi updater systemd files were changed or removed"
   exit 1
 fi
-echo "✅ chezmoi update systemd timer generated and enabled declaratively"
+echo "✅ existing unmanaged chezmoi updater systemd files were preserved"
 
 if [ ! -f "$HOME/.agents/skills/issue-pr/SKILL.md" ]; then
   echo "❌ Codex issue-pr skill not generated"

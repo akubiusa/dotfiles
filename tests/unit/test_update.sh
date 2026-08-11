@@ -143,41 +143,15 @@ wait "$FIRST_PID"
 rm -rf "$TEST_HOME" "$TEST_BIN"
 echo "✅ concurrent update serialization test passed"
 
-echo "Testing systemd timer deployment contract..."
-SERVICE="home/dot_config/systemd/user/chezmoi-update.service"
-TIMER="home/dot_config/systemd/user/chezmoi-update.timer"
-ENABLE_LINK="home/dot_config/systemd/user/timers.target.wants/symlink_chezmoi-update.timer"
-RELOAD_SCRIPT="home/run_onchange_after_20-reload-chezmoi-update-timer.sh.tmpl"
-[[ -f "$SERVICE" ]] || { echo "❌ systemd service is missing"; exit 1; }
-[[ -f "$TIMER" ]] || { echo "❌ systemd timer is missing"; exit 1; }
-[[ -f "$ENABLE_LINK" ]] || { echo "❌ timer enable symlink source is missing"; exit 1; }
-[[ -f "$RELOAD_SCRIPT" ]] || { echo "❌ timer reload script is missing"; exit 1; }
-grep -Fq 'ExecStart=%h/.local/share/chezmoi/update.sh --force' "$SERVICE" || { echo "❌ service does not force the scheduled update"; exit 1; }
-grep -Fq 'OnCalendar=daily' "$TIMER" || { echo "❌ timer is not daily"; exit 1; }
-grep -Fq 'Persistent=true' "$TIMER" || { echo "❌ timer is not persistent"; exit 1; }
-[[ "$(cat "$ENABLE_LINK")" == "../chezmoi-update.timer" ]] || { echo "❌ timer enable symlink target is incorrect"; exit 1; }
-grep -Fq 'systemctl --user daemon-reload' "$RELOAD_SCRIPT" || { echo "❌ reload script does not reload the user manager"; exit 1; }
-grep -Fq 'systemctl --user start chezmoi-update.timer' "$RELOAD_SCRIPT" || { echo "❌ reload script does not start the timer"; exit 1; }
-echo "✅ systemd timer deployment contract passed"
-
-
-echo "Testing timer reload script skips start when the unit is not visible to the user manager..."
-TEST_BIN=$(mktemp -d)
-START_MARKER=$(mktemp)
-rm -f "$START_MARKER"
-cat > "$TEST_BIN/systemctl" <<EOF
-#!/bin/bash
-case "\$*" in
-  "--user show-environment"|"--user daemon-reload") exit 0 ;;
-  "--user cat chezmoi-update.timer") exit 1 ;;
-  "--user start chezmoi-update.timer") touch "$START_MARKER"; exit 0 ;;
-  *) exit 1 ;;
-esac
-EOF
-chmod +x "$TEST_BIN/systemctl"
-RENDERED_RELOAD_SCRIPT=$(mktemp)
-sed '1d;$d' "$RELOAD_SCRIPT" > "$RENDERED_RELOAD_SCRIPT"
-PATH="$TEST_BIN:/usr/bin:/bin" bash "$RENDERED_RELOAD_SCRIPT"
-[[ ! -e "$START_MARKER" ]] || { echo "❌ reload script tried to start a timer that the user manager cannot see"; exit 1; }
-rm -rf "$TEST_BIN" "$START_MARKER" "$RENDERED_RELOAD_SCRIPT"
-echo "✅ invisible timer unit is skipped safely"
+echo "Testing chezmoi updater systemd units are not managed by dotfiles..."
+[[ ! -e home/dot_config/systemd/user/chezmoi-update.service ]] || { echo "❌ chezmoi-update.service is still managed"; exit 1; }
+[[ ! -e home/dot_config/systemd/user/chezmoi-update.timer ]] || { echo "❌ chezmoi-update.timer is still managed"; exit 1; }
+[[ ! -e home/dot_config/systemd/user/timers.target.wants/symlink_chezmoi-update.timer ]] || { echo "❌ chezmoi-update.timer enable symlink is still managed"; exit 1; }
+[[ ! -e home/run_onchange_after_20-reload-chezmoi-update-timer.sh.tmpl ]] || { echo "❌ chezmoi-update timer reload script is still managed"; exit 1; }
+if grep -Fqx '.config/systemd/user/chezmoi-update.service' home/.chezmoiremove \
+  || grep -Fqx '.config/systemd/user/chezmoi-update.timer' home/.chezmoiremove \
+  || grep -Fqx '.config/systemd/user/timers.target.wants/chezmoi-update.timer' home/.chezmoiremove; then
+  echo "❌ existing chezmoi updater systemd files would be removed from target hosts"
+  exit 1
+fi
+echo "✅ chezmoi updater systemd units are unmanaged without target removal"

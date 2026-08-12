@@ -51,4 +51,4 @@ When an orchestrating skill instructs a superpowers sub-skill (e.g. `brainstormi
 
 Unless the orchestrating skill's next phase is an explicit `AskUserQuestion`-based approval gate (e.g. `issue-pr-deep`'s Phase 6 spec approval) or a failure condition, the orchestrating skill must continue immediately into its next automatic phase once the sub-skill returns — no waiting, no "stopping here" language directed at the user.
 
-This distinction matters because an orchestrating skill telling a sub-skill to "stop" can be misread as a cue for the orchestrating skill itself to also stop, producing an unnecessary pause where the flow was designed to continue automatically (see Issue #324 for a concrete recurrence: `issue-pr-deep`'s Phase 3→4 transition around `brainstorming`).
+This distinction matters because an orchestrating skill telling a sub-skill to "stop" can be misread as a cue for the orchestrating skill itself to also stop, producing an unnecessary pause where the flow was designed to continue automatically (see book000/dotfiles#324 for a concrete recurrence: `issue-pr-deep`'s Phase 3→4 transition around `brainstorming`).

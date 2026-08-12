@@ -21,7 +21,8 @@ curl -fsSL https://mise.run | MISE_VERSION="$MISE_VERSION" sh
 # npm backend の devcontainer-cli と Maven の実行依存を先に用意する。
 mise install node java
 mise install pnpm ghq gh github:k1LoW/roots gitleaks \
-  maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta
+  maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta \
+  npm:ccstatusline@2.2.23
 
 checks=(
   "pnpm|pnpm --version"
@@ -37,6 +38,7 @@ checks=(
   "shfmt|shfmt --version"
   "node,devcontainer-cli|devcontainer --version"
   "delta|delta --version"
+  "node,npm:ccstatusline@2.2.23|ccstatusline --version"
 )
 
 for check in "${checks[@]}"; do

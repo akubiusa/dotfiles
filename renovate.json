@@ -4,13 +4,6 @@
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^home/dot_claude/private_settings\\.json$/"],
-      "matchStrings": ["ccstatusline@(?<currentValue>[0-9.]+)"],
-      "depNameTemplate": "ccstatusline",
-      "datasourceTemplate": "npm"
-    },
-    {
-      "customType": "regex",
       "managerFilePatterns": ["/^install\\.sh$/"],
       "matchStrings": ["MISE_VERSION=\"(?<currentValue>v[0-9.]+)\""],
       "depNameTemplate": "jdx/mise",

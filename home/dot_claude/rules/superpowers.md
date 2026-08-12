@@ -44,3 +44,11 @@ under these paths are local-only working artifacts — after uploading them
 to Trilium (per the `trilium` skill), do NOT force-add or commit them
 to git (no `git add -f`, no `--force`). The durable record is the
 Trilium note, not the git history.
+
+## Sub-Skill "Stop" Instructions Return Control, Not Pause
+
+When an orchestrating skill instructs a superpowers sub-skill (e.g. `brainstorming`, `writing-plans`) to "stop" or "stop here" after some step, that instruction means the sub-skill returns control to the orchestrating skill — it does not mean the orchestrating skill itself pauses for user input.
+
+Unless the orchestrating skill's next phase is an explicit `AskUserQuestion`-based approval gate (e.g. `issue-pr-deep`'s Phase 6 spec approval) or a failure condition, the orchestrating skill must continue immediately into its next automatic phase once the sub-skill returns — no waiting, no "stopping here" language directed at the user.
+
+This distinction matters because an orchestrating skill telling a sub-skill to "stop" can be misread as a cue for the orchestrating skill itself to also stop, producing an unnecessary pause where the flow was designed to continue automatically (see Issue #324 for a concrete recurrence: `issue-pr-deep`'s Phase 3→4 transition around `brainstorming`).

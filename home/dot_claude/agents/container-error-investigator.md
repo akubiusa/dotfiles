@@ -1,7 +1,7 @@
 ---
 name: container-error-investigator
 description: Investigates the root cause and fix for a Docker Compose project flagged as "warning" or "error" by container-status-checker, using web research. Use once per flagged directory, after all directories have finished their status check (check-container-status skill's Phase D).
-tools: Read, Edit, WebSearch, WebFetch
+tools: Read, Edit, WebSearch, WebFetch, SendMessage
 model: sonnet
 ---
 

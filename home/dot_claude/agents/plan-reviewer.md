@@ -1,7 +1,7 @@
 ---
 name: plan-reviewer
 description: Reviews a plan document (docs/superpowers/plans/*.md) for placeholders, contradictions, missing coverage, missing code blocks, and mid-sentence line breaks, then fixes issues in place. Use after writing a plan file, before the user reviews it.
-tools: Read, Edit
+tools: Read, Edit, SendMessage
 model: sonnet
 ---
 

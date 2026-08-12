@@ -1,7 +1,7 @@
 ---
 name: spec-reviewer
 description: Reviews a spec document (docs/superpowers/specs/*.md) for placeholders, contradictions, missing coverage, and mid-sentence line breaks, then fixes issues in place. Use after writing a spec file, before the user reviews it.
-tools: Read, Edit
+tools: Read, Edit, SendMessage
 model: sonnet
 ---
 

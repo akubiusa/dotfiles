@@ -69,6 +69,8 @@ Review Gate" and must not auto-chain into invoking writing-plans. This
 flow's own Phase 4 through Phase 7 own spec review, posting, approval, and
 plan creation instead.
 
+Once brainstorming returns control here after writing the spec file, this is a control return, not a pause for user input — proceed immediately into Phase 4 below without waiting for the user or announcing a stop.
+
 ## Phase 4: Review the Spec
 
 `rules/superpowers.md` requires a sub-agent review of every spec file; it

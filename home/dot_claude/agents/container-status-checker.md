@@ -1,7 +1,7 @@
 ---
 name: container-status-checker
 description: Checks one Docker Compose project directory comprehensively (running state, defined-vs-running service diff, restart count, resource usage, logs, connectivity) and records the result in STATE.md. Use once per compose project directory, dispatched in parallel (bounded concurrency, see the check-container-status skill's Phase C) by the check-container-status skill.
-tools: Bash, Read, Edit
+tools: Bash, Read, Edit, SendMessage
 model: sonnet
 ---
 

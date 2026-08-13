@@ -22,5 +22,15 @@ for state_file in "$STATE_DIR"/*.json; do
     nonce=$(jq -r '.runtime.nonce // empty' "$state_file" 2>/dev/null || true)
     url=$(jq -r '.pr.url // empty' "$state_file" 2>/dev/null || true)
     [[ "$pane" == "$TMUX_PANE" && "$nonce" =~ ^[A-Za-z0-9_.-]{16,}$ && -n "$url" ]] || continue
+    if [[ "$STATUS" == "stopped" ]]; then
+        "$HELPER" unregister-pane --pr-url "$url" --nonce "$nonce" >/dev/null 2>&1 || true
+        continue
+    fi
+    if [[ "$STATUS" == "busy" ]]; then
+        prompt=$(jq -r '.prompt // empty' <<< "$INPUT" 2>/dev/null || true)
+        if [[ -n "$prompt" ]]; then
+            "$HELPER" confirm-delivery --pr-url "$url" --nonce "$nonce" --session-id "$SESSION_ID" --prompt "$prompt" >/dev/null 2>&1 || true
+        fi
+    fi
     "$HELPER" pane-status --pr-url "$url" --nonce "$nonce" --session-id "$SESSION_ID" --status "$STATUS" >/dev/null 2>&1 || true
 done

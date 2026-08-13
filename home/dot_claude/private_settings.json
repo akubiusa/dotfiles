@@ -156,7 +156,7 @@
   "enableWorkflows": false,
   "statusLine": {
     "type": "command",
-    "command": "npx -y --offline ccstatusline@2.2.23 || npx -y ccstatusline@2.2.23"
+    "command": "ccstatusline"
   },
   "extraKnownMarketplaces": {
     "ponytail": {

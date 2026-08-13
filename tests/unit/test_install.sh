@@ -45,7 +45,7 @@ echo "✅ apt package list includes libatomic1"
 # テスト 2.7: 開発用 CLI が mise config に宣言されていること
 echo "Test 2.7: mise config includes development tools"
 MISE_CONFIG="home/dot_config/mise/config.toml"
-MISE_TOOLS=(maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta)
+MISE_TOOLS=(maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta "npm:ccstatusline")
 for tool in "${MISE_TOOLS[@]}"; do
   if ! grep -Eq "^\"?${tool}\"? = " "$MISE_CONFIG"; then
     echo "❌ mise config does not include $tool"
@@ -82,8 +82,9 @@ for tool in "${MISE_DIRECT_TOOLS[@]}"; do
   fi
 done
 if ! grep -Fq "[DRY RUN] mise install node" <<< "$MISE_DRY_RUN" \
-  || ! grep -Fq "[DRY RUN] mise exec node -- mise install devcontainer-cli" <<< "$MISE_DRY_RUN"; then
-  echo "❌ install flow does not bootstrap devcontainer-cli with mise-managed Node"
+  || ! grep -Fq "[DRY RUN] mise exec node -- mise install devcontainer-cli" <<< "$MISE_DRY_RUN" \
+  || ! grep -Fq "[DRY RUN] mise exec node -- mise install npm:ccstatusline" <<< "$MISE_DRY_RUN"; then
+  echo "❌ install flow does not bootstrap devcontainer-cli/ccstatusline with mise-managed Node"
   exit 1
 fi
 echo "✅ install flow installs development tools via mise"

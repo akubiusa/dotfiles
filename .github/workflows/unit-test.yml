@@ -41,6 +41,11 @@ jobs:
         background: true
         run: bash tests/unit/test_hooks.sh
 
+      - name: Run powerline daemon launch unit test
+        id: run-powerline-daemon-launch-unit-test
+        background: true
+        run: bash tests/unit/test_powerline_daemon_launch.sh
+
       - name: Run PR monitor unit test
         id: run-pr-monitor-unit-test
         background: true
@@ -58,5 +63,6 @@ jobs:
           - run-ai-alias-unit-test
           - run-notification-unit-test
           - run-hooks-unit-test
+          - run-powerline-daemon-launch-unit-test
           - run-pr-monitor-unit-test
           - run-trilium-validation-unit-test

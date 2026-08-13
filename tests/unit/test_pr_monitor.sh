@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STATE_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-state.sh"
 WATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_watch-pr.sh"
+DISPATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-dispatch.sh"
 COPILOT_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_wait-for-copilot-review.sh"
 RESUME_SKILL="$ROOT_DIR/home/dot_agents/skills/resume-pr-monitor/SKILL.md"
 TEST_DIR=$(mktemp -d)
@@ -27,6 +28,21 @@ mkdir -p "$TEST_HOME" "$TEST_BIN"
 export HOME="$TEST_HOME"
 export XDG_STATE_HOME="$TEST_DIR/state"
 export PATH="$TEST_BIN:$PATH"
+
+cat > "$TEST_BIN/tmux" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "display-message" ]]; then
+    printf '%%77\n'
+    exit 0
+fi
+if [[ "$1" == "send-keys" ]]; then
+    printf '%s\n' "$*" >> "$TEST_DIR/tmux.log"
+    exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN/tmux"
 
 cat > "$TEST_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -82,6 +98,7 @@ process_identity() {
 echo "Testing PR monitor script syntax..."
 bash -n "$STATE_SCRIPT"
 bash -n "$WATCH_SCRIPT"
+bash -n "$DISPATCH_SCRIPT"
 
 echo "Testing absolute state directory and collision-resistant keys..."
 expect_failure env XDG_STATE_HOME=relative HOME="$TEST_HOME" "$STATE_SCRIPT" init --pr-url "$PR_URL"
@@ -94,6 +111,41 @@ fi
 
 echo "Testing state URL verification and stale/live lock recovery..."
 "$STATE_SCRIPT" init --pr-url "$PR_URL" >/dev/null
+
+echo "Testing registered ready pane receives only the fixed resume prompt..."
+"$STATE_SCRIPT" register-pane --pr-url "$PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+"$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status ready
+UNTRUSTED_RUN_URL="https://example.invalid/\$(injected)"
+EXPECTED_DELIVERY="send-keys -t %77 -l -- \$resume-pr-monitor https://github.com/example/repo/pull/42 --event-id ci_failure:1"
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value failed --run-url "$UNTRUSTED_RUN_URL"
+TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
+if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]] \
+    || ! grep -Fxq "$EXPECTED_DELIVERY" "$TEST_DIR/tmux.log" \
+    || ! grep -Fxq 'send-keys -t %77 Enter' "$TEST_DIR/tmux.log" \
+    || grep -Fq 'injected' "$TEST_DIR/tmux.log"; then
+    echo "❌ Dispatcher did not safely deliver the fixed resume prompt" >&2
+    exit 1
+fi
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value ok
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value failed --run-url "$UNTRUSTED_RUN_URL"
+if [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.events.ci_failure.id')" != "ci_failure:2" ]]; then
+    echo "❌ Repeated CI failures did not receive a distinct event ID" >&2
+    exit 1
+fi
+"$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status approval_pending
+TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
+if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]]; then
+    echo "❌ Dispatcher sent to an approval-pending pane" >&2
+    exit 1
+fi
+"$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status ready
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event close --value MERGED
+TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
+EXPECTED_CLOSE_DELIVERY="send-keys -t %77 -l -- \$resume-pr-monitor https://github.com/example/repo/pull/42 --event-id close:1"
+if ! grep -Fxq "$EXPECTED_CLOSE_DELIVERY" "$TEST_DIR/tmux.log"; then
+    echo "❌ Dispatcher did not deliver the pending close event" >&2
+    exit 1
+fi
 STATE_ID=$("$STATE_SCRIPT" id --pr-url "$PR_URL")
 STATE_FILE="$XDG_STATE_HOME/codex-pr-monitor/${STATE_ID}.json"
 jq '.pr.url = "https://github.com/example/repo/pull/999"' "$STATE_FILE" > "$STATE_FILE.tmp"

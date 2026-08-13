@@ -16,7 +16,15 @@ description: PR 作成直後に本文、CI、競合、レビューを確認し�
 1. PR を解決する。
    - 番号だけなら `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
    - `gh pr view` で取得した `url` を canonical `PR_URL` とし、state/watcher にはこの URL だけを渡す。
-2. detached watcher は開始しない。`start` は `foreground_required` を state に記録して終了するため、成功した background 監視として報告しない。持続した terminal を user が明示的に用意できる場合だけ、次を foreground で実行する。
+2. Codex が tmux pane 内で動作している場合は、`TMUX_PANE` と 16 文字以上の random nonce を state に登録してから `watch-pr.sh start --pr-url "$PR_URL"` を実行する。start は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
+
+   ```bash
+   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+   ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh register-pane --pr-url "$PR_URL" --pane "$TMUX_PANE" --nonce "$nonce"
+   ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh start --pr-url "$PR_URL"
+   ```
+
+   tmux 外、登録失敗、または window 起動失敗では `foreground_required` を state に記録し、成功した background 監視として報告しない。
 
    ```bash
    ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh watch --pr-url "$PR_URL"
@@ -30,8 +38,8 @@ description: PR 作成直後に本文、CI、競合、レビューを確認し�
    - 現在の worktree が対象 PR の repository と head に対応することを `git remote -v` と branch で確認する。対応しない worktree で修正や `codex review` を推測実行しない。
    - 対応する場合だけ target remote の base ref を確認し、必要なら `git fetch <target-remote> <base-ref>` を実行して `codex review --base <target-remote>/<base-ref>` を使う。`origin/master` を固定値にしない。
    - 対応する checkout がない場合は、その事実を報告し、対象 repository を明示して clone/worktree を用意してから再実行する。PR の diff と review threads の確認は続けられるが、ローカル修正は行わない。
-6. `request-review-copilot` が利用できる場合だけ review を依頼する。続けて `wait-for-copilot-review.sh "$PR_URL" &` を best effort で開始する。この補助 script は durable Copilot event を記録・通知するだけで、action は `$resume-pr-monitor` が実行する。
-7. CI、競合、本文、ローカルレビュー、Copilot request、foreground watcher の状態または resume fallback を報告する。Codex の agent capacity がない場合、CLI 以外の場合、tmux がない場合、または session/restart 後は `$resume-pr-monitor <PR_URL>` で pending event を安全に処理する。
+6. `request-review-copilot` が利用できる場合だけ review を依頼する。Copilot の観測は watcher に統合し、`wait-for-copilot-review.sh` を background 起動しない。
+7. CI、競合、本文、ローカルレビュー、Copilot request、tmux monitor の状態または resume fallback を報告する。dispatcher は lifecycle hook が `ready` と記録した pane へだけ固定の `$resume-pr-monitor` prompt を送る。user が ready 後に入力を始めた場合の入力混在 race は、user が許容した既知の制約である。
 
 ## 境界
 

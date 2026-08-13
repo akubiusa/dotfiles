@@ -15,6 +15,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_git-config-guard.sh"
   "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
   "home/dot_codex/hooks/executable_git-config-guard.sh"
+  "home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
 )
 
 # 各フックの構文チェック
@@ -391,9 +392,9 @@ elif ! jq -e '
   .hooks.PreToolUse[0].matcher == "^Bash$"
   and .hooks.PreToolUse[0].hooks[0].command == "bash ~/.codex/hooks/git-config-guard.sh"
   and .hooks.PostToolUse[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh"
-  and .hooks.PermissionRequest[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-permission-request.sh"
-  and .hooks.UserPromptSubmit[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-user-prompt-submit.sh"
-  and .hooks.Stop[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-completion.sh"
+  and .hooks.PermissionRequest[0].hooks[0].command == "bash ~/.codex/hooks/pr-monitor-pane-state.sh approval_pending"
+  and .hooks.UserPromptSubmit[0].hooks[0].command == "bash ~/.codex/hooks/pr-monitor-pane-state.sh busy"
+  and .hooks.Stop[0].hooks[0].command == "bash ~/.codex/hooks/pr-monitor-pane-state.sh ready"
 ' home/dot_codex/hooks.json >/dev/null; then
   echo "❌ Codex hooks.json does not register the expected lifecycle hooks"
   FAILED=1

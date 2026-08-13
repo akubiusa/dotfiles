@@ -31,7 +31,23 @@ _claude_trust_cwd() {
     fi
   fi
 }
+
+# remote-settings.json が空オブジェクト以外なら警告し、Claude 起動前に 10 秒待機する。
+_claude_warn_remote_settings() {
+  local env_dir="${CLAUDE_ENV_FILE:-}"
+  [ -n "$env_dir" ] || return 0
+
+  local settings="$env_dir/remote-settings.json"
+  [ -f "$settings" ] || return 0
+
+  if ! jq -e 'type == "object" and length == 0' "$settings" > /dev/null 2>&1; then
+    printf 'WARNING: %s is not an empty JSON object ({}). Claude will start in 10 seconds.\n' "$settings" >&2
+    sleep 10
+  fi
+}
+
 claude() {
+  _claude_warn_remote_settings
   [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only claude
   ~/.local/share/chezmoi/update.sh
   case "$1" in

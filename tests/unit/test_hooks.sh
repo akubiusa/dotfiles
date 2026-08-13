@@ -132,6 +132,7 @@ chmod +x "$TEST_HOME/bin/gh-pr-target-repo.sh"
 
 cat > "$TEST_HOME/.codex/scripts/completion-notify/send-discord-notification.sh" <<'EOF'
 #!/bin/bash
+sleep 0.2
 cat > "${TEST_CAPTURE_DIR}/discord-payload.json"
 EOF
 chmod +x "$TEST_HOME/.codex/scripts/completion-notify/send-discord-notification.sh"
@@ -175,7 +176,14 @@ else
     echo "✅ wait-for-copilot-review.sh sourced ~/.env only once"
   fi
 
-  if ! grep -Fq '<@1234567890> Codex CLI Notification' "$TEST_CAPTURE_DIR/discord-payload.json"; then
+  PAYLOAD_FILE="$TEST_CAPTURE_DIR/discord-payload.json"
+  for _ in {1..100}; do
+    if grep -Fq '<@1234567890> Codex CLI Notification' "$PAYLOAD_FILE" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+  done
+  if ! grep -Fq '<@1234567890> Codex CLI Notification' "$PAYLOAD_FILE" 2>/dev/null; then
     echo "❌ wait-for-copilot-review.sh did not include the configured mention in Discord payload"
     FAILED=1
   else

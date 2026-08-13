@@ -11,7 +11,7 @@ description: PR monitor の状態を再観測して、lease を取得した pend
 
 1. `gh pr view` で canonical `PR_URL` を解決する。番号のみでは `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
 2. 最初に `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh once --pr-url "$PR_URL"` を実行する。この command は PR state、checks/conflict、Copilot review を fresh GitHub response から観測し、不足している close、CI failure（run URL を含む）、conflict、Copilot event を state lock 下で enqueue する。API 取得に失敗したら action を実行せず停止する。
-3. `pr-monitor-state.sh pending --pr-url "$PR_URL"` を読み、各 action/event について新しいランダム lease ID で `claim --lease-id <ID> --lease-seconds 300` を取得する。claim が exit 3 なら、別の resume が所有しているか event は既に処理済みなので skip する。
+3. `--event-id <type:generation>` が与えられた場合は、その ID と完全に一致する event だけを対象にする。`watch-pr.sh once` によって同種の新しい generation が作られ、指定 ID が一致しなくなった場合は何も処理せず停止する。event を列挙する通常の resume では、各 action/event について新しいランダム lease ID で `claim --lease-id <ID> --lease-seconds 300` を取得する。指定 ID を処理する場合は `claim --event-id <type:generation> --lease-id <ID> --lease-seconds 300` を使う。claim が exit 3 なら、別の resume が所有しているか event は既に処理済み・stale なので skip する。
 4. 長時間 action の前には同じ lease ID で 60 秒ごとに `renew --lease-id <ID> --lease-seconds 300` を実行する heartbeat を開始し、action の終了後に停止する。renew が exit 3 なら ownership を失ったため action を開始・継続せず、結果を報告する。heartbeat は lease を取得した resume だけが実行する。
 5. action が成功した場合だけ同じ lease ID で `ack` を実行する。失敗、再検証不一致、またはユーザー判断待ちは同じ lease ID で `release` を実行して pending に戻す。lease のない `ack` は行わない。ack/release 後は heartbeat を停止する。
 

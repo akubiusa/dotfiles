@@ -7,6 +7,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STATE_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-state.sh"
 WATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_watch-pr.sh"
 DISPATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-dispatch.sh"
+PANE_STATE_HOOK="$ROOT_DIR/home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
 COPILOT_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_wait-for-copilot-review.sh"
 RESUME_SKILL="$ROOT_DIR/home/dot_agents/skills/resume-pr-monitor/SKILL.md"
 TEST_DIR=$(mktemp -d)
@@ -25,6 +26,8 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$TEST_HOME" "$TEST_BIN"
+mkdir -p "$TEST_HOME/.agents/skills/pr-health-monitor/scripts"
+ln -s "$STATE_SCRIPT" "$TEST_HOME/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh"
 export HOME="$TEST_HOME"
 export XDG_STATE_HOME="$TEST_DIR/state"
 export PATH="$TEST_BIN:$PATH"
@@ -112,18 +115,39 @@ fi
 echo "Testing state URL verification and stale/live lock recovery..."
 "$STATE_SCRIPT" init --pr-url "$PR_URL" >/dev/null
 
-echo "Testing registered ready pane receives only the fixed resume prompt..."
+echo "Testing dispatcher reserves delivery, waits before Enter, and avoids duplicate insertion..."
 "$STATE_SCRIPT" register-pane --pr-url "$PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
 "$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status ready
 UNTRUSTED_RUN_URL="https://example.invalid/\$(injected)"
 EXPECTED_DELIVERY="send-keys -t %77 -l -- \$resume-pr-monitor https://github.com/example/repo/pull/42 --event-id ci_failure:1"
 "$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value failed --run-url "$UNTRUSTED_RUN_URL"
+PR_MONITOR_SUBMIT_DELAY_SECONDS=1 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL" &
+DISPATCH_PID=$!
+for _ in {1..20}; do
+    [[ -s "$TEST_DIR/tmux.log" ]] && break
+    sleep 0.05
+done
+TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
+if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "1" ]] \
+    || ! grep -Fxq "$EXPECTED_DELIVERY" "$TEST_DIR/tmux.log" \
+    || grep -Fq 'injected' "$TEST_DIR/tmux.log" \
+    || [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.runtime.status')" != "delivering" ]]; then
+    echo "❌ Dispatcher did not reserve a single delayed delivery" >&2
+    exit 1
+fi
+wait "$DISPATCH_PID"
+if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]] \
+    || ! grep -Fxq 'send-keys -t %77 Enter' "$TEST_DIR/tmux.log"; then
+    echo "❌ Dispatcher did not submit the delayed prompt" >&2
+    exit 1
+fi
+RESUME_PROMPT="\$resume-pr-monitor $PR_URL --event-id ci_failure:1"
+jq -n --arg session session-42 --arg prompt "$RESUME_PROMPT" '{session_id: $session, prompt: $prompt}' | TMUX_PANE=%77 HOME="$TEST_HOME" XDG_STATE_HOME="$TEST_DIR/state" "$PANE_STATE_HOOK" busy
+printf '%s\n' '{"session_id":"session-42"}' | TMUX_PANE=%77 HOME="$TEST_HOME" XDG_STATE_HOME="$TEST_DIR/state" "$PANE_STATE_HOOK" ready
 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
 if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]] \
-    || ! grep -Fxq "$EXPECTED_DELIVERY" "$TEST_DIR/tmux.log" \
-    || ! grep -Fxq 'send-keys -t %77 Enter' "$TEST_DIR/tmux.log" \
-    || grep -Fq 'injected' "$TEST_DIR/tmux.log"; then
-    echo "❌ Dispatcher did not safely deliver the fixed resume prompt" >&2
+    || [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.events.ci_failure.delivery.status')" != "submitted" ]]; then
+    echo "❌ Submitted delivery was injected again" >&2
     exit 1
 fi
 "$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value ok
@@ -132,6 +156,9 @@ if [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.events.ci_failure.id'
     echo "❌ Repeated CI failures did not receive a distinct event ID" >&2
     exit 1
 fi
+expect_failure "$STATE_SCRIPT" claim --pr-url "$PR_URL" --event ci_failure --event-id ci_failure:1 --lease-id stale-event
+"$STATE_SCRIPT" claim --pr-url "$PR_URL" --event ci_failure --event-id ci_failure:2 --lease-id current-event
+"$STATE_SCRIPT" release --pr-url "$PR_URL" --event ci_failure --lease-id current-event
 "$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status approval_pending
 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
 if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]]; then
@@ -304,6 +331,16 @@ if GH_STUB_FAILURE=1 PR_MONITOR_INTERVAL=0 PR_MONITOR_MAX_POLLS=5 "$WATCH_SCRIPT
 fi
 if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.watcher.failures == 5 and .watcher.pid == null' >/dev/null; then
     echo "❌ Watcher did not persist the terminal API failure state" >&2
+    exit 1
+fi
+
+echo "Testing a new Codex session cannot reactivate a stopped registration..."
+"$STATE_SCRIPT" register-pane --pr-url "$PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+"$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status ready
+printf '%s\n' '{"session_id":"session-42"}' | TMUX_PANE=%77 HOME="$TEST_HOME" XDG_STATE_HOME="$TEST_DIR/state" "$PANE_STATE_HOOK" stopped
+printf '%s\n' '{"session_id":"session-other"}' | TMUX_PANE=%77 HOME="$TEST_HOME" XDG_STATE_HOME="$TEST_DIR/state" "$PANE_STATE_HOOK" ready
+if [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.runtime.status')" != "stopped" ]]; then
+    echo "❌ A new Codex session reactivated a stopped pane registration" >&2
     exit 1
 fi
 

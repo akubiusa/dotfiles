@@ -14,13 +14,14 @@ umask 077
 mkdir -p "$STATE_DIR"
 
 usage() {
-    echo "Usage: $0 <init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane> --pr-url URL [...]" >&2
+    echo "Usage: $0 <init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane|claim-delivery|confirm-delivery> --pr-url URL [...]" >&2
     exit 1
 }
 
 COMMAND=""
 PR_URL=""
 EVENT=""
+EVENT_ID=""
 VALUE=""
 ACTION=""
 LEASE_ID=""
@@ -33,10 +34,11 @@ TMUX_PANE=""
 REGISTRATION_NONCE=""
 SESSION_ID=""
 PANE_STATUS=""
+PROMPT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane)
+        init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane|claim-delivery|confirm-delivery)
             COMMAND="$1"
             ;;
         --pr-url)
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --event)
             EVENT="${2:-}"
+            shift
+            ;;
+        --event-id|--expected-event-id)
+            EVENT_ID="${2:-}"
             shift
             ;;
         --value)
@@ -93,6 +99,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --status)
             PANE_STATUS="${2:-}"
+            shift
+            ;;
+        --prompt)
+            PROMPT="${2:-}"
             shift
             ;;
         *)
@@ -255,6 +265,16 @@ event_path() {
     fi
 }
 
+event_root_path_from_id() {
+    case "$EVENT_ID" in
+        close:*) printf '.events.close' ;;
+        ci_failure:*) printf '.events.ci_failure' ;;
+        conflict:*) printf '.events.conflict' ;;
+        copilot_review:*) printf '.events.copilot_review' ;;
+        *) usage ;;
+    esac
+}
+
 case "$COMMAND" in
     init)
         acquire_lock
@@ -289,19 +309,19 @@ case "$COMMAND" in
         case "$EVENT" in
             close)
                 [[ "$VALUE" == "MERGED" || "$VALUE" == "CLOSED" ]] || { echo "Error: Invalid close value" >&2; exit 1; }
-                write_state 'if .observed.state == $value then . else .observed.state = $value | .generations.close = ((.generations.close // 0) + 1) | .events.close = {id: ("close:" + (.generations.close | tostring)), status: "pending", value: $value, detected_at: $now, actions: {cleanup: {status: "pending", lease: null}, "glitchtip-resolve": {status: "not_applicable", lease: null}}} end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.state == $value then . else .observed.state = $value | .generations.close = ((.generations.close // 0) + 1) | .events.close = {id: ("close:" + (.generations.close | tostring)), status: "pending", value: $value, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, actions: {cleanup: {status: "pending", lease: null}, "glitchtip-resolve": {status: "not_applicable", lease: null}}} end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             ci)
                 [[ "$VALUE" == "failed" || "$VALUE" == "ok" ]] || { echo "Error: Invalid CI value" >&2; exit 1; }
-                write_state 'if .observed.ci == $value then . else .observed.ci = $value | (if $value == "failed" then .generations.ci_failure = ((.generations.ci_failure // 0) + 1) | .events.ci_failure = {id: ("ci_failure:" + (.generations.ci_failure | tostring)), status: "pending", value: $value, detected_at: $now, run_url: $run_url, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW" --arg run_url "$RUN_URL"
+                write_state 'if .observed.ci == $value then . else .observed.ci = $value | (if $value == "failed" then .generations.ci_failure = ((.generations.ci_failure // 0) + 1) | .events.ci_failure = {id: ("ci_failure:" + (.generations.ci_failure | tostring)), status: "pending", value: $value, detected_at: $now, run_url: $run_url, delivery: {status: "pending", pane: null, sent_at: null}, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW" --arg run_url "$RUN_URL"
                 ;;
             conflict)
                 [[ "$VALUE" == "conflicting" || "$VALUE" == "clear" ]] || { echo "Error: Invalid conflict value" >&2; exit 1; }
-                write_state 'if .observed.conflict == $value then . else .observed.conflict = $value | (if $value == "conflicting" then .generations.conflict = ((.generations.conflict // 0) + 1) | .events.conflict = {id: ("conflict:" + (.generations.conflict | tostring)), status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.conflict == $value then . else .observed.conflict = $value | (if $value == "conflicting" then .generations.conflict = ((.generations.conflict // 0) + 1) | .events.conflict = {id: ("conflict:" + (.generations.conflict | tostring)), status: "pending", value: $value, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             copilot)
                 [[ "$VALUE" == "detected" || "$VALUE" == "none" ]] || { echo "Error: Invalid Copilot value" >&2; exit 1; }
-                write_state 'if .observed.copilot == $value then . else .observed.copilot = $value | (if $value == "detected" then .generations.copilot_review = ((.generations.copilot_review // 0) + 1) | .events.copilot_review = {id: ("copilot_review:" + (.generations.copilot_review | tostring)), status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.copilot == $value then . else .observed.copilot = $value | (if $value == "detected" then .generations.copilot_review = ((.generations.copilot_review // 0) + 1) | .events.copilot_review = {id: ("copilot_review:" + (.generations.copilot_review | tostring)), status: "pending", value: $value, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             *) usage ;;
         esac
@@ -310,11 +330,23 @@ case "$COMMAND" in
         verify_state
         [[ "$LEASE_ID" =~ ^[A-Za-z0-9_.-]+$ && "$LEASE_SECONDS" =~ ^[0-9]+$ ]] || usage
         PATH_EXPR=$(event_path)
+        ROOT_PATH="null"
+        if [[ -n "$EVENT_ID" ]]; then
+            [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ ]] || usage
+            ROOT_PATH=$(event_root_path_from_id)
+            case "$EVENT:$EVENT_ID" in
+                close:close:*|ci_failure:ci_failure:*|conflict:conflict:*|copilot_review:copilot_review:*) ;;
+                *) usage ;;
+            esac
+        fi
         NOW_EPOCH=$(date +%s)
         EXPIRES_AT=$((NOW_EPOCH + LEASE_SECONDS))
         acquire_lock
         verify_state
-        if ! jq -e --argjson now "$NOW_EPOCH" "$PATH_EXPR.status == \"pending\" and ($PATH_EXPR.lease == null or $PATH_EXPR.lease.expires_at_epoch <= \$now)" "$STATE_FILE" >/dev/null; then
+        if ! jq -e --argjson now "$NOW_EPOCH" --arg event_id "$EVENT_ID" "
+            $PATH_EXPR.status == \"pending\" and ($PATH_EXPR.lease == null or $PATH_EXPR.lease.expires_at_epoch <= \$now)
+            and (\$event_id == \"\" or $ROOT_PATH.id == \$event_id)
+        " "$STATE_FILE" >/dev/null; then
             exit 3
         fi
         # event_path は固定の列挙値だけから作るため jq filter に安全に埋め込める。
@@ -379,10 +411,10 @@ case "$COMMAND" in
         verify_state
         [[ "$REGISTRATION_NONCE" =~ ^[A-Za-z0-9_.-]{16,}$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ && "$PANE_STATUS" =~ ^(busy|ready|approval_pending|stopped)$ ]] || usage
         acquire_lock
-        if ! jq -e --arg nonce "$REGISTRATION_NONCE" '.runtime.nonce == $nonce' "$STATE_FILE" >/dev/null; then
+        if ! jq -e --arg nonce "$REGISTRATION_NONCE" --arg session "$SESSION_ID" '.runtime.nonce == $nonce and (.runtime.session_id == null or .runtime.session_id == $session)' "$STATE_FILE" >/dev/null; then
             exit 3
         fi
-        write_state '.version = 3 | .runtime.session_id = $session | .runtime.status = $status | .runtime.updated_at = $now' --arg session "$SESSION_ID" --arg status "$PANE_STATUS" --arg now "$(date -Iseconds)"
+        write_state '.version = 3 | .runtime.session_id = $session | .runtime.status = (if .runtime.status == "delivering" and $status == "ready" then "delivering" else $status end) | .runtime.updated_at = $now' --arg session "$SESSION_ID" --arg status "$PANE_STATUS" --arg now "$(date -Iseconds)"
         ;;
     unregister-pane)
         verify_state
@@ -392,5 +424,33 @@ case "$COMMAND" in
             exit 3
         fi
         write_state '.runtime = {pane: null, nonce: null, session_id: null, status: "stopped", updated_at: $now}' --arg now "$(date -Iseconds)"
+        ;;
+    claim-delivery)
+        verify_state
+        [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ && "$TMUX_PANE" =~ ^%[0-9]+$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || usage
+        ROOT_PATH=$(event_root_path_from_id)
+        acquire_lock
+        verify_state
+        if ! jq -e --arg event_id "$EVENT_ID" --arg pane "$TMUX_PANE" --arg session "$SESSION_ID" "
+            .runtime.pane == \$pane and .runtime.session_id == \$session and .runtime.status == \"ready\"
+            and $ROOT_PATH.id == \$event_id and $ROOT_PATH.status == \"pending\"
+            and (($ROOT_PATH.delivery.status // \"pending\") == \"pending\")
+        " "$STATE_FILE" >/dev/null; then
+            exit 3
+        fi
+        write_state "$ROOT_PATH.delivery = {status: \"dispatching\", pane: \$pane, sent_at: \$now, confirmed_at: null} | .runtime.status = \"delivering\" | .runtime.updated_at = \$now" --arg pane "$TMUX_PANE" --arg now "$(date -Iseconds)"
+        ;;
+    confirm-delivery)
+        verify_state
+        [[ "$REGISTRATION_NONCE" =~ ^[A-Za-z0-9_.-]{16,}$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ && -n "$PROMPT" ]] || usage
+        acquire_lock
+        verify_state
+        if ! jq -e --arg nonce "$REGISTRATION_NONCE" --arg session "$SESSION_ID" --arg prompt "$PROMPT" '
+            .pr.url as $url | .runtime.nonce == $nonce and .runtime.session_id == $session and
+            any(.events[]?; . != null and (.delivery.status // "pending") == "dispatching" and $prompt == ("$resume-pr-monitor " + $url + " --event-id " + .id))
+        ' "$STATE_FILE" >/dev/null; then
+            exit 3
+        fi
+        write_state '(.pr.url as $url | (.events | to_entries | map(select(.value != null and (.value.delivery.status // "pending") == "dispatching" and $prompt == ("$resume-pr-monitor " + $url + " --event-id " + .value.id))) | .[0].key)) as $event | .events[$event].delivery.status = "submitted" | .events[$event].delivery.confirmed_at = $now' --arg prompt "$PROMPT" --arg now "$(date -Iseconds)"
         ;;
 esac

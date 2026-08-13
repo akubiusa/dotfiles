@@ -26,6 +26,8 @@ done
 
 [[ "$PR_URL" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$ ]] || usage
 [[ -x "$STATE_HELPER" ]] || { echo "Error: Missing PR monitor state helper" >&2; exit 1; }
+SUBMIT_DELAY_SECONDS="${PR_MONITOR_SUBMIT_DELAY_SECONDS:-1}"
+[[ "$SUBMIT_DELAY_SECONDS" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] || { echo "Error: Invalid PR monitor submit delay" >&2; exit 1; }
 
 STATE=$($STATE_HELPER show --pr-url "$PR_URL")
 PANE=$(jq -r '.runtime.pane // empty' <<< "$STATE")
@@ -37,10 +39,11 @@ CURRENT_PANE=$(tmux display-message -p -t "$PANE" '#{pane_id}' 2>/dev/null || tr
 [[ "$CURRENT_PANE" == "$PANE" ]] || exit 0
 
 EVENT=$(jq -r '
-    if .events.close != null and .events.close.actions.cleanup.status == "pending" then
+    def deliverable: . != null and .status == "pending" and ((.delivery.status // "pending") == "pending");
+    if (.events.close | deliverable) and .events.close.actions.cleanup.status == "pending" then
         "close"
     else
-        .events | to_entries[] | select(.key != "close" and .value != null and .value.status == "pending") | .key
+        .events | to_entries[] | select(.key != "close" and (.value | deliverable)) | .key
     end
 ' <<< "$STATE" | head -n 1)
 [[ "$EVENT" =~ ^(close|ci_failure|conflict|copilot_review)$ ]] || exit 0
@@ -48,5 +51,14 @@ EVENT_ID=$(jq -r --arg event "$EVENT" 'if $event == "close" then .events.close.i
 [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ ]] || exit 0
 PROMPT="\$resume-pr-monitor $PR_URL --event-id $EVENT_ID"
 
+if ! "$STATE_HELPER" claim-delivery --pr-url "$PR_URL" --event-id "$EVENT_ID" --pane "$PANE" --session-id "$SESSION_ID"; then
+    exit 0
+fi
 tmux send-keys -t "$PANE" -l -- "$PROMPT"
+sleep "$SUBMIT_DELAY_SECONDS"
+
+STATE=$($STATE_HELPER show --pr-url "$PR_URL")
+STATUS=$(jq -r '.runtime.status // empty' <<< "$STATE")
+CURRENT_PANE=$(tmux display-message -p -t "$PANE" '#{pane_id}' 2>/dev/null || true)
+[[ "$STATUS" == "delivering" && "$CURRENT_PANE" == "$PANE" ]] || exit 0
 tmux send-keys -t "$PANE" Enter

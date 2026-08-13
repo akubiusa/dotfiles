@@ -5,7 +5,7 @@ description: PR monitor の状態を再観測して、lease を取得した pend
 
 # PR Monitor Resume
 
-`$resume-pr-monitor <PR 番号または URL>` は action processor の唯一の入口である。watcher と Copilot watcher は event を記録・通知するだけで、cleanup、Git 変更、review handling、GlitchTip 更新を実行しない。
+`$resume-pr-monitor <PR 番号または URL> [--event-id <type:generation>]` は action processor の唯一の入口である。tmux dispatcher から届く event ID は `[a-z_]+:[0-9]+` だけを受け付け、同じ event を再配送されても action lease と acknowledge state により idempotent に扱う。watcher と Copilot watcher は event を記録・通知するだけで、cleanup、Git 変更、review handling、GlitchTip 更新を実行しない。
 
 ## Reconcile してから処理する
 

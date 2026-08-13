@@ -14,7 +14,7 @@ umask 077
 mkdir -p "$STATE_DIR"
 
 usage() {
-    echo "Usage: $0 <init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure> --pr-url URL [...]" >&2
+    echo "Usage: $0 <init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane> --pr-url URL [...]" >&2
     exit 1
 }
 
@@ -29,10 +29,14 @@ WATCHER_PID=""
 FAILURE_COUNT=""
 RUN_URL=""
 WATCHER_REASON=""
+TMUX_PANE=""
+REGISTRATION_NONCE=""
+SESSION_ID=""
+PANE_STATUS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure)
+        init|id|show|pending|transition|claim|renew|ack|release|watcher|watcher-error|api-failure|register-pane|pane-status|unregister-pane)
             COMMAND="$1"
             ;;
         --pr-url)
@@ -73,6 +77,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --reason)
             WATCHER_REASON="${2:-}"
+            shift
+            ;;
+        --pane)
+            TMUX_PANE="${2:-}"
+            shift
+            ;;
+        --nonce)
+            REGISTRATION_NONCE="${2:-}"
+            shift
+            ;;
+        --session-id)
+            SESSION_ID="${2:-}"
+            shift
+            ;;
+        --status)
+            PANE_STATUS="${2:-}"
             shift
             ;;
         *)
@@ -203,7 +223,7 @@ trap release_lock EXIT
 
 verify_state() {
     [[ -f "$STATE_FILE" ]] || { echo "Error: PR monitor state does not exist; run init first" >&2; exit 1; }
-    if ! jq -e --arg url "$CANONICAL_PR_URL" '.version == 2 and .pr.url == $url and .pr.owner != null and .pr.repo != null and .pr.number != null' "$STATE_FILE" >/dev/null; then
+    if ! jq -e --arg url "$CANONICAL_PR_URL" '(.version == 2 or .version == 3) and .pr.url == $url and .pr.owner != null and .pr.repo != null and .pr.number != null' "$STATE_FILE" >/dev/null; then
         echo "Error: PR monitor state does not match the canonical PR URL" >&2
         exit 1
     fi
@@ -242,7 +262,7 @@ case "$COMMAND" in
             temp_file=$(mktemp "$STATE_DIR/.${STATE_ID}.XXXXXX")
             chmod 600 "$temp_file"
             jq -n --arg url "$CANONICAL_PR_URL" --arg owner "$OWNER" --arg repo "$REPO" --argjson number "$PR_NUMBER" \
-                '{version: 2, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none"}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}}' > "$temp_file"
+                '{version: 3, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none"}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}, runtime: {pane: null, nonce: null, session_id: null, status: "unregistered", updated_at: null}}' > "$temp_file"
             mv "$temp_file" "$STATE_FILE"
         else
             verify_state
@@ -348,5 +368,29 @@ case "$COMMAND" in
         acquire_lock
         verify_state
         write_state '.watcher.failures = ($count | tonumber) | .watcher.updated_at = $now' --arg count "$FAILURE_COUNT" --arg now "$(date -Iseconds)"
+        ;;
+    register-pane)
+        verify_state
+        [[ "$TMUX_PANE" =~ ^%[0-9]+$ && "$REGISTRATION_NONCE" =~ ^[A-Za-z0-9_.-]{16,}$ ]] || usage
+        acquire_lock
+        write_state '.version = 3 | .runtime = {pane: $pane, nonce: $nonce, session_id: null, status: "busy", updated_at: $now}' --arg pane "$TMUX_PANE" --arg nonce "$REGISTRATION_NONCE" --arg now "$(date -Iseconds)"
+        ;;
+    pane-status)
+        verify_state
+        [[ "$REGISTRATION_NONCE" =~ ^[A-Za-z0-9_.-]{16,}$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ && "$PANE_STATUS" =~ ^(busy|ready|approval_pending|stopped)$ ]] || usage
+        acquire_lock
+        if ! jq -e --arg nonce "$REGISTRATION_NONCE" '.runtime.nonce == $nonce' "$STATE_FILE" >/dev/null; then
+            exit 3
+        fi
+        write_state '.version = 3 | .runtime.session_id = $session | .runtime.status = $status | .runtime.updated_at = $now' --arg session "$SESSION_ID" --arg status "$PANE_STATUS" --arg now "$(date -Iseconds)"
+        ;;
+    unregister-pane)
+        verify_state
+        [[ "$REGISTRATION_NONCE" =~ ^[A-Za-z0-9_.-]{16,}$ ]] || usage
+        acquire_lock
+        if ! jq -e --arg nonce "$REGISTRATION_NONCE" '.runtime.nonce == $nonce' "$STATE_FILE" >/dev/null; then
+            exit 3
+        fi
+        write_state '.runtime = {pane: null, nonce: null, session_id: null, status: "stopped", updated_at: $now}' --arg now "$(date -Iseconds)"
         ;;
 esac

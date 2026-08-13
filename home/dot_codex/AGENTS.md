@@ -13,7 +13,7 @@
 - 実装前に、リポジトリ構成、作業ブランチ、最新のリモート既定ブランチ、不要なローカルブランチ、必要な依存関係を確認する。調査目的の GitHub リポジトリは一時ディレクトリへ clone する。
 - コミット前に、秘密情報、lint/format エラー、必要な検証、期待どおりの動作を確認する。
 - PR 作成前に、ユーザーの依頼、秘密情報、競合リスク、変更内容に応じたローカルコードレビューを確認する。PR 作成先は `gh-pr-target-repo.sh` を優先し、GitHub の `upstream` remote があればそれを既定にする。
-- PR 本文には現在の状態のみを記載し、更新履歴を列挙しない。PR 作成後は `$pr-health-monitor` を実行して CI、競合、Codex/Copilot レビューを確認する。external scheduler がない `start` は `foreground_required` を返すため、detached watcher を開始したと報告しない。持続した terminal を user が明示的に用意できる場合だけ `watch` を foreground で実行し、それ以外は ChatGPT Desktop/Web の Scheduled Tasks が利用可能なら project context の resume を予定するか、`$resume-pr-monitor` で pending event を再検証して処理する。watcher は action を実行しない。未解決レビューの対応は `$handle-pr-reviews` を使う。
+- PR 本文には現在の状態のみを記載し、更新履歴を列挙しない。PR 作成後は `$pr-health-monitor` を実行して CI、競合、Codex/Copilot レビューを確認する。tmux 内の Codex は登録済み pane に専用 monitor window から固定の `$resume-pr-monitor` prompt を配送できる。tmux 外または登録失敗時は `foreground_required` と manual resume fallback を報告する。ready state と配送の間に user input が始まる race は既知の制約である。watcher は Git/GitHub action を実行しない。未解決レビューの対応は `$handle-pr-reviews` を使う。
 
 ## 実装と検証
 

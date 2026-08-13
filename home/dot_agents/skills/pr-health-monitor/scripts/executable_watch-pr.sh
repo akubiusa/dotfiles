@@ -55,6 +55,8 @@ STATE_ID=$("$STATE_HELPER" id --pr-url "$PR_URL")
 WATCH_LOCK="$STATE_DIR/${STATE_ID}.watch.lock"
 WATCH_GUARD_FILE="$STATE_DIR/${STATE_ID}.watch.guard"
 LOG_FILE="$LOG_DIR/watch-pr-${STATE_ID}.log"
+SUPERVISOR="$SCRIPT_DIR/pr-monitor-supervisor.sh"
+[[ -x "$SUPERVISOR" ]] || SUPERVISOR="$SCRIPT_DIR/executable_pr-monitor-supervisor.sh"
 WATCH_LOCK_OWNED=false
 WATCH_GUARD_FD=""
 
@@ -242,10 +244,25 @@ if [[ "$COMMAND" == "start" ]]; then
     if [[ -d "$WATCH_LOCK" ]]; then
         recover_stale_watch_lock || true
     fi
-    state watcher-error --reason foreground_required || true
-    state watcher --pid none || true
-    echo "Error: Detached PR monitoring is unavailable. Run '$0 watch --pr-url $PR_URL' in a persistent terminal, or use the scheduled-task/resume workflow." >&2
-    exit 1
+    runtime=$(state show)
+    pane=$(jq -r '.runtime.pane // empty' <<< "$runtime")
+    nonce=$(jq -r '.runtime.nonce // empty' <<< "$runtime")
+    if [[ ! "$pane" =~ ^%[0-9]+$ || ! "$nonce" =~ ^[A-Za-z0-9_.-]{16,}$ ]] \
+        || [[ "$(tmux display-message -p -t "$pane" '#{pane_id}' 2>/dev/null || true)" != "$pane" ]]; then
+        state watcher-error --reason foreground_required || true
+        state watcher --pid none || true
+        echo "Error: tmux pane registration is unavailable. Run '$0 watch --pr-url $PR_URL' in a persistent terminal, or use '$SUPERVISOR --pr-url $PR_URL'." >&2
+        exit 1
+    fi
+    window_name="codex-pr-monitor-${STATE_ID:0:12}"
+    if ! tmux new-window -d -n "$window_name" "$SUPERVISOR --pr-url $PR_URL"; then
+        state watcher-error --reason foreground_required || true
+        state watcher --pid none || true
+        echo "Error: Failed to create tmux monitor window. Use '$SUPERVISOR --pr-url $PR_URL'." >&2
+        exit 1
+    fi
+    echo "started $PR_URL $window_name"
+    exit 0
 fi
 
 if ! acquire_watch_lock; then

@@ -30,6 +30,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.codex/hooks/pr-monitor-pane-state.sh approval_pending",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash ~/.codex/scripts/completion-notify/notify-permission-request.sh",
             "timeout": 5
           }
@@ -39,6 +44,11 @@
     "UserPromptSubmit": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/pr-monitor-pane-state.sh busy",
+            "timeout": 5
+          },
           {
             "type": "command",
             "command": "bash ~/.codex/scripts/completion-notify/notify-user-prompt-submit.sh",
@@ -52,6 +62,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ~/.codex/hooks/pr-monitor-pane-state.sh ready",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash ~/.codex/scripts/completion-notify/notify-completion.sh",
             "timeout": 5
           }
@@ -61,6 +76,11 @@
     "SessionEnd": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/pr-monitor-pane-state.sh stopped",
+            "timeout": 5
+          },
           {
             "type": "command",
             "command": "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh",

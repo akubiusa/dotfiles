@@ -39,9 +39,9 @@ OUTPUT=$(POWERLINE_DAEMON_LAUNCH_PYTHON3="$TEST_DIR/python3-ok.sh" \
   POWERLINE_DAEMON_LAUNCH_DAEMON="$TEST_DIR/daemon.sh" \
   bash "$SCRIPT" -q)
 if [[ "$OUTPUT" == "NATIVE_INVOKED -q" ]]; then
-  echo "✅ native daemon が動作可能な場合、native をそのまま exec する"
+  echo "✅ native branch execs the native daemon directly"
 else
-  echo "❌ native 分岐が期待通りに動作しなかった: $OUTPUT"
+  echo "❌ native branch did not behave as expected: $OUTPUT"
   FAILED=1
 fi
 
@@ -59,9 +59,9 @@ OUTPUT=$(POWERLINE_DAEMON_LAUNCH_PYTHON3="$TEST_DIR/python3-broken.sh" \
   POWERLINE_DAEMON_LAUNCH_DAEMON="$TEST_DIR/daemon.sh" \
   bash "$SCRIPT" -q)
 if [[ "$OUTPUT" == "COMPAT_INVOKED - -q" ]]; then
-  echo "✅ native daemon が動作不可の場合、compat fallback を実行する"
+  echo "✅ compat branch runs the fallback when native is broken"
 else
-  echo "❌ compat 分岐が期待通りに動作しなかった: $OUTPUT"
+  echo "❌ compat branch did not behave as expected: $OUTPUT"
   FAILED=1
 fi
 

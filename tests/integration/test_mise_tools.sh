@@ -22,7 +22,7 @@ curl -fsSL https://mise.run | MISE_VERSION="$MISE_VERSION" sh
 mise install node java
 mise install pnpm ghq gh github:k1LoW/roots gitleaks \
   maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta \
-  npm:ccstatusline@2.2.23
+  npm:ccstatusline
 
 checks=(
   "pnpm|pnpm --version"
@@ -38,7 +38,7 @@ checks=(
   "shfmt|shfmt --version"
   "node,devcontainer-cli|devcontainer --version"
   "delta|delta --version"
-  "node,npm:ccstatusline@2.2.23|ccstatusline --version"
+  "node,npm:ccstatusline|ccstatusline --version"
 )
 
 for check in "${checks[@]}"; do

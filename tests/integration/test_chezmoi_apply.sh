@@ -113,6 +113,11 @@ if [ ! -x "$HOME/bin/gh-pr-target-repo.sh" ]; then
   exit 1
 fi
 
+if [ ! -x "$HOME/bin/powerline-daemon-launch.sh" ]; then
+  echo "❌ powerline-daemon-launch helper not generated"
+  exit 1
+fi
+
 if [ ! -x "$HOME/.agents/skills/pr-health-monitor/scripts/wait-for-copilot-review.sh" ]; then
   echo "❌ Codex Copilot review watcher script not generated"
   exit 1

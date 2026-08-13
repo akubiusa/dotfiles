@@ -510,11 +510,13 @@ install_mise_tools() {
     run_command mise install "$tool"
   done
 
-  # devcontainer-cli は npm backend を使うため、mise 管理の Node.js を先に用意する。
-  log_info "devcontainer-cli 用の Node.js を mise 経由でインストールしています..."
+  # devcontainer-cli / ccstatusline は npm backend を使うため、mise 管理の Node.js を先に用意する。
+  log_info "devcontainer-cli / ccstatusline 用の Node.js を mise 経由でインストールしています..."
   run_command mise install node
   log_info "devcontainer-cli を mise 経由でインストールしています..."
   run_command mise exec node -- mise install devcontainer-cli
+  log_info "ccstatusline を mise 経由でインストールしています..."
+  run_command mise exec node -- mise install npm:ccstatusline
 }
 
 # mkwork のインストール

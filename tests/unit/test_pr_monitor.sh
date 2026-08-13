@@ -126,6 +126,12 @@ if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]] \
     echo "❌ Dispatcher did not safely deliver the fixed resume prompt" >&2
     exit 1
 fi
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value ok
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value failed --run-url "$UNTRUSTED_RUN_URL"
+if [[ "$("$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -r '.events.ci_failure.id')" != "ci_failure:2" ]]; then
+    echo "❌ Repeated CI failures did not receive a distinct event ID" >&2
+    exit 1
+fi
 "$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status approval_pending
 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
 if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]]; then

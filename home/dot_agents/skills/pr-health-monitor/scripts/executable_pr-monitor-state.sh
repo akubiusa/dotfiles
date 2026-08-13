@@ -262,7 +262,7 @@ case "$COMMAND" in
             temp_file=$(mktemp "$STATE_DIR/.${STATE_ID}.XXXXXX")
             chmod 600 "$temp_file"
             jq -n --arg url "$CANONICAL_PR_URL" --arg owner "$OWNER" --arg repo "$REPO" --argjson number "$PR_NUMBER" \
-                '{version: 3, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none"}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}, runtime: {pane: null, nonce: null, session_id: null, status: "unregistered", updated_at: null}}' > "$temp_file"
+                '{version: 3, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none"}, generations: {close: 0, ci_failure: 0, conflict: 0, copilot_review: 0}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}, runtime: {pane: null, nonce: null, session_id: null, status: "unregistered", updated_at: null}}' > "$temp_file"
             mv "$temp_file" "$STATE_FILE"
         else
             verify_state
@@ -289,19 +289,19 @@ case "$COMMAND" in
         case "$EVENT" in
             close)
                 [[ "$VALUE" == "MERGED" || "$VALUE" == "CLOSED" ]] || { echo "Error: Invalid close value" >&2; exit 1; }
-                write_state 'if .observed.state == $value then . else .observed.state = $value | .events.close = {status: "pending", value: $value, detected_at: $now, actions: {cleanup: {status: "pending", lease: null}, "glitchtip-resolve": {status: "not_applicable", lease: null}}} end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.state == $value then . else .observed.state = $value | .generations.close = ((.generations.close // 0) + 1) | .events.close = {id: ("close:" + (.generations.close | tostring)), status: "pending", value: $value, detected_at: $now, actions: {cleanup: {status: "pending", lease: null}, "glitchtip-resolve": {status: "not_applicable", lease: null}}} end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             ci)
                 [[ "$VALUE" == "failed" || "$VALUE" == "ok" ]] || { echo "Error: Invalid CI value" >&2; exit 1; }
-                write_state 'if .observed.ci == $value then . else .observed.ci = $value | (if $value == "failed" then .events.ci_failure = {status: "pending", value: $value, detected_at: $now, run_url: $run_url, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW" --arg run_url "$RUN_URL"
+                write_state 'if .observed.ci == $value then . else .observed.ci = $value | (if $value == "failed" then .generations.ci_failure = ((.generations.ci_failure // 0) + 1) | .events.ci_failure = {id: ("ci_failure:" + (.generations.ci_failure | tostring)), status: "pending", value: $value, detected_at: $now, run_url: $run_url, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW" --arg run_url "$RUN_URL"
                 ;;
             conflict)
                 [[ "$VALUE" == "conflicting" || "$VALUE" == "clear" ]] || { echo "Error: Invalid conflict value" >&2; exit 1; }
-                write_state 'if .observed.conflict == $value then . else .observed.conflict = $value | (if $value == "conflicting" then .events.conflict = {status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.conflict == $value then . else .observed.conflict = $value | (if $value == "conflicting" then .generations.conflict = ((.generations.conflict // 0) + 1) | .events.conflict = {id: ("conflict:" + (.generations.conflict | tostring)), status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             copilot)
                 [[ "$VALUE" == "detected" || "$VALUE" == "none" ]] || { echo "Error: Invalid Copilot value" >&2; exit 1; }
-                write_state 'if .observed.copilot == $value then . else .observed.copilot = $value | (if $value == "detected" then .events.copilot_review = {status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
+                write_state 'if .observed.copilot == $value then . else .observed.copilot = $value | (if $value == "detected" then .generations.copilot_review = ((.generations.copilot_review // 0) + 1) | .events.copilot_review = {id: ("copilot_review:" + (.generations.copilot_review | tostring)), status: "pending", value: $value, detected_at: $now, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
             *) usage ;;
         esac

@@ -44,7 +44,8 @@ EVENT=$(jq -r '
     end
 ' <<< "$STATE" | head -n 1)
 [[ "$EVENT" =~ ^(close|ci_failure|conflict|copilot_review)$ ]] || exit 0
-EVENT_ID="${EVENT}:1"
+EVENT_ID=$(jq -r --arg event "$EVENT" 'if $event == "close" then .events.close.id // "close:1" else .events[$event].id // ($event + ":1") end' <<< "$STATE")
+[[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ ]] || exit 0
 PROMPT="\$resume-pr-monitor $PR_URL --event-id $EVENT_ID"
 
 tmux send-keys -t "$PANE" -l -- "$PROMPT"

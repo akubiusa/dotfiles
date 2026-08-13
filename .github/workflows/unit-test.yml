@@ -26,6 +26,11 @@ jobs:
         background: true
         run: bash tests/unit/test_update.sh
 
+      - name: Run AI alias unit test
+        id: run-ai-alias-unit-test
+        background: true
+        run: bash tests/unit/test_ai_alias.sh
+
       - name: Run notification unit test
         id: run-notification-unit-test
         background: true
@@ -50,6 +55,7 @@ jobs:
         wait:
           - run-install-sh-unit-test
           - run-update-sh-unit-test
+          - run-ai-alias-unit-test
           - run-notification-unit-test
           - run-hooks-unit-test
           - run-pr-monitor-unit-test

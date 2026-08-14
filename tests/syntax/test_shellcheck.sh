@@ -45,4 +45,14 @@ for config in home/dot_bashrc home/dot_bash_profile; do
   fi
 done
 
+# POSIX profile は sh として検査
+if [ -f home/dot_profile ]; then
+  if ! shellcheck -s sh home/dot_profile; then
+    echo "❌ Shellcheck failed: home/dot_profile"
+    FAILED=1
+  else
+    echo "✅ Shellcheck passed (as sh): home/dot_profile"
+  fi
+fi
+
 exit $FAILED

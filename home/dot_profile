@@ -1,0 +1,6 @@
+# 非対話の login shell でも mise 管理ツールを利用できるよう shims を有効化する
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash --shims)"
+elif [ -x "$HOME/.local/bin/mise" ]; then
+  eval "$("$HOME/.local/bin/mise" activate bash --shims)"
+fi

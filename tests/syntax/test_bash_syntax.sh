@@ -33,4 +33,14 @@ for config in home/dot_bashrc home/dot_bash_profile; do
   fi
 done
 
+# POSIX profile は sh として構文チェック
+if [ -f home/dot_profile ]; then
+  if ! sh -n home/dot_profile; then
+    echo "❌ Syntax error: home/dot_profile"
+    FAILED=1
+  else
+    echo "✅ Syntax OK (as sh): home/dot_profile"
+  fi
+fi
+
 exit $FAILED

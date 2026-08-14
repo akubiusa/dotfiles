@@ -93,6 +93,23 @@ fi
 
 echo "✅ Basic files generated successfully"
 
+if [ ! -f "$HOME/.profile" ]; then
+  echo "❌ .profile not generated"
+  exit 1
+fi
+
+if ! grep -Fq 'mise activate bash --shims' "$HOME/.profile"; then
+  echo "❌ .profile does not initialize mise shims"
+  exit 1
+fi
+
+if ! grep -Fq ". \"\$HOME/.profile\"" "$HOME/.bash_profile"; then
+  echo "❌ .bash_profile does not load .profile"
+  exit 1
+fi
+
+echo "✅ mise shims configured for login shells"
+
 TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
 if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
   || [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.timer")" != "local-timer" ] \

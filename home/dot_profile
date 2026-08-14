@@ -1,3 +1,9 @@
+# Codex installer などの非対話処理でも利用できるよう、ユーザー用 bin を PATH に追加する
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+
 # 非対話の login shell でも mise 管理ツールを利用できるよう shims を有効化する
 if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate bash --shims)"

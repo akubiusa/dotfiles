@@ -110,6 +110,28 @@ fi
 
 echo "✅ mise shims configured for login shells"
 
+PROFILE_PATH=$(env -i HOME="$HOME" PATH="/usr/bin:/bin" sh -c ". \"\$HOME/.profile\"; printf '%s\n' \"\$PATH\"")
+case "$PROFILE_PATH" in
+  "$HOME/.local/bin:"*) ;;
+  *)
+    echo "❌ .profile does not prepend ~/.local/bin to PATH"
+    exit 1
+    ;;
+esac
+PROFILE_LOCAL_BIN_COUNT=$(printf '%s\n' "$PROFILE_PATH" | tr ':' '\n' | grep -Fxc "$HOME/.local/bin" || true)
+if [ "$PROFILE_LOCAL_BIN_COUNT" -ne 1 ]; then
+  echo "❌ .profile adds ~/.local/bin to PATH more than once"
+  exit 1
+fi
+
+BASHRC_PATH=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" bash -c ". \"\$HOME/.bashrc.d/00-path.sh\"; printf '%s\n' \"\$PATH\"")
+BASHRC_LOCAL_BIN_COUNT=$(printf '%s\n' "$BASHRC_PATH" | tr ':' '\n' | grep -Fxc "$HOME/.local/bin" || true)
+if [ "$BASHRC_LOCAL_BIN_COUNT" -ne 1 ]; then
+  echo "❌ .bashrc.d/00-path.sh duplicates ~/.local/bin in PATH"
+  exit 1
+fi
+echo "✅ ~/.local/bin PATH setup is idempotent"
+
 TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
 if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
   || [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.timer")" != "local-timer" ] \

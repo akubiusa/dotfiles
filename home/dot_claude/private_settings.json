@@ -11,6 +11,9 @@
     "IS_DEMO": "1"
   },
   "model": "opusplan",
+  "autoMode": {
+    "environment": ["$defaults"]
+  },
   "permissions": {
     "deny": [
       "Bash(git config user.name:*)",

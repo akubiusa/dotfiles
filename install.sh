@@ -710,23 +710,6 @@ EOF
   echo "DISCORD_CLAUDE_MENTION_USER_ID=\"$mention_user_id\"" >> "$env_file"
   echo "" >> "$env_file"
 
-  # Claude limit-unlocked
-  echo "# -----------------------------------------" >> "$env_file"
-  echo "# Discord Webhooks - Claude limit-unlocked" >> "$env_file"
-  echo "# -----------------------------------------" >> "$env_file"
-
-  read_from_terminal "Claude limit-unlocked の Discord Webhook URL (空欄でスキップ): " webhook_url || webhook_url=""
-  if [[ -n "$webhook_url" ]]; then
-    echo "DISCORD_CLAUDE_LIMIT_WEBHOOK=\"$webhook_url\"" >> "$env_file"
-  else
-    echo "DISCORD_CLAUDE_LIMIT_WEBHOOK=\"\"" >> "$env_file"
-  fi
-
-  read_from_terminal "メンションする Discord ユーザー ID (空欄でスキップ): " mention_user_id || mention_user_id=""
-  # shellcheck disable=SC2129
-  echo "DISCORD_CLAUDE_LIMIT_MENTION_USER_ID=\"$mention_user_id\"" >> "$env_file"
-  echo "" >> "$env_file"
-
   # .env ファイルのパーミッションを 600 に設定（センシティブ情報を含むため）
   chmod 600 "$env_file"
 

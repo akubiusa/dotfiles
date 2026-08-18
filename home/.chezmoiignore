@@ -31,4 +31,3 @@
 
 # Claude 関連スクリプトのローカル data
 .claude/scripts/completion-notify/data/
-.claude/scripts/limit-unlocked/data/

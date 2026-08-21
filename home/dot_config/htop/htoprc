@@ -1,13 +1,13 @@
 # 注意！このファイルはインターフェースで設定が変更されるとhtopによって書き換えられます。
 # パーサーは非常に原始的であり、人間にとって読みやすいものではありません。
 # htopのバージョン（自動生成、通常は編集不要）。
-htop_version=3.3.0
+htop_version=3.4.1
 
 # 設定ファイルの読み込みに必要な最小バージョン。
 config_reader_min_version=3
 
 # プロセスリストの列（セットアップ画面の「Available Columns」で設定。ここの順序が表示順序です）。
-fields=0 48 17 18 38 39 40 2 46 47 49 1
+fields=0 48 18 38 39 2 46 47 49 129 1
 
 # リストビューのソートに使用される列（--sort-keyと同じ概念）。
 sort_key=46
@@ -93,6 +93,9 @@ show_cpu_temperature=0
 # 温度に華氏を使用する（0 = 摂氏）。
 degree_fahrenheit=0
 
+# キャッシュされたメモリをヘッダーメーターの使用量に含める。
+show_cached_memory=1
+
 # 時間の経過とともにプロセス名を更新する（変更された場合など）。
 update_process_names=0
 
@@ -115,16 +118,16 @@ hide_function_bar=0
 header_layout=two_50_50
 
 # 1列目のヘッダーメーター（セットアップで選択された名前）。
-column_meters_0=Hostname LeftCPUs Memory Swap DiskIO
+column_meters_0=LeftCPUs Memory Swap
 
 # 1列目メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
-column_meter_modes_0=2 1 1 1 2
+column_meter_modes_0=1 1 1
 
 # 2列目のヘッダーメーター（セットアップで選択された名前）。
-column_meters_1=Uptime RightCPUs Tasks LoadAverage NetworkIO
+column_meters_1=RightCPUs Tasks LoadAverage Uptime
 
 # 2列目メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
-column_meter_modes_1=2 1 2 2 2
+column_meter_modes_1=1 2 2 2
 
 # ツリービューでプロセスを表示する（トグルキー: t / F5）。
 tree_view=0
@@ -136,7 +139,7 @@ tree_view_always_by_pid=0
 all_branches_collapsed=0
 
 # 保存された画面「Main」の列構成とソート設定。
-screen:Main=PID USER PRIORITY NICE M_VIRT M_RESIDENT M_SHARE STATE PERCENT_CPU PERCENT_MEM TIME Command
+screen:Main=PID USER NICE M_VIRT M_RESIDENT STATE PERCENT_CPU PERCENT_MEM TIME CONTAINER Command
 .sort_key=PERCENT_CPU
 .tree_sort_key=PERCENT_CPU
 .tree_view_always_by_pid=0

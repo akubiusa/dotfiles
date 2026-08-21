@@ -18,7 +18,7 @@ START_READY_ATTEMPTS="${PR_MONITOR_START_READY_ATTEMPTS:-20}"
 START_READY_INTERVAL="${PR_MONITOR_START_READY_INTERVAL:-0.1}"
 START_READY_STABILITY_OBSERVATIONS="${PR_MONITOR_START_READY_STABILITY_OBSERVATIONS:-2}"
 [[ "$LOCK_STALE_SECONDS" =~ ^[0-9]+$ && "$LOCK_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "Error: Invalid PR monitor lock configuration" >&2; exit 1; }
-[[ "$START_READY_ATTEMPTS" =~ ^[1-9][0-9]*$ && "$START_READY_INTERVAL" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ && "$START_READY_STABILITY_OBSERVATIONS" =~ ^[2-9][0-9]*$ ]] || { echo "Error: Invalid PR monitor start readiness configuration" >&2; exit 1; }
+[[ "$START_READY_ATTEMPTS" =~ ^[1-9][0-9]*$ && "$START_READY_INTERVAL" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ && "$START_READY_STABILITY_OBSERVATIONS" =~ ^([2-9]|[1-9][0-9]+)$ ]] || { echo "Error: Invalid PR monitor start readiness configuration" >&2; exit 1; }
 umask 077
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
@@ -115,12 +115,12 @@ watch_lock_is_live() {
 }
 
 watcher_is_ready() {
-    local expected_launch_token="${1:-}" expected_window_id="${2:-}" lock_pid watcher_pid launch_token actual_window_id
+    local expected_launch_token="${1:-}" expected_window_id="${2:-}" lock_pid watcher_pid launch_token actual_window_id lock_fields
 
     watch_lock_is_live || return 1
-    lock_pid=$(jq -r '.pid // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+    lock_fields=$(jq -r '[.pid // empty, .launch_token // empty] | @tsv' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+    IFS=$'\t' read -r lock_pid launch_token <<< "$lock_fields"
     watcher_pid=$(state show | jq -r '.watcher.pid // empty' 2>/dev/null || true)
-    launch_token=$(jq -r '.launch_token // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
     [[ "$lock_pid" =~ ^[0-9]+$ && "$watcher_pid" == "$lock_pid" ]] || return 1
     [[ -z "$expected_launch_token" || "$launch_token" == "$expected_launch_token" ]] || return 1
     if [[ -n "$expected_window_id" ]]; then
@@ -319,6 +319,8 @@ if [[ "$COMMAND" == "start" ]]; then
             exit 0
         fi
         if watch_lock_is_live; then
+            stuck_launch_token=$(jq -r '.launch_token // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+            record_foreground_required "" "$stuck_launch_token"
             echo "Error: Existing tmux monitor did not become ready for $PR_URL. Run '\$resume-pr-monitor $PR_URL'." >&2
             exit 1
         fi

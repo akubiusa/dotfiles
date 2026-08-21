@@ -618,17 +618,19 @@ fi
 echo "Testing reconciliation, actionable CI event, and terminal watcher exit..."
 WATCH_LOCK="$XDG_STATE_HOME/codex-pr-monitor/${STATE_ID}.watch.lock"
 mkdir "$WATCH_LOCK"
-jq -n --arg token live --arg identity "$(process_identity "$$")" --argjson pid "$$" --argjson created "$(date +%s)" \
-    '{token: $token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
+jq -n --arg token live --arg launch_token existing-launch-token --arg identity "$(process_identity "$$")" --argjson pid "$$" --argjson created "$(date +%s)" \
+    '{token: $token, launch_token: $launch_token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
 "$STATE_SCRIPT" watcher --pr-url "$PR_URL" --pid 999999
-STATE_BEFORE_UNREADY_REUSE=$("$STATE_SCRIPT" show --pr-url "$PR_URL")
 if UNREADY_REUSE_OUTPUT=$(PR_MONITOR_START_READY_ATTEMPTS=2 PR_MONITOR_START_READY_INTERVAL=0.05 "$WATCH_SCRIPT" start --pr-url "$PR_URL" 2>&1); then
     echo "❌ Watcher start reported an unready live lock as active" >&2
     exit 1
 fi
-STATE_AFTER_UNREADY_REUSE=$("$STATE_SCRIPT" show --pr-url "$PR_URL")
-if [[ "$UNREADY_REUSE_OUTPUT" == *"reused $PR_URL"* || "$STATE_AFTER_UNREADY_REUSE" != "$STATE_BEFORE_UNREADY_REUSE" ]]; then
-    echo "❌ Unready live-lock reuse changed watcher state or claimed readiness" >&2
+if [[ "$UNREADY_REUSE_OUTPUT" == *"reused $PR_URL"* ]]; then
+    echo "❌ Unready live-lock reuse claimed readiness" >&2
+    exit 1
+fi
+if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.watcher.pid == null and .watcher.last_error == "foreground_required"' >/dev/null; then
+    echo "❌ Unready live-lock reuse did not record a foreground_required diagnostic" >&2
     exit 1
 fi
 "$STATE_SCRIPT" watcher --pr-url "$PR_URL" --pid "$$"

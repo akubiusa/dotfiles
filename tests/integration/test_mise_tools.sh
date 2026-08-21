@@ -10,6 +10,13 @@ if [[ -z "$MISE_VERSION" ]]; then
   exit 1
 fi
 
+for tool in lazydocker oxker; do
+  if ! grep -Eq "^${tool} = \"[0-9]+\\.[0-9]+\\.[0-9]+\"$" "$CONFIG"; then
+    echo "❌ $tool version is not pinned in mise config"
+    exit 1
+  fi
+done
+
 TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT
 export HOME="$TEST_HOME"
@@ -22,7 +29,7 @@ curl -fsSL https://mise.run | MISE_VERSION="$MISE_VERSION" sh
 mise install node java
 mise install pnpm ghq gh github:k1LoW/roots gitleaks \
   maven ripgrep yq actionlint hadolint shfmt devcontainer-cli delta \
-  npm:ccstatusline
+  lazydocker oxker npm:ccstatusline
 
 checks=(
   "pnpm|pnpm --version"
@@ -38,6 +45,8 @@ checks=(
   "shfmt|shfmt --version"
   "node,devcontainer-cli|devcontainer --version"
   "delta|delta --version"
+  "lazydocker|lazydocker --version"
+  "oxker|oxker --version"
   "node,npm:ccstatusline|ccstatusline --version"
 )
 

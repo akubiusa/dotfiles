@@ -503,6 +503,8 @@ install_mise_tools() {
     "hadolint"
     "shfmt"
     "delta"
+    "lazydocker"
+    "oxker"
   )
   local tool
   for tool in "${development_tools[@]}"; do

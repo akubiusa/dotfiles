@@ -1,7 +1,13 @@
 # 注意！このファイルはインターフェースで設定が変更されるとhtopによって書き換えられます。
 # パーサーは非常に原始的であり、人間にとって読みやすいものではありません。
+# htopのバージョン（自動生成、通常は編集不要）。
+htop_version=3.4.1
+
+# 設定ファイルの読み込みに必要な最小バージョン。
+config_reader_min_version=3
+
 # プロセスリストの列（セットアップ画面の「Available Columns」で設定。ここの順序が表示順序です）。
-fields=0 48 17 18 38 39 40 2 46 47 49 1
+fields=0 48 18 38 39 2 46 47 49 129 1
 
 # リストビューのソートに使用される列（--sort-keyと同じ概念）。
 sort_key=46
@@ -21,6 +27,9 @@ hide_kernel_threads=1
 # プロセスリストでユーザーランドスレッドを隠す。
 hide_userland_threads=0
 
+# コンテナ内で実行中のプロセスを隠す。
+hide_running_in_container=0
+
 # 他のユーザーが所有するプロセスを薄暗く表示する（シャドウ）。
 shadow_other_users=0
 
@@ -32,6 +41,12 @@ show_program_path=1
 
 # 設定されている場合、Command列でプログラムのベース名をハイライトする。
 highlight_base_name=0
+
+# 削除された実行ファイルを実行しているプロセスをハイライトする。
+highlight_deleted_exe=1
+
+# ディストリビューションのパスプレフィックスを薄暗く表示する。
+shadow_distribution_path_prefix=0
 
 # UIでメモリサイズ（MiB/GiB）をハイライトする。
 highlight_megabytes=1
@@ -54,14 +69,11 @@ strip_exe_from_cmdline=1
 # exe、comm、cmdlineをCommand列にマージする（トグルキー: m）。
 show_merged_command=0
 
-# ツリービューでプロセスを表示する（トグルキー: t / F5）。
-tree_view=0
-
-# ツリービューを常にPID階層でソートする。
-tree_view_always_by_pid=0
-
 # ヘッダーとプロセスリストの間にマージン（余白）を追加する。
 header_margin=1
+
+# 画面をタブとして表示する。
+screen_tabs=0
 
 # プロセスリストに詳細なCPU時間を表示する。
 detailed_cpu_time=0
@@ -81,6 +93,9 @@ show_cpu_temperature=0
 # 温度に華氏を使用する（0 = 摂氏）。
 degree_fahrenheit=0
 
+# キャッシュされたメモリをヘッダーメーターの使用量に含める。
+show_cached_memory=1
+
 # 時間の経過とともにプロセス名を更新する（変更された場合など）。
 update_process_names=0
 
@@ -96,17 +111,49 @@ enable_mouse=1
 # 更新間の遅延時間（10分の1秒単位）。15 = 1.5秒。
 delay=15
 
-# 左側のヘッダーメーター（セットアップで選択された名前）。
-left_meters=LeftCPUs Memory Swap
-
-# 左側メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
-left_meter_modes=1 1 1
-
-# 右側のヘッダーメーター（セットアップで選択された名前）。
-right_meters=RightCPUs Tasks LoadAverage Uptime
-
-# 右側メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
-right_meter_modes=1 2 2 2
-
 # 下部のファンクションキーバーを隠す。
 hide_function_bar=0
+
+# ヘッダーメーターのレイアウト（列数と幅の比率）。
+header_layout=two_50_50
+
+# 1列目のヘッダーメーター（セットアップで選択された名前）。
+column_meters_0=LeftCPUs Memory Swap
+
+# 1列目メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
+column_meter_modes_0=1 1 1
+
+# 2列目のヘッダーメーター（セットアップで選択された名前）。
+column_meters_1=RightCPUs Tasks LoadAverage Uptime
+
+# 2列目メーターの表示モード（モード番号に応じてバー/テキスト/LED）。
+column_meter_modes_1=1 2 2 2
+
+# ツリービューでプロセスを表示する（トグルキー: t / F5）。
+tree_view=0
+
+# ツリービューを常にPID階層でソートする。
+tree_view_always_by_pid=0
+
+# ツリービューの全ブランチを折りたたんだ状態で開始する。
+all_branches_collapsed=0
+
+# 保存された画面「Main」の列構成とソート設定。
+screen:Main=PID USER NICE M_VIRT M_RESIDENT STATE PERCENT_CPU PERCENT_MEM TIME CONTAINER Command
+.sort_key=PERCENT_CPU
+.tree_sort_key=PERCENT_CPU
+.tree_view_always_by_pid=0
+.tree_view=0
+.sort_direction=-1
+.tree_sort_direction=-1
+.all_branches_collapsed=0
+
+# 保存された画面「I/O」の列構成とソート設定。
+screen:I/O=PID USER IO_PRIORITY IO_RATE IO_READ_RATE IO_WRITE_RATE PERCENT_SWAP_DELAY PERCENT_IO_DELAY Command
+.sort_key=IO_RATE
+.tree_sort_key=PID
+.tree_view_always_by_pid=0
+.tree_view=0
+.sort_direction=-1
+.tree_sort_direction=1
+.all_branches_collapsed=0

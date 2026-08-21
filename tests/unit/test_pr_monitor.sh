@@ -16,7 +16,41 @@ TEST_BIN="$TEST_DIR/bin"
 PR_URL="https://github.com/example/repo/pull/42"
 SLEEP_PID=""
 
+stop_tmux_children() {
+    local _window_id child_pid
+
+    [[ -f "$TEST_DIR/tmux-children" ]] || return 0
+    while read -r _window_id child_pid; do
+        [[ "$child_pid" =~ ^[0-9]+$ ]] || continue
+        kill "$child_pid" 2>/dev/null || true
+        for _ in {1..40}; do
+            ! kill -0 "$child_pid" 2>/dev/null && break
+            sleep 0.05
+        done
+    done < "$TEST_DIR/tmux-children"
+    rm -f "$TEST_DIR/tmux-children"
+}
+
+stop_supervisor_watcher() {
+    local watcher_pid
+
+    watcher_pid="$1"
+    kill "$watcher_pid" 2>/dev/null || true
+    for _ in {1..40}; do
+        ! kill -0 "$watcher_pid" 2>/dev/null && break
+        sleep 0.05
+    done
+    if [[ -f "$TEST_DIR/tmux-children" ]]; then
+        while read -r _window_id child_pid; do
+            [[ "$child_pid" =~ ^[0-9]+$ ]] || continue
+            kill -KILL "$child_pid" 2>/dev/null || true
+        done < "$TEST_DIR/tmux-children"
+        rm -f "$TEST_DIR/tmux-children"
+    fi
+}
+
 cleanup() {
+    stop_tmux_children
     if [[ -n "$SLEEP_PID" ]]; then
         kill "$SLEEP_PID" 2>/dev/null || true
         wait "$SLEEP_PID" 2>/dev/null || true
@@ -31,21 +65,126 @@ ln -s "$STATE_SCRIPT" "$TEST_HOME/.agents/skills/pr-health-monitor/scripts/pr-mo
 export HOME="$TEST_HOME"
 export XDG_STATE_HOME="$TEST_DIR/state"
 export PATH="$TEST_BIN:$PATH"
+export STATE_SCRIPT WATCH_SCRIPT
 
 cat > "$TEST_BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == "display-message" ]]; then
-    printf '%%77\n'
+    if [[ "${TMUX_STUB_MODE:-}" == "ready-then-exit" && "${4:-}" == "@101" ]]; then
+        : > "$TEST_DIR/first-window-readiness-probe"
+        watcher_pid=$("$STATE_SCRIPT" show --pr-url "$TMUX_READY_EXIT_PR_URL" | jq -r '.watcher.pid // empty')
+        if [[ "$watcher_pid" =~ ^[0-9]+$ ]]; then
+            kill "$watcher_pid" 2>/dev/null || true
+        fi
+        state_id=$("$STATE_SCRIPT" id --pr-url "$TMUX_READY_EXIT_PR_URL")
+        for _ in {1..100}; do
+            if [[ ! -d "$XDG_STATE_HOME/codex-pr-monitor/${state_id}.watch.lock" ]]; then
+                : > "$TEST_DIR/ready-then-exit-recorded"
+                break
+            fi
+            sleep 0.01
+        done
+    fi
+    if [[ "${4:-}" =~ ^@[0-9]+$ ]]; then
+        printf '%s\n' "$4"
+    else
+        printf '%%77\n'
+    fi
     exit 0
 fi
 if [[ "$1" == "send-keys" ]]; then
     printf '%s\n' "$*" >> "$TEST_DIR/tmux.log"
     exit 0
 fi
+if [[ "$1" == "new-window" ]]; then
+    printf '%s\n' "$*" >> "$TEST_DIR/tmux.log"
+    case "${TMUX_STUB_MODE:-immediate-exit}" in
+        ready)
+            command="${!#}"
+            bash -c "$command" > "$TEST_DIR/tmux-child.log" 2>&1 &
+            printf '@101 %s\n' "$!" >> "$TEST_DIR/tmux-children"
+            ;;
+        ready-then-exit)
+            command="${!#}"
+            bash -c "$command" > "$TEST_DIR/tmux-child.log" 2>&1 &
+            child_pid=$!
+            printf '@101 %s\n' "$child_pid" >> "$TEST_DIR/tmux-children"
+            ;;
+        immediate-exit)
+            command="${!#}"
+            GH_STUB_FAILURE=1 PR_MONITOR_INTERVAL=0 PR_MONITOR_MAX_POLLS=1 bash -c "$command" > "$TEST_DIR/tmux-child.log" 2>&1
+            ;;
+        handoff)
+            command="${!#}"
+            GH_STUB_FAILURE=1 PR_MONITOR_INTERVAL=0 PR_MONITOR_MAX_POLLS=1 bash -c "$command" > "$TEST_DIR/tmux-child.log" 2>&1
+            ;;
+        simultaneous)
+            command="${!#}"
+            mkdir -p "$TEST_DIR/tmux-simultaneous"
+            : > "$TEST_DIR/tmux-simultaneous/$BASHPID"
+            for _ in {1..100}; do
+                [[ "$(find "$TEST_DIR/tmux-simultaneous" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" -ge 2 ]] && break
+                sleep 0.01
+            done
+            exec 9>"$TEST_DIR/tmux-simultaneous.lock"
+            flock 9
+            launch_count=$(cat "$TEST_DIR/tmux-simultaneous-count" 2>/dev/null || printf '0')
+            launch_count=$((launch_count + 1))
+            printf '%s\n' "$launch_count" > "$TEST_DIR/tmux-simultaneous-count"
+            flock -u 9
+            if [[ "$launch_count" -eq 1 ]]; then
+                bash -c "$command" > "$TEST_DIR/tmux-child.log" 2>&1 &
+                printf '@101 %s\n' "$!" >> "$TEST_DIR/tmux-children"
+            else
+                bash -c 'exit 0' > "$TEST_DIR/tmux-child-exit.log" 2>&1
+            fi
+            ;;
+        fail)
+            exit 1
+            ;;
+        *)
+            exit 1
+            ;;
+    esac
+    printf '%s\n' "${TMUX_STUB_WINDOW_OUTPUT:-@101}"
+    exit 0
+fi
+if [[ "$1" == "kill-window" ]]; then
+    printf '%s\n' "$*" >> "$TEST_DIR/tmux.log"
+    window_id="${@: -1}"
+    if [[ -f "$TEST_DIR/tmux-children" ]]; then
+        while read -r child_window child_pid; do
+            if [[ "$child_window" == "$window_id" ]]; then
+                kill "$child_pid" 2>/dev/null || true
+            fi
+        done < "$TEST_DIR/tmux-children"
+    fi
+    if [[ "${TMUX_STUB_MODE:-}" == "handoff" ]]; then
+        env GH_STUB_FAILURE=0 GH_STUB_OPEN=1 PR_MONITOR_INTERVAL=1 "$WATCH_SCRIPT" watch --pr-url "$TMUX_HANDOFF_PR_URL" > "$TEST_DIR/tmux-successor.log" 2>&1 &
+        printf '@202 %s\n' "$!" >> "$TEST_DIR/tmux-children"
+        for _ in {1..20}; do
+            "$STATE_SCRIPT" show --pr-url "$TMUX_HANDOFF_PR_URL" | jq -e '.watcher.pid != null and .watcher.last_error == null' >/dev/null && break
+            sleep 0.05
+        done
+    fi
+    exit 0
+fi
 exit 1
 EOF
 chmod +x "$TEST_BIN/tmux"
+
+cat > "$TEST_BIN/ps" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${PR_MONITOR_TEST_PROCESS_IDENTITY:-0}" == "1" && "$1" == "-p" && "${2:-}" =~ ^[0-9]+$ ]]; then
+    printf 'synthetic-start-%s\n' "$2"
+    exit 0
+fi
+exec /usr/bin/ps "$@"
+EOF
+chmod +x "$TEST_BIN/ps"
 
 cat > "$TEST_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -58,13 +197,26 @@ fi
 case "$1 $2" in
     "pr view")
         if [[ "${GH_STUB_OPEN:-0}" == "1" ]]; then
-            printf '%s\n' '{"state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","url":"https://github.com/example/repo/pull/42"}'
+            printf '{"state":"OPEN","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","url":"https://github.com/example/repo/pull/%s"}\n' "$3"
         else
-            printf '%s\n' '{"state":"MERGED","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","url":"https://github.com/example/repo/pull/42"}'
+            printf '{"state":"MERGED","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","url":"https://github.com/example/repo/pull/%s"}\n' "$3"
         fi
         ;;
     "pr checks")
+        if [[ -n "${GH_STUB_CI_FAILURE_FILE:-}" && -f "$GH_STUB_CI_FAILURE_FILE" ]]; then
+            exit 1
+        fi
+        if [[ "${GH_STUB_CHECKS_PASS:-0}" == "1" ]]; then
+            printf '%s\n' '[{"name":"unit","bucket":"pass","link":"https://github.com/example/repo/actions/runs/123"}]'
+            if [[ -n "${GH_STUB_CI_OBSERVED_FILE:-}" ]]; then
+                : > "$GH_STUB_CI_OBSERVED_FILE"
+            fi
+            exit 0
+        fi
         printf '%s\n' '[{"name":"unit","bucket":"fail","link":"https://github.com/example/repo/actions/runs/123"}]'
+        if [[ -n "${GH_STUB_CI_OBSERVED_FILE:-}" ]]; then
+            : > "$GH_STUB_CI_OBSERVED_FILE"
+        fi
         exit 1
         ;;
     "api graphql")
@@ -115,15 +267,211 @@ fi
 echo "Testing state URL verification and stale/live lock recovery..."
 "$STATE_SCRIPT" init --pr-url "$PR_URL" >/dev/null
 
+echo "Testing tmux monitor readiness and recovery..."
+SECOND_PR_URL="https://github.com/example/repo/pull/43"
+expect_failure "$STATE_SCRIPT" register-pane --pr-url "$SECOND_PR_URL" --pane %77 --nonce 0123456789abcdef
+"$STATE_SCRIPT" init --pr-url "$SECOND_PR_URL" >/dev/null
+"$STATE_SCRIPT" register-pane --pr-url "$SECOND_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+export PR_MONITOR_TEST_PROCESS_IDENTITY=1
+if ! SECOND_START_OUTPUT=$(env TMUX_STUB_MODE=ready GH_STUB_OPEN=1 GH_STUB_CHECKS_PASS=1 GH_STUB_CI_OBSERVED_FILE="$TEST_DIR/ci-observed" GH_STUB_CI_FAILURE_FILE="$TEST_DIR/ci-observation-failure" PR_MONITOR_INTERVAL=1 PR_MONITOR_START_READY_ATTEMPTS=100 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$SECOND_PR_URL" 2>&1); then
+    cat "$TEST_DIR/tmux-child.log" >&2
+    cat "$TEST_DIR/tmux.log" >&2
+    "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" >&2 || true
+    cat "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SECOND_PR_URL").watch.lock/owner.json" >&2 || true
+    echo "❌ Monitor start failed before watcher readiness" >&2
+    exit 1
+fi
+if [[ "$SECOND_START_OUTPUT" != "started $SECOND_PR_URL codex-pr-monitor-"* ]] \
+    || ! "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e '.runtime.pane == "%77" and .runtime.nonce == "0123456789abcdef"' >/dev/null \
+    || ! "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e '.watcher.pid != null and .watcher.last_error == null' >/dev/null \
+    || ! grep -Fq "new-window -d -P -F #{window_id} -n codex-pr-monitor-" "$TEST_DIR/tmux.log"; then
+    echo "❌ Monitor start did not wait for a live watcher and matching state" >&2
+    exit 1
+fi
+SECOND_OWNER_FILE="$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SECOND_PR_URL").watch.lock/owner.json"
+SECOND_OWNER_PID=$(jq -r '.pid // empty' "$SECOND_OWNER_FILE")
+SECOND_OWNER_IDENTITY=$(jq -r '.process_identity // empty' "$SECOND_OWNER_FILE")
+if [[ ! "$SECOND_OWNER_PID" =~ ^[0-9]+$ ]] \
+    || [[ -z "$SECOND_OWNER_IDENTITY" ]] \
+    || [[ "$(process_identity "$SECOND_OWNER_PID")" != "$SECOND_OWNER_IDENTITY" ]]; then
+    cat "$SECOND_OWNER_FILE" >&2
+    echo "❌ Ready watcher lock PID and process identity do not describe the same process" >&2
+    exit 1
+fi
+SECOND_WATCHER_PID=$("$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -r '.watcher.pid')
+for _ in {1..20}; do
+    [[ -f "$TEST_DIR/ci-observed" ]] \
+        && "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e '.observed.ci == "ok" and .events.ci_failure == null' >/dev/null \
+        && break
+    sleep 0.05
+done
+if [[ ! -f "$TEST_DIR/ci-observed" ]] \
+    || ! "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e '.observed.ci == "ok" and .events.ci_failure == null' >/dev/null; then
+    echo "❌ Ready watcher did not complete its initial observation" >&2
+    exit 1
+fi
+: > "$TEST_DIR/ci-observation-failure"
+for _ in {1..20}; do
+    "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e --argjson pid "$SECOND_WATCHER_PID" '.watcher.pid == $pid and .watcher.failures >= 1 and .watcher.last_error == null' >/dev/null && break
+    sleep 0.05
+done
+if ! "$STATE_SCRIPT" show --pr-url "$SECOND_PR_URL" | jq -e --argjson pid "$SECOND_WATCHER_PID" '.watcher.pid == $pid and .watcher.failures >= 1 and .watcher.last_error == null' >/dev/null; then
+    echo "❌ Ready watcher did not remain active after a later observation failure" >&2
+    exit 1
+fi
+stop_supervisor_watcher "$SECOND_WATCHER_PID"
+for _ in {1..20}; do
+    if [[ ! -d "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SECOND_PR_URL").watch.lock" ]] \
+        && ! kill -0 "$SECOND_WATCHER_PID" 2>/dev/null; then
+        break
+    fi
+    sleep 0.05
+done
+if [[ -d "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SECOND_PR_URL").watch.lock" ]] \
+    || kill -0 "$SECOND_WATCHER_PID" 2>/dev/null; then
+    echo "❌ Readiness test leaked a monitor watcher" >&2
+    exit 1
+fi
+
+IMMEDIATE_EXIT_PR_URL="https://github.com/example/repo/pull/44"
+"$STATE_SCRIPT" init --pr-url "$IMMEDIATE_EXIT_PR_URL" >/dev/null
+"$STATE_SCRIPT" register-pane --pr-url "$IMMEDIATE_EXIT_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+if IMMEDIATE_EXIT_OUTPUT=$(TMUX_STUB_MODE=immediate-exit PR_MONITOR_START_READY_ATTEMPTS=2 PR_MONITOR_START_READY_INTERVAL=0.05 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$IMMEDIATE_EXIT_PR_URL" 2>&1); then
+    echo "❌ Monitor start accepted a tmux window whose child exited immediately" >&2
+    exit 1
+fi
+if [[ "$IMMEDIATE_EXIT_OUTPUT" != *"$IMMEDIATE_EXIT_PR_URL"* ]] \
+    || [[ "$IMMEDIATE_EXIT_OUTPUT" != *"\$resume-pr-monitor $IMMEDIATE_EXIT_PR_URL"* ]] \
+    || ! "$STATE_SCRIPT" show --pr-url "$IMMEDIATE_EXIT_PR_URL" | jq -e '.watcher.pid == null and .watcher.last_error == "foreground_required"' >/dev/null \
+    || ! grep -Fq 'kill-window -t @101' "$TEST_DIR/tmux.log"; then
+    echo "❌ Monitor readiness timeout did not remove the window and persist recovery" >&2
+    exit 1
+fi
+: > "$TEST_DIR/tmux.log"
+
+echo "Testing readiness remains valid across a bounded lifecycle observation..."
+READY_EXIT_PR_URL="https://github.com/example/repo/pull/48"
+"$STATE_SCRIPT" init --pr-url "$READY_EXIT_PR_URL" >/dev/null
+"$STATE_SCRIPT" register-pane --pr-url "$READY_EXIT_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+if READY_EXIT_OUTPUT=$(TMUX_STUB_MODE=ready-then-exit TMUX_READY_EXIT_PR_URL="$READY_EXIT_PR_URL" GH_STUB_OPEN=1 GH_STUB_CHECKS_PASS=1 PR_MONITOR_INTERVAL=1 PR_MONITOR_START_READY_ATTEMPTS=10 PR_MONITOR_START_READY_INTERVAL=0.05 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$READY_EXIT_PR_URL" 2>&1); then
+    printf '%s\n' "$READY_EXIT_OUTPUT" >&2
+    cat "$TEST_DIR/tmux.log" >&2 || true
+    cat "$TEST_DIR/tmux-child.log" >&2 || true
+    echo "❌ Monitor start accepted a watcher that exited after its first readiness observation" >&2
+    exit 1
+fi
+for _ in {1..100}; do
+    [[ -f "$TEST_DIR/ready-then-exit-recorded" ]] \
+        && [[ ! -d "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$READY_EXIT_PR_URL").watch.lock" ]] \
+        && break
+    sleep 0.01
+done
+if [[ ! -f "$TEST_DIR/ready-then-exit-recorded" ]] \
+    || [[ "$READY_EXIT_OUTPUT" == *"started $READY_EXIT_PR_URL"* ]] \
+    || ! "$STATE_SCRIPT" show --pr-url "$READY_EXIT_PR_URL" | jq -e '.watcher.pid == null and .watcher.last_error == "foreground_required"' >/dev/null; then
+    cat "$TEST_DIR/tmux.log" >&2
+    "$STATE_SCRIPT" show --pr-url "$READY_EXIT_PR_URL" >&2 || true
+    echo "❌ Readiness timeout did not fail closed after the watcher exited" >&2
+    exit 1
+fi
+stop_tmux_children
+: > "$TEST_DIR/tmux.log"
+
+echo "Testing malformed tmux window output is never used as a cleanup target..."
+for INVALID_WINDOW_ID in %0 session:window; do
+    INVALID_WINDOW_PR_URL="https://github.com/example/repo/pull/$((50 + ${#INVALID_WINDOW_ID}))"
+    "$STATE_SCRIPT" init --pr-url "$INVALID_WINDOW_PR_URL" >/dev/null
+    "$STATE_SCRIPT" register-pane --pr-url "$INVALID_WINDOW_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+    if INVALID_WINDOW_OUTPUT=$(TMUX_STUB_MODE=immediate-exit TMUX_STUB_WINDOW_OUTPUT="$INVALID_WINDOW_ID" TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$INVALID_WINDOW_PR_URL" 2>&1); then
+        echo "❌ Monitor start accepted malformed tmux window output: $INVALID_WINDOW_ID" >&2
+        exit 1
+    fi
+    if [[ "$INVALID_WINDOW_OUTPUT" != *"$INVALID_WINDOW_PR_URL"* ]] \
+        || grep -Fq "kill-window -t $INVALID_WINDOW_ID" "$TEST_DIR/tmux.log"; then
+        cat "$TEST_DIR/tmux.log" >&2
+        echo "❌ Monitor attempted arbitrary cleanup for malformed tmux output: $INVALID_WINDOW_ID" >&2
+        exit 1
+    fi
+    : > "$TEST_DIR/tmux.log"
+done
+
+echo "Testing concurrent starts accept only their own launched watcher..."
+SIMULTANEOUS_PR_URL="https://github.com/example/repo/pull/46"
+"$STATE_SCRIPT" init --pr-url "$SIMULTANEOUS_PR_URL" >/dev/null
+"$STATE_SCRIPT" register-pane --pr-url "$SIMULTANEOUS_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+TMUX_STUB_MODE=simultaneous GH_STUB_OPEN=1 GH_STUB_CHECKS_PASS=1 PR_MONITOR_INTERVAL=1 PR_MONITOR_START_READY_ATTEMPTS=100 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$SIMULTANEOUS_PR_URL" > "$TEST_DIR/simultaneous-one.log" 2>&1 &
+SIMULTANEOUS_ONE_PID=$!
+TMUX_STUB_MODE=simultaneous GH_STUB_OPEN=1 GH_STUB_CHECKS_PASS=1 PR_MONITOR_INTERVAL=1 PR_MONITOR_START_READY_ATTEMPTS=100 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$SIMULTANEOUS_PR_URL" > "$TEST_DIR/simultaneous-two.log" 2>&1 &
+SIMULTANEOUS_TWO_PID=$!
+wait "$SIMULTANEOUS_ONE_PID" || true
+wait "$SIMULTANEOUS_TWO_PID" || true
+SIMULTANEOUS_STARTED_COUNT=$({ grep -hF "started $SIMULTANEOUS_PR_URL codex-pr-monitor-" "$TEST_DIR/simultaneous-one.log" "$TEST_DIR/simultaneous-two.log" 2>/dev/null || true; } | wc -l | tr -d ' ')
+SIMULTANEOUS_LAUNCH_TOKEN=$(jq -r '.launch_token // empty' "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SIMULTANEOUS_PR_URL").watch.lock/owner.json" 2>/dev/null || true)
+if [[ "$SIMULTANEOUS_STARTED_COUNT" -ne 1 ]] \
+    || [[ ! "$SIMULTANEOUS_LAUNCH_TOKEN" =~ ^[A-Za-z0-9_.-]+$ ]] \
+    || ! grep -Fq "PR_MONITOR_LAUNCH_TOKEN=$SIMULTANEOUS_LAUNCH_TOKEN" "$TEST_DIR/tmux.log"; then
+    cat "$TEST_DIR/simultaneous-one.log" >&2
+    cat "$TEST_DIR/simultaneous-two.log" >&2
+    cat "$TEST_DIR/tmux.log" >&2
+    "$STATE_SCRIPT" show --pr-url "$SIMULTANEOUS_PR_URL" >&2 || true
+    cat "$XDG_STATE_HOME/codex-pr-monitor/$($STATE_SCRIPT id --pr-url "$SIMULTANEOUS_PR_URL").watch.lock/owner.json" >&2 || true
+    echo "❌ Concurrent starts accepted a watcher from a different launch" >&2
+    exit 1
+fi
+SIMULTANEOUS_WATCHER_PID=$("$STATE_SCRIPT" show --pr-url "$SIMULTANEOUS_PR_URL" | jq -r '.watcher.pid')
+if [[ "$SIMULTANEOUS_WATCHER_PID" =~ ^[0-9]+$ ]]; then
+    stop_supervisor_watcher "$SIMULTANEOUS_WATCHER_PID"
+else
+    stop_tmux_children
+fi
+: > "$TEST_DIR/tmux.log"
+
+echo "Testing timeout cleanup preserves a healthy successor..."
+HANDOFF_PR_URL="https://github.com/example/repo/pull/45"
+"$STATE_SCRIPT" init --pr-url "$HANDOFF_PR_URL" >/dev/null
+"$STATE_SCRIPT" register-pane --pr-url "$HANDOFF_PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
+if TMUX_STUB_MODE=handoff TMUX_HANDOFF_PR_URL="$HANDOFF_PR_URL" PR_MONITOR_START_READY_ATTEMPTS=2 PR_MONITOR_START_READY_INTERVAL=0.05 TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$HANDOFF_PR_URL" >/dev/null 2>&1; then
+    echo "❌ Timed-out start reported its replaced monitor as ready" >&2
+    exit 1
+fi
+for _ in {1..100}; do
+    "$STATE_SCRIPT" show --pr-url "$HANDOFF_PR_URL" | jq -e '.watcher.pid != null and .watcher.last_error == null' >/dev/null && break
+    sleep 0.05
+done
+HANDOFF_WATCHER_PID=$("$STATE_SCRIPT" show --pr-url "$HANDOFF_PR_URL" | jq -r '.watcher.pid')
+if [[ ! "$HANDOFF_WATCHER_PID" =~ ^[0-9]+$ ]] \
+    || ! "$STATE_SCRIPT" show --pr-url "$HANDOFF_PR_URL" | jq -e --argjson pid "$HANDOFF_WATCHER_PID" '.watcher.pid == $pid and .watcher.last_error == null' >/dev/null \
+    || ! kill -0 "$HANDOFF_WATCHER_PID" 2>/dev/null; then
+    "$STATE_SCRIPT" show --pr-url "$HANDOFF_PR_URL" >&2 || true
+    cat "$TEST_DIR/tmux-successor.log" >&2 || true
+    cat "$TEST_DIR/tmux.log" >&2
+    echo "❌ Timed-out start clobbered its healthy successor state" >&2
+    exit 1
+fi
+stop_tmux_children
+: > "$TEST_DIR/tmux.log"
+
+echo "Testing pane-registration fallback reports the canonical resume command..."
+PANE_FAILURE_PR_URL="https://github.com/example/repo/pull/47"
+"$STATE_SCRIPT" init --pr-url "$PANE_FAILURE_PR_URL" >/dev/null
+if PANE_FAILURE_OUTPUT=$(TEST_DIR="$TEST_DIR" "$WATCH_SCRIPT" start --pr-url "$PANE_FAILURE_PR_URL" 2>&1); then
+    echo "❌ Monitor start accepted a missing pane registration" >&2
+    exit 1
+fi
+if [[ "$PANE_FAILURE_OUTPUT" != *"\$resume-pr-monitor $PANE_FAILURE_PR_URL"* ]]; then
+    echo "❌ Pane-registration failure omitted the canonical resume command" >&2
+    exit 1
+fi
+
 echo "Testing dispatcher reserves delivery, waits before Enter, and avoids duplicate insertion..."
 "$STATE_SCRIPT" register-pane --pr-url "$PR_URL" --pane %77 --nonce 0123456789abcdef >/dev/null
 "$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status ready
 UNTRUSTED_RUN_URL="https://example.invalid/\$(injected)"
 EXPECTED_DELIVERY="send-keys -t %77 -l -- \$resume-pr-monitor https://github.com/example/repo/pull/42 --event-id ci_failure:1"
 "$STATE_SCRIPT" transition --pr-url "$PR_URL" --event ci --value failed --run-url "$UNTRUSTED_RUN_URL"
-PR_MONITOR_SUBMIT_DELAY_SECONDS=1 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL" &
+PR_MONITOR_SUBMIT_DELAY_SECONDS=1 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL" > "$TEST_DIR/dispatcher.log" 2>&1 &
 DISPATCH_PID=$!
-for _ in {1..20}; do
+for _ in {1..10}; do
     [[ -s "$TEST_DIR/tmux.log" ]] && break
     sleep 0.05
 done
@@ -135,7 +483,11 @@ if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "1" ]] \
     echo "❌ Dispatcher did not reserve a single delayed delivery" >&2
     exit 1
 fi
-wait "$DISPATCH_PID"
+if ! wait "$DISPATCH_PID"; then
+    cat "$TEST_DIR/dispatcher.log" >&2
+    echo "❌ Delayed dispatcher exited before submitting its reserved delivery" >&2
+    exit 1
+fi
 if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]] \
     || ! grep -Fxq 'send-keys -t %77 Enter' "$TEST_DIR/tmux.log"; then
     echo "❌ Dispatcher did not submit the delayed prompt" >&2
@@ -162,6 +514,8 @@ expect_failure "$STATE_SCRIPT" claim --pr-url "$PR_URL" --event ci_failure --eve
 "$STATE_SCRIPT" pane-status --pr-url "$PR_URL" --nonce 0123456789abcdef --session-id session-42 --status approval_pending
 TEST_DIR="$TEST_DIR" "$DISPATCH_SCRIPT" --pr-url "$PR_URL"
 if [[ "$(wc -l < "$TEST_DIR/tmux.log" | tr -d ' ')" != "2" ]]; then
+    cat "$TEST_DIR/tmux.log" >&2
+    "$STATE_SCRIPT" show --pr-url "$PR_URL" >&2
     echo "❌ Dispatcher sent to an approval-pending pane" >&2
     exit 1
 fi
@@ -264,8 +618,21 @@ fi
 echo "Testing reconciliation, actionable CI event, and terminal watcher exit..."
 WATCH_LOCK="$XDG_STATE_HOME/codex-pr-monitor/${STATE_ID}.watch.lock"
 mkdir "$WATCH_LOCK"
-jq -n --arg token live --arg identity "$(process_identity "$$")" --argjson pid "$$" --argjson created "$(date +%s)" \
-    '{token: $token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
+jq -n --arg token live --arg launch_token existing-launch-token --arg identity "$(process_identity "$$")" --argjson pid "$$" --argjson created "$(date +%s)" \
+    '{token: $token, launch_token: $launch_token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
+"$STATE_SCRIPT" watcher --pr-url "$PR_URL" --pid 999999
+if UNREADY_REUSE_OUTPUT=$(PR_MONITOR_START_READY_ATTEMPTS=2 PR_MONITOR_START_READY_INTERVAL=0.05 "$WATCH_SCRIPT" start --pr-url "$PR_URL" 2>&1); then
+    echo "❌ Watcher start reported an unready live lock as active" >&2
+    exit 1
+fi
+if [[ "$UNREADY_REUSE_OUTPUT" == *"reused $PR_URL"* ]]; then
+    echo "❌ Unready live-lock reuse claimed readiness" >&2
+    exit 1
+fi
+if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.watcher.pid == null and .watcher.last_error == "foreground_required"' >/dev/null; then
+    echo "❌ Unready live-lock reuse did not record a foreground_required diagnostic" >&2
+    exit 1
+fi
 "$STATE_SCRIPT" watcher --pr-url "$PR_URL" --pid "$$"
 STATE_BEFORE_REUSE=$("$STATE_SCRIPT" show --pr-url "$PR_URL")
 START_OUTPUT=$("$WATCH_SCRIPT" start --pr-url "$PR_URL")

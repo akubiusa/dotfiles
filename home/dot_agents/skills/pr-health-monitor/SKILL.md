@@ -7,6 +7,8 @@ description: PR 作成直後に本文、CI、競合、レビューを確認し�
 
 `$pr-health-monitor <PR 番号または URL>` は PR 作成後の確認を進め、XDG state に event を記録する観測だけを行う。watcher は観測専用で、cleanup、Git 変更、callback を実行しない。後処理は `$resume-pr-monitor` だけが行う。
 
+PR 作成直後に monitor を開始する。PR 作成前の preflight は非変更で起動能力または選択する fallback だけを確認し、pane の登録、state/window の作成、watcher の起動は canonical PR URL の取得後にこの skill が行う。
+
 ## 使い方
 
 - `$pr-health-monitor <PR 番号または URL>`
@@ -16,15 +18,21 @@ description: PR 作成直後に本文、CI、競合、レビューを確認し�
 1. PR を解決する。
    - 番号だけなら `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
    - `gh pr view` で取得した `url` を canonical `PR_URL` とし、state/watcher にはこの URL だけを渡す。
-2. Codex が tmux pane 内で動作している場合は、`TMUX_PANE` と 16 文字以上の random nonce を state に登録してから `watch-pr.sh start --pr-url "$PR_URL"` を実行する。start は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
+2. canonical `PR_URL` の取得後、必ず state を初期化し、次に Codex が tmux pane 内で動作している場合は `TMUX_PANE` と 16 文字以上の random nonce を登録し、最後に watcher を開始する。start は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
 
    ```bash
+   ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh init --pr-url "$PR_URL"
    nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
    ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh register-pane --pr-url "$PR_URL" --pane "$TMUX_PANE" --nonce "$nonce"
    ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh start --pr-url "$PR_URL"
    ```
 
-   tmux 外、登録失敗、または window 起動失敗では `foreground_required` を state に記録し、成功した background 監視として報告しない。
+   `start` は専用 window の作成だけでは成功にしない。parent は launch ごとの random token を supervisor に渡し、child は token、PID、process identity を live lock owner metadata に記録する。window ID を取得後、bounded interval で同じ launch token の live lock と同じ PID の state を待ち、両方を確認できた時だけ active と報告する。確認に失敗した場合はその window を停止し、別 launch の active watcher を上書きせず `foreground_required` と watcher PID の clear を記録する。
+
+   - monitor 初期化の失敗は incomplete/unmonitored として扱う。complete または monitoring と報告しない。
+   - failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含める。state を書ける場合は `foreground_required` を記録する。
+   - start が成功した後の initial CI/review observation が失敗しても watcher は active と報告する。`foreground_required` を追加または上書きせず、active な watcher を incomplete/unmonitored と報告してはならない。
+   - 初期観測の失敗は active な watcher と区別して報告する。failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含める。fresh な GitHub access がまだない場合はその再開を明示的に予定する。
 
    ```bash
    ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh watch --pr-url "$PR_URL"
@@ -39,7 +47,7 @@ description: PR 作成直後に本文、CI、競合、レビューを確認し�
    - 対応する場合だけ target remote の base ref を確認し、必要なら `git fetch <target-remote> <base-ref>` を実行して `codex review --base <target-remote>/<base-ref>` を使う。`origin/master` を固定値にしない。
    - 対応する checkout がない場合は、その事実を報告し、対象 repository を明示して clone/worktree を用意してから再実行する。PR の diff と review threads の確認は続けられるが、ローカル修正は行わない。
 6. `request-review-copilot` が利用できる場合だけ review を依頼する。Copilot の観測は watcher に統合し、`wait-for-copilot-review.sh` を background 起動しない。
-7. CI、競合、本文、ローカルレビュー、Copilot request、tmux monitor の状態または resume fallback を報告する。dispatcher は lifecycle hook が `ready` と記録した pane へだけ固定の `$resume-pr-monitor` prompt を送る。user が ready 後に入力を始めた場合の入力混在 race は、user が許容した既知の制約である。
+7. CI、競合、本文、ローカルレビュー、Copilot request、tmux monitor の状態または resume fallback を報告する。fresh な evidence のみを報告する。過去の watcher event は fresh な GitHub state で再確認できるまで現在の状態として扱わない。dispatcher は lifecycle hook が `ready` と記録した pane へだけ固定の `$resume-pr-monitor` prompt を送る。user が ready 後に入力を始めた場合の入力混在 race は、user が許容した既知の制約である。
 
 ## 境界
 

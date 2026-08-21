@@ -221,6 +221,100 @@ done
 
 echo "✅ PR post-creation skill contracts generated successfully"
 
+# PR 品質ゲート契約が chezmoi 展開後も保持されることを確認する。
+ISSUE_PR_DISPATCHER="$HOME/.agents/skills/issue-pr/SKILL.md"
+DEEP_REVIEW_SKILL="$HOME/.agents/skills/deep-review/SKILL.md"
+CODEX_AGENTS="$HOME/.codex/AGENTS.md"
+
+# 展開済み policy が fail-closed の判断を順序どおりに拘束することを確認する。
+assert_ordered_policy() {
+  local policy="$1" label="$2"
+  shift 2
+  local previous=0 offset pattern
+  for pattern in "$@"; do
+    offset=$(grep -boF "$pattern" "$policy" | awk -F: -v previous="$previous" '$1 > previous { print $1; exit }' || true)
+    if [ -z "$offset" ] || [ "$offset" -le "$previous" ]; then
+      echo "❌ $label does not enforce the required decision order: $pattern"
+      exit 1
+    fi
+    previous=$offset
+  done
+}
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+  assert_ordered_policy "$policy" "PR monitoring precondition" \
+    'canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない' \
+    '永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する'
+done
+
+for skill in "${ISSUE_PR_SKILLS[@]}"; do
+  assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
+    'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する' \
+    '最新の全検証を実行し' \
+    '直後にシークレット確認を実行し' \
+    '50 以上、P1、P2 の未解決指摘があれば停止する' \
+    'diff、status、evidence を確認する' \
+    'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
+    '差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す'
+done
+
+assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
+  'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録' \
+  '各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
+  'deployment assertion は、この reviewed snapshot に対して final evidence を確認した直後に限って行う' \
+  'snapshot を再取得・更新してはならず' \
+  '最終ゲート全体を最初からやり直す'
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+  if ! grep -Fq 'すべての Issue が一意、open、target repository 所属であることを検証する' "$policy" \
+    || ! grep -Fq 'scope と acceptance criteria' "$policy" \
+    || ! grep -Fq '文書' "$policy" \
+    || ! grep -Fq 'review evidence' "$policy" \
+    || ! grep -Fq 'closing keyword' "$policy" \
+    || ! grep -Fq 'aggregate 最終ゲート' "$policy"; then
+    echo "❌ Aggregate Issue evidence contract missing in $policy"
+    exit 1
+  fi
+done
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" "$CODEX_AGENTS"; do
+  # shellcheck disable=SC2016
+  if ! grep -Fq 'canonical PR URL' "$policy" \
+    || ! grep -Fq '失敗した stage' "$policy" \
+    || ! grep -Eq 'fresh.*evidence' "$policy" \
+    || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$policy"; then
+    echo "❌ PR failure-report contract missing in $policy"
+    exit 1
+  fi
+done
+
+# shellcheck disable=SC2016
+assert_ordered_policy "$PR_HEALTH_SKILL" "post-create monitor recovery" \
+  'canonical `PR_URL`' \
+  'pr-monitor-state.sh init --pr-url "$PR_URL"' \
+  'register-pane --pr-url "$PR_URL"' \
+  'watch-pr.sh start --pr-url "$PR_URL"' \
+  'start が成功した後の initial CI/review observation が失敗しても watcher は active と報告する' \
+  '初期観測の失敗は active な watcher と区別して報告する' \
+  '$resume-pr-monitor <PR_URL>'
+
+assert_ordered_policy "$DEEP_REVIEW_SKILL" "deep-review final-gate handoff" \
+  'tracked、staged、untracked と evidence ID を含む snapshot を返す' \
+  'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
+  '差分、status、evidence のいずれかが変われば review を含む最終ゲート全体を最初からやり直す'
+
+# shellcheck disable=SC2016
+if ! grep -Fq '$issue-pr <Issue 番号または URL> [<Issue 番号または URL> ...]' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'すべての入力を順序を保った `ISSUE_REFERENCES` 配列として解析する' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq '各 `ISSUE_REFERENCE` を `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"` で取得する' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'issue-pr-deep "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'issue-pr-lite "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER"; then
+  echo "❌ Issue PR dispatcher routing contract missing"
+  exit 1
+fi
+
+echo "✅ PR quality-gate fail-closed decisions and recovery ordering verified"
+
 # Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
 # modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。
 CODEX_CONFIG="$HOME/.codex/config.toml"

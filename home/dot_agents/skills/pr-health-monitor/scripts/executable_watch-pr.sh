@@ -14,7 +14,11 @@ INTERVAL="${PR_MONITOR_INTERVAL:-30}"
 MAX_POLLS="${PR_MONITOR_MAX_POLLS:-0}"
 LOCK_STALE_SECONDS="${PR_MONITOR_LOCK_STALE_SECONDS:-21600}"
 LOCK_ATTEMPTS="${PR_MONITOR_LOCK_ATTEMPTS:-100}"
+START_READY_ATTEMPTS="${PR_MONITOR_START_READY_ATTEMPTS:-20}"
+START_READY_INTERVAL="${PR_MONITOR_START_READY_INTERVAL:-0.1}"
+START_READY_STABILITY_OBSERVATIONS="${PR_MONITOR_START_READY_STABILITY_OBSERVATIONS:-2}"
 [[ "$LOCK_STALE_SECONDS" =~ ^[0-9]+$ && "$LOCK_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || { echo "Error: Invalid PR monitor lock configuration" >&2; exit 1; }
+[[ "$START_READY_ATTEMPTS" =~ ^[1-9][0-9]*$ && "$START_READY_INTERVAL" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ && "$START_READY_STABILITY_OBSERVATIONS" =~ ^([2-9]|[1-9][0-9]+)$ ]] || { echo "Error: Invalid PR monitor start readiness configuration" >&2; exit 1; }
 umask 077
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
@@ -59,6 +63,7 @@ SUPERVISOR="$SCRIPT_DIR/pr-monitor-supervisor.sh"
 [[ -x "$SUPERVISOR" ]] || SUPERVISOR="$SCRIPT_DIR/executable_pr-monitor-supervisor.sh"
 WATCH_LOCK_OWNED=false
 WATCH_GUARD_FD=""
+WATCH_OWNER_PID="$BASHPID"
 
 state() {
     "$STATE_HELPER" "$@" --pr-url "$PR_URL"
@@ -109,6 +114,72 @@ watch_lock_is_live() {
     [[ -n "$current_identity" && "$current_identity" == "$identity" ]]
 }
 
+watcher_is_ready() {
+    local expected_launch_token="${1:-}" expected_window_id="${2:-}" lock_pid watcher_pid launch_token actual_window_id lock_fields
+
+    watch_lock_is_live || return 1
+    lock_fields=$(jq -r '[.pid // empty, .launch_token // empty] | @tsv' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+    IFS=$'\t' read -r lock_pid launch_token <<< "$lock_fields"
+    watcher_pid=$(state show | jq -r '.watcher.pid // empty' 2>/dev/null || true)
+    [[ "$lock_pid" =~ ^[0-9]+$ && "$watcher_pid" == "$lock_pid" ]] || return 1
+    [[ -z "$expected_launch_token" || "$launch_token" == "$expected_launch_token" ]] || return 1
+    if [[ -n "$expected_window_id" ]]; then
+        [[ "$expected_window_id" =~ ^@[0-9]+$ ]] || return 1
+        actual_window_id=$(tmux display-message -p -t "$expected_window_id" '#{window_id}' 2>/dev/null || true)
+        [[ "$actual_window_id" == "$expected_window_id" ]] || return 1
+    fi
+}
+
+wait_for_watcher_ready() {
+    local expected_launch_token="${1:-}" expected_window_id="${2:-}" _attempt ready_observations=0
+
+    for _attempt in $(seq 1 "$START_READY_ATTEMPTS"); do
+        if watcher_is_ready "$expected_launch_token" "$expected_window_id"; then
+            ready_observations=$((ready_observations + 1))
+            if [[ "$ready_observations" -ge "$START_READY_STABILITY_OBSERVATIONS" ]]; then
+                return 0
+            fi
+        else
+            ready_observations=0
+        fi
+        sleep "$START_READY_INTERVAL"
+    done
+    return 1
+}
+
+record_foreground_required() {
+    local expected_watcher_pid="${1:-}" expected_launch_token="${2:-}" launch_token
+
+    if watch_lock_is_live; then
+        launch_token=$(jq -r '.launch_token // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+        if [[ -z "$expected_launch_token" || "$launch_token" != "$expected_launch_token" ]]; then
+            return 0
+        fi
+    fi
+    if [[ -z "$expected_watcher_pid" ]]; then
+        expected_watcher_pid=$(state show | jq -r '.watcher.pid // "none"' 2>/dev/null || printf 'none')
+    fi
+    [[ "$expected_watcher_pid" =~ ^[0-9]+$ || "$expected_watcher_pid" == "none" ]] || expected_watcher_pid="none"
+    state watcher-error --reason foreground_required --expected-pid "$expected_watcher_pid" || true
+    state watcher-error --reason foreground_required --expected-pid none || true
+}
+
+wait_for_own_launch_to_exit() {
+    local expected_launch_token="$1" _attempt launch_token
+
+    for _attempt in $(seq 1 "$START_READY_ATTEMPTS"); do
+        if ! watch_lock_is_live; then
+            return 0
+        fi
+        launch_token=$(jq -r '.launch_token // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+        if [[ "$launch_token" != "$expected_launch_token" ]]; then
+            return 2
+        fi
+        sleep "$START_READY_INTERVAL"
+    done
+    return 1
+}
+
 recover_stale_watch_lock() {
     local stale_dir
 
@@ -123,7 +194,7 @@ recover_stale_watch_lock() {
 }
 
 acquire_watch_lock() {
-    local _attempt now
+    local _attempt now launch_token
 
     if [[ -z "$WATCH_GUARD_FD" ]]; then
         exec {WATCH_GUARD_FD}>"$WATCH_GUARD_FILE"
@@ -132,13 +203,18 @@ acquire_watch_lock() {
         fi
     fi
 
-    WATCH_LOCK_TOKEN="${BASHPID}-$(date +%s)-${RANDOM}"
+    WATCH_LOCK_TOKEN="${WATCH_OWNER_PID}-$(date +%s)-${RANDOM}"
+    launch_token="${PR_MONITOR_LAUNCH_TOKEN:-}"
+    if [[ -n "$launch_token" && ! "$launch_token" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+        echo "Error: Invalid PR monitor launch token" >&2
+        return 1
+    fi
     for _attempt in $(seq 1 "$LOCK_ATTEMPTS"); do
         if mkdir "$WATCH_LOCK" 2>/dev/null; then
             now=$(date +%s)
-            PROCESS_IDENTITY=$(process_identity "$BASHPID" || true)
-            jq -n --arg token "$WATCH_LOCK_TOKEN" --arg identity "$PROCESS_IDENTITY" --argjson pid "$BASHPID" --argjson created "$now" \
-                '{token: $token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
+            PROCESS_IDENTITY=$(process_identity "$WATCH_OWNER_PID" || true)
+            jq -n --arg token "$WATCH_LOCK_TOKEN" --arg launch_token "$launch_token" --arg identity "$PROCESS_IDENTITY" --argjson pid "$WATCH_OWNER_PID" --argjson created "$now" \
+                '{token: $token, launch_token: $launch_token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$WATCH_LOCK/owner.json"
             WATCH_LOCK_OWNED=true
             return 0
         fi
@@ -165,7 +241,7 @@ release_watch_lock() {
 }
 
 cleanup() {
-    state watcher --pid none || true
+    state watcher --pid none --expected-pid "$WATCH_OWNER_PID" || true
     release_watch_lock
 }
 
@@ -238,8 +314,16 @@ fi
 
 if [[ "$COMMAND" == "start" ]]; then
     if [[ -d "$WATCH_LOCK" ]] && watch_lock_is_live; then
-        echo "reused $PR_URL"
-        exit 0
+        if wait_for_watcher_ready; then
+            echo "reused $PR_URL"
+            exit 0
+        fi
+        if watch_lock_is_live; then
+            stuck_launch_token=$(jq -r '.launch_token // empty' "$WATCH_LOCK/owner.json" 2>/dev/null || true)
+            record_foreground_required "" "$stuck_launch_token"
+            echo "Error: Existing tmux monitor did not become ready for $PR_URL. Run '\$resume-pr-monitor $PR_URL'." >&2
+            exit 1
+        fi
     fi
     if [[ -d "$WATCH_LOCK" ]]; then
         recover_stale_watch_lock || true
@@ -249,20 +333,40 @@ if [[ "$COMMAND" == "start" ]]; then
     nonce=$(jq -r '.runtime.nonce // empty' <<< "$runtime")
     if [[ ! "$pane" =~ ^%[0-9]+$ || ! "$nonce" =~ ^[A-Za-z0-9_.-]{16,}$ ]] \
         || [[ "$(tmux display-message -p -t "$pane" '#{pane_id}' 2>/dev/null || true)" != "$pane" ]]; then
-        state watcher-error --reason foreground_required || true
-        state watcher --pid none || true
-        echo "Error: tmux pane registration is unavailable. Run '$0 watch --pr-url $PR_URL' in a persistent terminal, or use '$SUPERVISOR --pr-url $PR_URL'." >&2
+        record_foreground_required
+        echo "Error: tmux pane registration is unavailable for $PR_URL. Run \$resume-pr-monitor $PR_URL." >&2
         exit 1
     fi
     window_name="codex-pr-monitor-${STATE_ID:0:12}"
-    if ! tmux new-window -d -n "$window_name" "$SUPERVISOR --pr-url $PR_URL"; then
-        state watcher-error --reason foreground_required || true
-        state watcher --pid none || true
-        echo "Error: Failed to create tmux monitor window. Use '$SUPERVISOR --pr-url $PR_URL'." >&2
+    START_LAUNCH_TOKEN="launch-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    printf -v supervisor_command 'PR_MONITOR_LAUNCH_TOKEN=%q %q --pr-url %q' "$START_LAUNCH_TOKEN" "$SUPERVISOR" "$PR_URL"
+    if ! window_id=$(tmux new-window -d -P -F '#{window_id}' -n "$window_name" "$supervisor_command"); then
+        record_foreground_required
+        echo "Error: Failed to create tmux monitor window for $PR_URL. Run '\$resume-pr-monitor $PR_URL'." >&2
         exit 1
     fi
-    echo "started $PR_URL $window_name"
-    exit 0
+    if [[ ! "$window_id" =~ ^@[0-9]+$ ]]; then
+        record_foreground_required
+        echo "Error: tmux returned an invalid monitor window for $PR_URL. Run '\$resume-pr-monitor $PR_URL'." >&2
+        exit 1
+    fi
+    if wait_for_watcher_ready "$START_LAUNCH_TOKEN" "$window_id"; then
+        echo "started $PR_URL $window_name"
+        exit 0
+    fi
+    launched_watcher_pid=$(jq -r '.pid // "none"' "$WATCH_LOCK/owner.json" 2>/dev/null || printf 'none')
+    [[ "$launched_watcher_pid" =~ ^[0-9]+$ ]] || launched_watcher_pid="none"
+    tmux kill-window -t "$window_id" 2>/dev/null || true
+    if wait_for_own_launch_to_exit "$START_LAUNCH_TOKEN"; then
+        record_foreground_required "$launched_watcher_pid" "$START_LAUNCH_TOKEN"
+    else
+        launch_exit_status=$?
+        if [[ "$launch_exit_status" -ne 2 ]]; then
+            record_foreground_required "$launched_watcher_pid" "$START_LAUNCH_TOKEN"
+        fi
+    fi
+    echo "Error: tmux monitor did not become ready for $PR_URL. Run '\$resume-pr-monitor $PR_URL'." >&2
+    exit 1
 fi
 
 if ! acquire_watch_lock; then
@@ -273,8 +377,8 @@ trap cleanup EXIT
 
 FAILURES=0
 POLLS=0
-if ! state watcher --pid "$$"; then
-    state watcher-error --reason initialization_failed || true
+if ! state watcher --pid "$WATCH_OWNER_PID"; then
+    state watcher-error --reason initialization_failed --expected-pid none || true
     echo "Error: Failed to record watcher readiness" >&2
     exit 1
 fi

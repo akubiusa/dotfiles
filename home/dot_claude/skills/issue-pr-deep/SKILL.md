@@ -32,6 +32,28 @@ a **new** task for the repeated phase (e.g. "Phase 3: Write the Spec
 (revision 2)") rather than reopening the completed one. There is no
 equivalent revise loop for the plan — the plan has no human approval step.
 
+Once a phase's task is marked `completed`, immediately mark the next
+phase's task `in_progress` in the same turn and start that work — do not
+end the turn after marking `completed` and defer starting the next task.
+
+## Phase Transition Self-Check
+
+Every phase boundary in this file, except an explicit `AskUserQuestion`
+approval gate (Phase 6) or an explicitly written failure/stop condition, is
+an "auto-continue point" — this applies to every phase boundary in this
+file, not just Phase 3→4.
+
+Actions that must never happen at an auto-continue point:
+
+- Ending the turn after issuing a completion-report sentence such as "I
+  did X" / "X is complete."
+- Waiting for a user response like "go ahead" / "proceed" / "OK."
+- Inserting a content-free "may I proceed?" confirmation.
+
+Noticing you are about to do any of the above is itself a bug —
+self-correct immediately in the same turn and proceed into the next
+phase's work.
+
 ## Phase 3: Write the Spec
 
 Invoke **superpowers:brainstorming** with the issue content as the starting
@@ -72,6 +94,8 @@ file) and must not auto-chain into invoking writing-plans. This flow's own
 Phase 4 through Phase 7 own spec review, posting, approval, and plan
 creation instead — chaining from within brainstorming would duplicate
 Phase 6's approval and invoke writing-plans out of order.
+
+This boundary is a concrete case where the prohibited-actions list in the "Phase Transition Self-Check" section above directly applies.
 
 Once brainstorming returns control here after writing the spec file, this is a control return, not a pause for user input — proceed immediately into Phase 4 below without waiting for the user or announcing a stop.
 

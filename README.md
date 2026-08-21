@@ -151,11 +151,11 @@ DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 
 Codex CLI では custom slash command の代わりに user scope の skill を使います。次の skill は `~/.agents/skills/` に展開され、`$` を付けて明示的に実行します。
 
-- `$issue-pr <issue-number-or-url>`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。
+- `$issue-pr <issue-number-or-url> [...]`: GitHub Issue から PR 作成と PR 後フロー開始までを進めます。複数 Issue は `$issue-pr 336 337` のように指定し、すべてが一意かつ open で対象 repository に属すること、Issue ごとの scope・acceptance criteria・review evidence・closing keyword を確認します。すべての Issue の aggregate 最終ゲートが通るまで 1 件の PR を作成しません。
 - `$ticket-pr <ticket-key-or-url>`: Jira チケットから PR 作成と PR 後フロー開始までを進めます。
 - `$glitchtip-pr [issue-id-or-url]`: GlitchTip issue から PR 作成と、user が明示的に要求した verified Resolve までを進めます。
 - `$pr-health-monitor <pr-number-or-url>`: CI、競合、PR 本文、Codex/Copilot レビューを確認し、XDG state に close/merge、CI failure、conflict、Copilot review を記録します。external scheduler がない `start` は `foreground_required` を返します。持続した terminal を user が明示的に用意できる場合だけ `watch` を foreground で実行します。GlitchTip callback は state に保存しません。
-- tmux 内で実行中の Codex では、PR monitor が専用 tmux window を起動し、pending event を固定形式の `$resume-pr-monitor` prompt として登録済み pane へ配送できます。dispatcher は prompt 入力後に短く待って Enter を送り、同じ event を再注入しない at-most-once delivery を使います。`UserPromptSubmit` hook が一致する prompt を確認した場合だけ delivery を submitted と記録します。Codex が ready と記録された直後に user が入力を始めると text が混在し得るため、この mode はその race を許容する場合だけ使用します。tmux 外または pane registration が失敗した場合は、monitor を開始せず manual resume fallback を報告します。
+- tmux 内で実行中の Codex では、PR monitor が専用 tmux window を起動し、live watcher lock と同じ PID の state を bounded interval で確認できた時だけ active とします。確認できない場合は新しい window を停止して `foreground_required` と watcher PID の clear を記録し、canonical PR URL を含む `$resume-pr-monitor <PR URL>` の fallback を報告します。active な watcher の後に initial CI/review observation が失敗した場合は、watcher を inactive とせず別の observation failure として報告します。dispatcher は pending event を固定形式の `$resume-pr-monitor` prompt として登録済み pane へ配送できます。dispatcher は prompt 入力後に短く待って Enter を送り、同じ event を再注入しない at-most-once delivery を使います。`UserPromptSubmit` hook が一致する prompt を確認した場合だけ delivery を submitted と記録します。Codex が ready と記録された直後に user が入力を始めると text が混在し得るため、この mode はその race を許容する場合だけ使用します。tmux 外または pane registration が失敗した場合は、monitor を開始せず manual resume fallback を報告します。
 - `$resume-pr-monitor <pr-number-or-url>`: restart、agent capacity 不足、tmux 非対応、watcher 停止後に fresh GitHub state から event を reconcile し、lease を取得した pending action だけを処理します。watcher は action を実行しません。ChatGPT Desktop/Web の Scheduled Tasks を利用できる場合は project context の resume を予定できますが、local shell の detached watcher として扱いません。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
 - `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。

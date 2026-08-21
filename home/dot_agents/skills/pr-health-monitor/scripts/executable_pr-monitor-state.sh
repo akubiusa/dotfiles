@@ -27,6 +27,7 @@ ACTION=""
 LEASE_ID=""
 LEASE_SECONDS="300"
 WATCHER_PID=""
+EXPECTED_WATCHER_PID=""
 FAILURE_COUNT=""
 RUN_URL=""
 WATCHER_REASON=""
@@ -71,6 +72,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --pid)
             WATCHER_PID="${2:-}"
+            shift
+            ;;
+        --expected-pid)
+            EXPECTED_WATCHER_PID="${2:-}"
             shift
             ;;
         --count)
@@ -126,7 +131,8 @@ STATE_ID=$(printf '%s' "$CANONICAL_PR_URL" | sha256sum | awk '{print $1}')
 STATE_FILE="$STATE_DIR/${STATE_ID}.json"
 LOCK_DIR="$STATE_DIR/${STATE_ID}.lock"
 GUARD_FILE="$STATE_DIR/${STATE_ID}.guard"
-LOCK_TOKEN="${BASHPID}-$(date +%s)-${RANDOM}"
+LOCK_OWNER_PID="$BASHPID"
+LOCK_TOKEN="${LOCK_OWNER_PID}-$(date +%s)-${RANDOM}"
 LOCK_ACQUIRED=false
 GUARD_FD=""
 
@@ -202,8 +208,8 @@ acquire_lock() {
     for _attempt in $(seq 1 "$LOCK_ATTEMPTS"); do
         if mkdir "$LOCK_DIR" 2>/dev/null; then
             now=$(date +%s)
-            PROCESS_IDENTITY=$(process_identity "$BASHPID" || true)
-            jq -n --arg token "$LOCK_TOKEN" --arg identity "$PROCESS_IDENTITY" --argjson pid "$BASHPID" --argjson created "$now" \
+            PROCESS_IDENTITY=$(process_identity "$LOCK_OWNER_PID" || true)
+            jq -n --arg token "$LOCK_TOKEN" --arg identity "$PROCESS_IDENTITY" --argjson pid "$LOCK_OWNER_PID" --argjson created "$now" \
                 '{token: $token, pid: $pid, process_identity: $identity, created_at_epoch: $created}' > "$LOCK_DIR/owner.json"
             LOCK_ACQUIRED=true
             return 0
@@ -383,16 +389,18 @@ case "$COMMAND" in
     watcher)
         verify_state
         [[ "$WATCHER_PID" =~ ^[0-9]+$ || "$WATCHER_PID" == "none" ]] || usage
+        [[ -z "$EXPECTED_WATCHER_PID" || "$EXPECTED_WATCHER_PID" =~ ^[0-9]+$ || "$EXPECTED_WATCHER_PID" == "none" ]] || usage
         acquire_lock
         verify_state
-        write_state '.watcher.pid = (if $pid == "none" then null else ($pid | tonumber) end) | .watcher.updated_at = $now | if $pid == "none" then . else .watcher.last_error = null end' --arg pid "$WATCHER_PID" --arg now "$(date -Iseconds)"
+        write_state 'if $expected == "" or ((.watcher.pid | if . == null then "none" else tostring end) == $expected) then .watcher.pid = (if $pid == "none" then null else ($pid | tonumber) end) | .watcher.updated_at = $now | if $pid == "none" then . else .watcher.last_error = null end else . end' --arg pid "$WATCHER_PID" --arg expected "$EXPECTED_WATCHER_PID" --arg now "$(date -Iseconds)"
         ;;
     watcher-error)
         verify_state
         [[ "$WATCHER_REASON" == "initialization_failed" || "$WATCHER_REASON" == "foreground_required" ]] || usage
+        [[ -z "$EXPECTED_WATCHER_PID" || "$EXPECTED_WATCHER_PID" =~ ^[0-9]+$ || "$EXPECTED_WATCHER_PID" == "none" ]] || usage
         acquire_lock
         verify_state
-        write_state '.watcher.pid = null | .watcher.last_error = $reason | .watcher.updated_at = $now' --arg reason "$WATCHER_REASON" --arg now "$(date -Iseconds)"
+        write_state 'if $expected == "" or ((.watcher.pid | if . == null then "none" else tostring end) == $expected) then .watcher.pid = null | .watcher.last_error = $reason | .watcher.updated_at = $now else . end' --arg reason "$WATCHER_REASON" --arg expected "$EXPECTED_WATCHER_PID" --arg now "$(date -Iseconds)"
         ;;
     api-failure)
         verify_state

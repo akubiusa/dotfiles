@@ -9,6 +9,7 @@ WATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executa
 DISPATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-dispatch.sh"
 PANE_STATE_HOOK="$ROOT_DIR/home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
 COPILOT_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_wait-for-copilot-review.sh"
+RESOLVE_PANE_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_resolve-tmux-pane.sh"
 RESUME_SKILL="$ROOT_DIR/home/dot_agents/skills/resume-pr-monitor/SKILL.md"
 TEST_DIR=$(mktemp -d)
 TEST_HOME="$TEST_DIR/home"
@@ -71,6 +72,27 @@ cat > "$TEST_BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == "display-message" ]]; then
+    if [[ -n "${TMUX_RESOLVER_TEST_CASE:-}" ]]; then
+        pane=""
+        previous=""
+        for argument in "$@"; do
+            if [[ "$previous" == "-t" ]]; then
+                pane="$argument"
+                break
+            fi
+            previous="$argument"
+        done
+        if [[ "${TMUX_RESOLVER_REVALIDATION_FAILURE:-0}" == "1" && -n "$pane" ]]; then
+            exit 1
+        fi
+        while IFS=$'\t' read -r session_id window_id pane_id pane_pid; do
+            if [[ "$pane_id" == "$pane" ]]; then
+                printf '%s\t%s\t%s\t%s\n' "$session_id" "$window_id" "$pane_id" "$pane_pid"
+                exit 0
+            fi
+        done <<< "${TMUX_RESOLVER_PANES:-}"
+        exit 1
+    fi
     if [[ "${TMUX_STUB_MODE:-}" == "ready-then-exit" && "${4:-}" == "@101" ]]; then
         : > "$TEST_DIR/first-window-readiness-probe"
         watcher_pid=$("$STATE_SCRIPT" show --pr-url "$TMUX_READY_EXIT_PR_URL" | jq -r '.watcher.pid // empty')
@@ -91,6 +113,14 @@ if [[ "$1" == "display-message" ]]; then
     else
         printf '%%77\n'
     fi
+    exit 0
+fi
+if [[ "$1" == "list-panes" && -n "${TMUX_RESOLVER_TEST_CASE:-}" ]]; then
+    if [[ "${TMUX_RESOLVER_TEST_CASE}" == "operation-failure" ]]; then
+        echo "tmux: connection refused" >&2
+        exit 1
+    fi
+    printf '%s\n' "${TMUX_RESOLVER_PANES:-}"
     exit 0
 fi
 if [[ "$1" == "send-keys" ]]; then
@@ -182,6 +212,37 @@ if [[ "${PR_MONITOR_TEST_PROCESS_IDENTITY:-0}" == "1" && "$1" == "-p" && "${2:-}
     printf 'synthetic-start-%s\n' "$2"
     exit 0
 fi
+if [[ "${TMUX_RESOLVER_TEST_CASE:-}" != "" && "$1" == "-o" && "${2:-}" == "ppid=" && "${3:-}" == "-p" && "${4:-}" =~ ^[0-9]+$ ]]; then
+    if [[ "${TMUX_RESOLVER_TEST_CASE}" == "ps-operation-failure" ]]; then
+        echo "ps: permission denied" >&2
+        exit 1
+    fi
+    case "${TMUX_RESOLVER_TEST_CASE}" in
+        unique|direct-valid|direct-stale|revalidation-failure)
+            if [[ "$4" == "4242" ]]; then
+                printf '1\n'
+            else
+                printf '4242\n'
+            fi
+            ;;
+        unrelated|operation-failure)
+            if [[ "$4" == "9999" ]]; then
+                printf '1\n'
+            else
+                printf '9999\n'
+            fi
+            ;;
+        ambiguous)
+            case "$4" in
+                4242) printf '4243\n' ;;
+                4243) printf '1\n' ;;
+                *) printf '4242\n' ;;
+            esac
+            ;;
+        *) exit 1 ;;
+    esac
+    exit 0
+fi
 exec /usr/bin/ps "$@"
 EOF
 chmod +x "$TEST_BIN/ps"
@@ -254,6 +315,82 @@ echo "Testing PR monitor script syntax..."
 bash -n "$STATE_SCRIPT"
 bash -n "$WATCH_SCRIPT"
 bash -n "$DISPATCH_SCRIPT"
+
+echo "Testing fail-closed tmux pane resolution without TMUX_PANE..."
+RESOLVER_PANES=$'session-1\t@1\t%77\t4242'
+if ! RESOLVED_PANE=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=unique TMUX_RESOLVER_PANES="$RESOLVER_PANES" "$RESOLVE_PANE_SCRIPT"); then
+    echo "❌ A unique ancestor pane was not resolved" >&2
+    exit 1
+fi
+if [[ "$RESOLVED_PANE" != "%77" ]]; then
+    echo "❌ Resolver returned an unexpected unique pane: $RESOLVED_PANE" >&2
+    exit 1
+fi
+if ! RESOLVED_PANE=$(TMUX_PANE=%77 TMUX_RESOLVER_TEST_CASE=direct-valid TMUX_RESOLVER_PANES="$RESOLVER_PANES" "$RESOLVE_PANE_SCRIPT"); then
+    echo "❌ A valid direct TMUX_PANE was not resolved" >&2
+    exit 1
+fi
+if [[ "$RESOLVED_PANE" != "%77" ]]; then
+    echo "❌ Resolver changed a valid direct pane: $RESOLVED_PANE" >&2
+    exit 1
+fi
+if UNEXPECTED_OUTPUT=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=unrelated TMUX_RESOLVER_PANES="$RESOLVER_PANES" "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted an unrelated pane: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ -n "$UNEXPECTED_OUTPUT" ]]; then
+    echo "❌ Resolver emitted output for an unrelated pane: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+AMBIGUOUS_PANES=$'session-1\t@1\t%77\t4242\nsession-1\t@2\t%78\t4243'
+if UNEXPECTED_OUTPUT=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=ambiguous TMUX_RESOLVER_PANES="$AMBIGUOUS_PANES" "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted ambiguous ancestor panes: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ -n "$UNEXPECTED_OUTPUT" ]]; then
+    echo "❌ Resolver emitted output for ambiguous panes: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if UNEXPECTED_OUTPUT=$(TMUX_PANE=%999 TMUX_RESOLVER_TEST_CASE=direct-stale TMUX_RESOLVER_PANES='' "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted a stale direct TMUX_PANE: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ -n "$UNEXPECTED_OUTPUT" ]]; then
+    echo "❌ Resolver emitted output for a stale direct TMUX_PANE: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if ! RESOLVED_PANE=$(TMUX_PANE=%999 TMUX_RESOLVER_TEST_CASE=direct-stale TMUX_RESOLVER_PANES="$RESOLVER_PANES" "$RESOLVE_PANE_SCRIPT"); then
+    echo "❌ Resolver did not recover from a stale direct TMUX_PANE" >&2
+    exit 1
+fi
+if [[ "$RESOLVED_PANE" != "%77" ]]; then
+    echo "❌ Resolver returned an unexpected stale-direct recovery pane: $RESOLVED_PANE" >&2
+    exit 1
+fi
+if UNEXPECTED_OUTPUT=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=revalidation-failure TMUX_RESOLVER_PANES="$RESOLVER_PANES" TMUX_RESOLVER_REVALIDATION_FAILURE=1 "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted a pane after failed revalidation: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ "$UNEXPECTED_OUTPUT" != *"Error: Unable to validate tmux pane."* ]]; then
+    echo "❌ Resolver omitted revalidation failure evidence: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if UNEXPECTED_OUTPUT=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=operation-failure TMUX_RESOLVER_PANES="$RESOLVER_PANES" "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted an unavailable tmux server: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ "$UNEXPECTED_OUTPUT" != *"tmux: connection refused"* || "$UNEXPECTED_OUTPUT" != *"Error: Unable to list tmux panes."* ]]; then
+    echo "❌ Resolver omitted tmux failure evidence: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if UNEXPECTED_OUTPUT=$(env -u TMUX_PANE TMUX_RESOLVER_TEST_CASE=ps-operation-failure "$RESOLVE_PANE_SCRIPT" 2>&1); then
+    echo "❌ Resolver accepted an unavailable process tree: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
+if [[ "$UNEXPECTED_OUTPUT" != *"ps: permission denied"* || "$UNEXPECTED_OUTPUT" != *"Error: Unable to inspect the tmux process tree."* ]]; then
+    echo "❌ Resolver omitted process-tree failure evidence: $UNEXPECTED_OUTPUT" >&2
+    exit 1
+fi
 
 echo "Testing absolute state directory and collision-resistant keys..."
 expect_failure env XDG_STATE_HOME=relative HOME="$TEST_HOME" "$STATE_SCRIPT" init --pr-url "$PR_URL"

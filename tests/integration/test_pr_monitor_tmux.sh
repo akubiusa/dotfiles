@@ -11,6 +11,7 @@ fi
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STATE="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-state.sh"
 DISPATCH="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_pr-monitor-dispatch.sh"
+RESOLVER="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_resolve-tmux-pane.sh"
 DELAYED_COMPOSER="$ROOT_DIR/tests/fixtures/pr_monitor_delayed_composer.py"
 TEST_DIR=$(mktemp -d)
 SOCKET="pr-monitor-test-$$"
@@ -25,6 +26,28 @@ trap cleanup EXIT
 tmux -L "$SOCKET" new-session -d -s monitor "python3 '$DELAYED_COMPOSER' '$TEST_DIR/received'"
 PANE=$(tmux -L "$SOCKET" display-message -p -t monitor:0.0 '#{pane_id}')
 SOCKET_PATH=$(tmux -L "$SOCKET" display-message -p -t monitor:0.0 '#{socket_path}')
+
+tmux -L "$SOCKET" new-session -d -s resolver
+tmux -L "$SOCKET" split-window -t resolver
+RESOLVER_PANE=$(tmux -L "$SOCKET" display-message -p -t resolver '#{pane_id}')
+tmux -L "$SOCKET" send-keys -t resolver "env -u TMUX_PANE '$RESOLVER' > '$TEST_DIR/resolved-pane' 2> '$TEST_DIR/resolver-error'" Enter
+for _ in {1..50}; do
+    [[ -s "$TEST_DIR/resolved-pane" ]] && break
+    sleep 0.1
+done
+if [[ "$(cat "$TEST_DIR/resolved-pane" 2>/dev/null || true)" != "$RESOLVER_PANE" ]]; then
+    cat "$TEST_DIR/resolver-error" >&2 || true
+    echo "❌ Resolver did not recover the unique pane with TMUX_PANE unset" >&2
+    exit 1
+fi
+if UNRELATED_OUTPUT=$(env -u TMUX_PANE TMUX="$SOCKET_PATH,0,0" "$RESOLVER" 2>&1); then
+    echo "❌ Resolver accepted a process outside every tmux pane: $UNRELATED_OUTPUT" >&2
+    exit 1
+fi
+if [[ -n "$UNRELATED_OUTPUT" ]]; then
+    echo "❌ Resolver emitted output for a process outside every tmux pane: $UNRELATED_OUTPUT" >&2
+    exit 1
+fi
 
 HOME="$TEST_DIR/home" XDG_STATE_HOME="$TEST_DIR/state" "$STATE" init --pr-url "$PR_URL" >/dev/null
 HOME="$TEST_DIR/home" XDG_STATE_HOME="$TEST_DIR/state" "$STATE" register-pane --pr-url "$PR_URL" --pane "$PANE" --nonce 0123456789abcdef

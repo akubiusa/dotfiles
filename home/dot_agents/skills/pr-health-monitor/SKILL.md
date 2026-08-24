@@ -18,13 +18,24 @@ PR 作成直後に monitor を開始する。PR 作成前の preflight は非変
 1. PR を解決する。
    - 番号だけなら `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
    - `gh pr view` で取得した `url` を canonical `PR_URL` とし、state/watcher にはこの URL だけを渡す。
-2. canonical `PR_URL` の取得後、必ず state を初期化し、次に Codex が tmux pane 内で動作している場合は `TMUX_PANE` と 16 文字以上の random nonce を登録し、最後に watcher を開始する。start は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
+2. canonical `PR_URL` の取得後に monitor を初期化する。
+
+   - まず state を必ず初期化する。
+   - resolver は、現在の Codex に対応する tmux pane を安全に一意に選ぶ。有効な直接の `TMUX_PANE` はそのまま使い、それがない場合は parent process chain から一意に対応する pane だけを選ぶ。
+   - resolver が成功した場合にだけ、16 文字以上の random nonce を登録し、watcher を開始する。`start` は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
+   - `start` の readiness 確認と、失敗時の `foreground_required` への fail-closed fallback は後述のとおり維持する。
 
    ```bash
    ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh init --pr-url "$PR_URL"
-   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-   ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh register-pane --pr-url "$PR_URL" --pane "$TMUX_PANE" --nonce "$nonce"
-   ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh start --pr-url "$PR_URL"
+   if pane=$(~/.agents/skills/pr-health-monitor/scripts/resolve-tmux-pane.sh); then
+       nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+       ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh register-pane --pr-url "$PR_URL" --pane "$pane" --nonce "$nonce"
+       ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh start --pr-url "$PR_URL"
+   else
+       ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh watcher-error --pr-url "$PR_URL" --reason foreground_required --expected-pid none || true
+       echo "Error: tmux pane registration is unavailable for $PR_URL. Run \$resume-pr-monitor $PR_URL." >&2
+       exit 1
+   fi
    ```
 
    `start` は専用 window の作成だけでは成功にしない。parent は launch ごとの random token を supervisor に渡し、child は token、PID、process identity を live lock owner metadata に記録する。window ID を取得後、bounded interval で同じ launch token の live lock と同じ PID の state を待ち、両方を確認できた時だけ active と報告する。確認に失敗した場合はその window を停止し、別 launch の active watcher を上書きせず `foreground_required` と watcher PID の clear を記録する。

@@ -424,7 +424,49 @@ echo "✅ prompt waits for the delayed literal render before sending Enter"
 : > "$TMUX_LOG"
 rm -f "$TEST_DIR/capture-count"
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
+export TMUX_CAPTURE_PRE_DELAY=1
+export TMUX_CAPTURE_BEFORE=$'For this guard PoC, attempt exactly one Bash command:\n  gh pr merge --help.'
+export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
+export TMUX_CAPTURE_DELAY=0
+wrapped_prompt='For this guard PoC, attempt exactly one Bash command: gh pr merge --help.'
+
+bash "$PERSONAL_CTL" prompt project "$wrapped_prompt"
+
+mapfile -t wrapped_prompt_sends < <(grep '^send-keys' "$TMUX_LOG")
+[[ "${wrapped_prompt_sends[0]:-}" == "send-keys -t %42 -l -- $wrapped_prompt" && "${wrapped_prompt_sends[1]:-}" == 'send-keys -t %42 Enter' ]] || {
+    echo "❌ wrapped prompt was not verified before the separate Enter"
+    cat "$TMUX_LOG"
+    exit 1
+}
+
+echo "✅ prompt accepts Claude TUI line wrapping before sending Enter"
+
+: > "$TMUX_LOG"
+rm -f "$TEST_DIR/capture-count"
+export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
 export TMUX_CAPTURE_PRE_DELAY=0
+export TMUX_CAPTURE_BEFORE='Repeat prompt'
+export TMUX_CAPTURE_AFTER='Repeat prompt Repeat prompt Press up to edit queued messages'
+export TMUX_CAPTURE_DELAY=2
+
+bash "$PERSONAL_CTL" prompt project 'Repeat prompt'
+
+repeat_pre_submit_captures=$(awk '
+    /^send-keys -t %42 Enter$/ { print captures; exit }
+    /^capture-pane/ { captures++ }
+' "$TMUX_LOG")
+[[ "$repeat_pre_submit_captures" == '4' ]] || {
+    echo "❌ prompt trusted a stale history occurrence before the current input rendered"
+    cat "$TMUX_LOG"
+    exit 1
+}
+
+echo "✅ prompt requires a new rendered occurrence beyond stale history"
+
+: > "$TMUX_LOG"
+rm -f "$TEST_DIR/capture-count"
+export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
+export TMUX_CAPTURE_PRE_DELAY=1
 export TMUX_CAPTURE_BEFORE='Review the pending change'
 export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
 export TMUX_CAPTURE_DELAY=3
@@ -481,6 +523,7 @@ echo "✅ prompt preserves option-like text as literal input"
 
 : > "$TMUX_LOG"
 rm -f "$TEST_DIR/capture-count" "$TEST_DIR/interrupted"
+export TMUX_CAPTURE_PRE_DELAY=0
 export TMUX_CAPTURE_BEFORE='Claude transcript line'
 export TMUX_CAPTURE_AFTER='Claude transcript line'
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"

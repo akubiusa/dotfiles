@@ -13,6 +13,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_require-code-review-fixes.sh"
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
   "home/dot_claude/hooks/executable_git-config-guard.sh"
+  "home/dot_claude/hooks/executable_claudectl-git-guard.sh"
   "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
   "home/dot_codex/hooks/executable_git-config-guard.sh"
   "home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"

@@ -174,6 +174,32 @@ claudectl_trust_worktree() {
     fi
 }
 
+claudectl_untrust_worktree() {
+    local profile="$1"
+    local worktree="$2"
+    local config tmp perm
+
+    if [[ "$profile" == "claudectl" ]]; then
+        config="$HOME/.claude.json"
+    else
+        config="$HOME/.claude-work/.claude.json"
+    fi
+
+    [[ -f "$config" ]] || return 0
+    command -v jq > /dev/null 2>&1 || return 0
+    [[ "$(jq -r --arg p "$worktree" '.projects[$p] // null' "$config" 2> /dev/null)" != "null" ]] || return 0
+
+    tmp=$(mktemp "${config}.XXXXXX") || return 1
+    perm=$(stat -c '%a' "$config" 2> /dev/null || stat -f '%Lp' "$config" 2> /dev/null)
+    [[ -z "$perm" ]] || chmod "$perm" "$tmp"
+    if jq --arg p "$worktree" 'del(.projects[$p])' "$config" > "$tmp"; then
+        mv "$tmp" "$config"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
 claudectl_write_state() {
     local profile="$1"
     local repository="$2"
@@ -277,6 +303,7 @@ claudectl_start() {
 
     claudectl_trust_worktree "$profile" "$worktree"
     settings=$(claudectl_write_session_settings "$profile" "$name") || {
+        claudectl_untrust_worktree "$profile" "$worktree" || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
         claudectl_remove_session_dir "$profile" "$name" || true
@@ -285,6 +312,7 @@ claudectl_start() {
     guard='Never run git push or git merge. The controller owns the Git worktree.'
     if [[ "$profile" == "claudectl" ]]; then
         if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env -u CLAUDE_CONFIG_DIR claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
+            claudectl_untrust_worktree "$profile" "$worktree" || true
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
             claudectl_remove_session_dir "$profile" "$name" || true
@@ -292,6 +320,7 @@ claudectl_start() {
         fi
     else
         if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env "CLAUDE_CONFIG_DIR=$HOME/.claude-work" claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
+            claudectl_untrust_worktree "$profile" "$worktree" || true
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
             claudectl_remove_session_dir "$profile" "$name" || true
@@ -301,6 +330,7 @@ claudectl_start() {
     tmux_pane=$(tmux list-panes -t "$tmux_session" -F '#{pane_id}' | head -n 1)
     [[ "$tmux_pane" =~ ^%[0-9]+$ ]] || {
         tmux kill-session -t "$tmux_session" 2> /dev/null || true
+        claudectl_untrust_worktree "$profile" "$worktree" || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
         claudectl_remove_session_dir "$profile" "$name" || true
@@ -309,6 +339,7 @@ claudectl_start() {
     }
     if ! claudectl_write_state "$profile" "$repository" "$worktree" "$branch" "$base" "$tmux_session" "$tmux_pane" "$name"; then
         tmux kill-session -t "$tmux_session" 2> /dev/null || true
+        claudectl_untrust_worktree "$profile" "$worktree" || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
         claudectl_remove_session_dir "$profile" "$name" || true
@@ -484,6 +515,10 @@ claudectl_cleanup() {
     }
     (cd "$repository" && git merge-base --is-ancestor "$branch" "$base") || {
         printf 'Refusing cleanup because %s is not merged into %s.\n' "$branch" "$base" >&2
+        return 1
+    }
+    claudectl_untrust_worktree "$profile" "$worktree" || {
+        printf 'Refusing cleanup because the managed Claude trust entry could not be removed.\n' >&2
         return 1
     }
 

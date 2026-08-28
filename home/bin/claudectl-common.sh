@@ -6,6 +6,14 @@ claudectl_state_root() {
     printf '%s/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$1"
 }
 
+claudectl_session_state() {
+    local profile="$1"
+    local name="$2"
+
+    claudectl_validate_name "$name"
+    printf '%s/sessions/%s/session.json\n' "$(claudectl_state_root "$profile")" "$name"
+}
+
 claudectl_validate_state() {
     local profile="$1"
     local state="$2"
@@ -65,10 +73,10 @@ claudectl_managed_agent() {
 
 claudectl_status() {
     local profile="$1"
-    local state_root state worktree tmux_session tmux_pane pane_pid agent status
+    local name="$2"
+    local state worktree tmux_session tmux_pane pane_pid agent status
 
-    state_root=$(claudectl_state_root "$profile")
-    state="$state_root/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -131,13 +139,16 @@ claudectl_write_state() {
     local base="$5"
     local tmux_session="$6"
     local tmux_pane="$7"
-    local state_root state tmp
+    local name="$8"
+    local state_root state session_dir tmp
 
     state_root=$(claudectl_state_root "$profile")
-    state="$state_root/session.json"
+    session_dir="$state_root/sessions/$name"
+    state="$session_dir/session.json"
     umask 077
-    mkdir -p "$state_root"
+    mkdir -p "$session_dir"
     chmod 700 "$state_root"
+    chmod 700 "$state_root/sessions" "$session_dir"
     tmp=$(mktemp "$state.XXXXXX")
     jq -n \
         --arg profile "$profile" \
@@ -152,14 +163,33 @@ claudectl_write_state() {
     mv "$tmp" "$state"
 }
 
+claudectl_write_session_settings() {
+    local profile="$1"
+    local name="$2"
+    local state_root session_dir settings tmp hook
+
+    state_root=$(claudectl_state_root "$profile")
+    session_dir="$state_root/sessions/$name"
+    settings="$session_dir/claude-settings.json"
+    hook="$HOME/.claude/hooks/claudectl-git-guard.sh"
+    umask 077
+    mkdir -p "$session_dir"
+    chmod 700 "$state_root" "$state_root/sessions" "$session_dir"
+    tmp=$(mktemp "$settings.XXXXXX")
+    jq -n --arg hook "$hook" '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: $hook}]}]}}' > "$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$settings"
+    printf '%s\n' "$settings"
+}
+
 claudectl_start() {
     local profile="$1"
     local name="$2"
-    local state_root state repository base worktree branch tmux_session tmux_pane guard
+    local state_root state repository base worktree branch tmux_session tmux_pane guard settings
 
     claudectl_validate_name "$name"
     state_root=$(claudectl_state_root "$profile")
-    state="$state_root/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ ! -e "$state" ]] || {
         printf '%s already has a managed Claude session. Run cleanup before starting another.\n' "$profile" >&2
         return 1
@@ -174,7 +204,7 @@ claudectl_start() {
     }
 
     repository=$(git rev-parse --show-toplevel)
-    base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null || git branch --show-current)
+    base=$(git branch --show-current)
     [[ -n "$base" ]] || {
         printf 'Unable to determine the base branch.\n' >&2
         return 1
@@ -193,15 +223,20 @@ claudectl_start() {
     git worktree add -b "$branch" "$worktree" "$base"
 
     claudectl_trust_worktree "$profile" "$worktree"
+    settings=$(claudectl_write_session_settings "$profile" "$name") || {
+        (cd "$repository" && git worktree remove "$worktree") || true
+        (cd "$repository" && git branch -d "$branch") || true
+        return 1
+    }
     guard='Never run git push or git merge. The controller owns the Git worktree.'
     if [[ "$profile" == "claudectl" ]]; then
-        if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env -u CLAUDE_CONFIG_DIR claude --permission-mode auto --append-system-prompt "$guard"; then
+        if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env -u CLAUDE_CONFIG_DIR claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
             return 1
         fi
     else
-        if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env "CLAUDE_CONFIG_DIR=$HOME/.claude-work" claude --permission-mode auto --append-system-prompt "$guard"; then
+        if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env "CLAUDE_CONFIG_DIR=$HOME/.claude-work" claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
             return 1
@@ -215,7 +250,7 @@ claudectl_start() {
         printf 'Managed tmux session has no pane.\n' >&2
         return 1
     }
-    if ! claudectl_write_state "$profile" "$repository" "$worktree" "$branch" "$base" "$tmux_session" "$tmux_pane"; then
+    if ! claudectl_write_state "$profile" "$repository" "$worktree" "$branch" "$base" "$tmux_session" "$tmux_pane" "$name"; then
         tmux kill-session -t "$tmux_session" 2> /dev/null || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
@@ -226,11 +261,11 @@ claudectl_start() {
 
 claudectl_prompt() {
     local profile="$1"
-    local prompt="$2"
-    local state_root state worktree tmux_session tmux_pane pane_pid before_agent before_status typed after after_agent after_status
+    local name="$2"
+    local prompt="$3"
+    local state worktree tmux_session tmux_pane pane_pid before_agent before_status typed after after_agent after_status attempt
 
-    state_root=$(claudectl_state_root "$profile")
-    state="$state_root/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -258,24 +293,30 @@ claudectl_prompt() {
         return 1
     }
     tmux send-keys -t "$tmux_pane" Enter
-    after=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
-    after_agent=$(claudectl_managed_agent "$profile" "$worktree" "$pane_pid")
-    after_status=$(jq -r '.status // .state // "unknown"' <<< "$after_agent")
-    if grep -Fq 'Press up to edit queued messages' <<< "$after"; then
-        printf 'Prompt accepted and queued.\n'
-    elif [[ "$before_status" =~ ^(idle|waiting|ready)$ && "$after_status" =~ ^(busy|working|active)$ ]]; then
-        printf 'Prompt accepted.\n'
-    else
-        printf 'Claude did not acknowledge the submitted prompt.\n' >&2
-        return 1
-    fi
+    for attempt in {1..5}; do
+        after=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
+        after_agent=$(claudectl_managed_agent "$profile" "$worktree" "$pane_pid")
+        after_status=$(jq -r '.status // .state // "unknown"' <<< "$after_agent")
+        if grep -Fq 'Press up to edit queued messages' <<< "$after"; then
+            printf 'Prompt accepted and queued.\n'
+            return 0
+        fi
+        if [[ "$before_status" =~ ^(idle|waiting|ready)$ && "$after_status" =~ ^(busy|working|active)$ ]]; then
+            printf 'Prompt accepted.\n'
+            return 0
+        fi
+        [[ "$attempt" -eq 5 ]] || sleep 0.1
+    done
+    printf 'Claude did not acknowledge the submitted prompt.\n' >&2
+    return 1
 }
 
 claudectl_logs() {
     local profile="$1"
+    local name="$2"
     local state tmux_pane
 
-    state="$(claudectl_state_root "$profile")/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -287,9 +328,10 @@ claudectl_logs() {
 
 claudectl_attach() {
     local profile="$1"
+    local name="$2"
     local state tmux_session
 
-    state="$(claudectl_state_root "$profile")/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -301,9 +343,10 @@ claudectl_attach() {
 
 claudectl_interrupt() {
     local profile="$1"
+    local name="$2"
     local state worktree tmux_session tmux_pane pane_pid before_agent before_status after_agent after_status
 
-    state="$(claudectl_state_root "$profile")/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -336,9 +379,10 @@ claudectl_interrupt() {
 
 claudectl_cleanup() {
     local profile="$1"
+    local name="$2"
     local state repository worktree branch base tmux_session tmux_pane pane_pid agent status
 
-    state="$(claudectl_state_root "$profile")/session.json"
+    state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
@@ -398,39 +442,39 @@ claudectl_main() {
             ;;
         prompt)
             shift
-            [[ "$#" -eq 1 && -n "$1" ]] || {
-                printf 'Usage: %s prompt <text>\n' "$command_name" >&2
+            [[ "$#" -eq 2 && -n "$2" ]] || {
+                printf 'Usage: %s prompt <name> <text>\n' "$command_name" >&2
                 return 2
             }
-            claudectl_prompt "$profile" "$1"
+            claudectl_prompt "$profile" "$1" "$2"
             ;;
         logs)
             shift
-            [[ "$#" -eq 0 ]] || return 2
-            claudectl_logs "$profile"
+            [[ "$#" -eq 1 ]] || return 2
+            claudectl_logs "$profile" "$1"
             ;;
         attach)
             shift
-            [[ "$#" -eq 0 ]] || return 2
-            claudectl_attach "$profile"
+            [[ "$#" -eq 1 ]] || return 2
+            claudectl_attach "$profile" "$1"
             ;;
         interrupt)
             shift
-            [[ "$#" -eq 0 ]] || return 2
-            claudectl_interrupt "$profile"
+            [[ "$#" -eq 1 ]] || return 2
+            claudectl_interrupt "$profile" "$1"
             ;;
         cleanup)
             shift
-            [[ "$#" -eq 0 ]] || return 2
-            claudectl_cleanup "$profile"
+            [[ "$#" -eq 1 ]] || return 2
+            claudectl_cleanup "$profile" "$1"
             ;;
         status)
             shift
-            [[ "$#" -eq 0 ]] || {
-                printf 'Usage: %s status\n' "$command_name" >&2
+            [[ "$#" -eq 1 ]] || {
+                printf 'Usage: %s status <name>\n' "$command_name" >&2
                 return 2
             }
-            claudectl_status "$profile"
+            claudectl_status "$profile" "$1"
             ;;
         *)
             printf 'Usage: %s {start <name>|status}\n' "$command_name" >&2

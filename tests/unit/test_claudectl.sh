@@ -86,6 +86,8 @@ case "$1" in
         printf '%s\n' "$capture_count" > "$capture_count_file"
         if [[ "$capture_count" -eq 1 ]]; then
             printf '%s\n' "${TMUX_CAPTURE_BEFORE:-}"
+        elif [[ "$capture_count" -le "${TMUX_CAPTURE_DELAY:-1}" ]]; then
+            printf '\n'
         else
             printf '%s\n' "${TMUX_CAPTURE_AFTER:-}"
         fi
@@ -113,7 +115,10 @@ case "$1 ${2:-}" in
         exit 0
         ;;
     "symbolic-ref --quiet")
-        printf 'origin/master\n'
+        printf 'origin/unrelated\n'
+        ;;
+    "branch --show-current")
+        printf '%s\n' "${LOCAL_BASE:-local-main}"
         ;;
     "worktree add")
         mkdir -p "${@: -2:1}"
@@ -138,8 +143,8 @@ write_state() {
     local profile="$1"
     local state_root="$XDG_STATE_HOME/$profile"
     local worktree="$state_root/worktrees/project"
-    mkdir -p "$worktree"
-    cat > "$state_root/session.json" <<EOF
+    mkdir -p "$worktree" "$state_root/sessions/project"
+    cat > "$state_root/sessions/project/session.json" <<EOF
 {
   "profile": "$profile",
   "repository": "$TEST_DIR/repository",
@@ -156,8 +161,8 @@ write_state claudectl
 write_state claude-workctl
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"},{\"cwd\":\"$XDG_STATE_HOME/claude-workctl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
 
-personal_output=$(bash "$PERSONAL_CTL" status)
-work_output=$(bash "$WORK_CTL" status)
+personal_output=$(bash "$PERSONAL_CTL" status project)
+work_output=$(bash "$WORK_CTL" status project)
 
 grep -Fq 'busy' <<< "$personal_output" || {
     echo "❌ claudectl did not report its matching busy session"
@@ -179,7 +184,7 @@ grep -Fxq "config=$TEST_HOME/.claude-work args=agents --json" "$CLAUDE_LOG" || {
 }
 
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$TEST_DIR/unmanaged\",\"pid\":4242,\"status\":\"busy\"}]"
-if bash "$PERSONAL_CTL" status > /dev/null 2>&1; then
+if bash "$PERSONAL_CTL" status project > /dev/null 2>&1; then
     echo "❌ claudectl associated an unrelated Claude session by PID alone"
     exit 1
 fi
@@ -188,7 +193,7 @@ echo "✅ profile-specific status queries are isolated"
 
 TEST_REPO="$TEST_DIR/repository"
 mkdir -p "$TEST_REPO/.git"
-rm -f "$XDG_STATE_HOME/claudectl/session.json" "$XDG_STATE_HOME/claude-workctl/session.json"
+rm -rf "$XDG_STATE_HOME/claudectl/sessions" "$XDG_STATE_HOME/claude-workctl/sessions"
 rm -rf "$XDG_STATE_HOME/claudectl/worktrees" "$XDG_STATE_HOME/claude-workctl/worktrees"
 : > "$TMUX_LOG"
 : > "$GIT_LOG"
@@ -219,9 +224,13 @@ unset TMUX_NEW_SESSION_FAIL
     cd "$TEST_REPO"
     bash "$WORK_CTL" start project
 )
+(
+    cd "$TEST_REPO"
+    bash "$PERSONAL_CTL" start second
+)
 
-personal_state="$XDG_STATE_HOME/claudectl/session.json"
-work_state="$XDG_STATE_HOME/claude-workctl/session.json"
+personal_state="$XDG_STATE_HOME/claudectl/sessions/project/session.json"
+work_state="$XDG_STATE_HOME/claude-workctl/sessions/project/session.json"
 [[ "$(jq -r '.worktree' "$personal_state")" == "$XDG_STATE_HOME/claudectl/worktrees/project" ]] || {
     echo "❌ claudectl did not use its isolated worktree root"
     exit 1
@@ -246,12 +255,32 @@ work_state="$XDG_STATE_HOME/claude-workctl/session.json"
     echo "❌ claude-workctl did not use its tmux prefix"
     exit 1
 }
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/second/session.json" ]] || {
+    echo "❌ claudectl did not retain a second named session"
+    exit 1
+}
+[[ "$(jq -r '.base' "$personal_state")" == 'local-main' ]] || {
+    echo "❌ start did not store the current local base branch"
+    exit 1
+}
+! grep -Fq 'symbolic-ref' "$GIT_LOG" || {
+    echo "❌ start consulted origin/HEAD instead of the local base branch"
+    exit 1
+}
 grep -Fq -- '--permission-mode auto' "$TMUX_LOG" || {
     echo "❌ start did not launch Claude with the local auto permission mode"
     exit 1
 }
 grep -Fq -- '--append-system-prompt Never run git push or git merge.' "$TMUX_LOG" || {
     echo "❌ start did not guard Claude against push and merge"
+    exit 1
+}
+grep -Fq -- "--settings $XDG_STATE_HOME/claudectl/sessions/project/claude-settings.json" "$TMUX_LOG" || {
+    echo "❌ managed launch did not register its private hook settings"
+    exit 1
+}
+grep -Fq -- '--disallowed-tools Bash(git push *) Bash(git merge *) Bash(gh pr merge *)' "$TMUX_LOG" || {
+    echo "❌ managed launch did not add direct Git merge and push disallow rules"
     exit 1
 }
 ! grep -Eq -- '(^| )--worktree($| )|(^| )--bg($| )|(^| )-p($| )' "$TMUX_LOG" || {
@@ -270,7 +299,7 @@ grep -Fq -- '--append-system-prompt Never run git push or git merge.' "$TMUX_LOG
 
 jq --arg worktree "$TEST_DIR/unmanaged" '.worktree = $worktree' "$work_state" > "$work_state.tmp"
 mv "$work_state.tmp" "$work_state"
-if bash "$WORK_CTL" logs > /dev/null 2>&1; then
+if bash "$WORK_CTL" logs project > /dev/null 2>&1; then
     echo "❌ claude-workctl accepted state outside its managed worktree root"
     exit 1
 fi
@@ -282,8 +311,9 @@ rm -f "$TEST_DIR/capture-count"
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
 export TMUX_CAPTURE_BEFORE='Review the pending change'
 export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
+export TMUX_CAPTURE_DELAY=3
 
-bash "$PERSONAL_CTL" prompt 'Review the pending change'
+bash "$PERSONAL_CTL" prompt project 'Review the pending change'
 
 mapfile -t prompt_sends < <(grep '^send-keys' "$TMUX_LOG")
 [[ "${prompt_sends[0]:-}" == 'send-keys -t %42 -l -- Review the pending change' ]] || {
@@ -306,8 +336,8 @@ mapfile -t prompt_sends < <(grep '^send-keys' "$TMUX_LOG")
     cat "$TMUX_LOG"
     exit 1
 }
-[[ "$(cat "$TEST_DIR/capture-count")" == '2' ]] || {
-    echo "❌ prompt did not verify both typed text and queued-message acknowledgement"
+[[ "$(cat "$TEST_DIR/capture-count")" -ge 4 ]] || {
+    echo "❌ prompt did not poll for queued-message acknowledgement"
     exit 1
 }
 grep -Fq 'capture-pane -p -J -t %42 -S -200' "$TMUX_LOG" || {
@@ -323,7 +353,7 @@ rm -f "$TEST_DIR/capture-count"
 export TMUX_CAPTURE_BEFORE='-X'
 export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
 
-bash "$PERSONAL_CTL" prompt '-X'
+bash "$PERSONAL_CTL" prompt project '-X'
 
 grep -Fxq 'send-keys -t %42 -l -- -X' "$TMUX_LOG" || {
     echo "❌ prompt treated option-like text as a tmux option instead of literal input"
@@ -340,13 +370,13 @@ export TMUX_CAPTURE_AFTER='Claude transcript line'
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
 export CLAUDE_AGENTS_AFTER_INTERRUPT="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"idle\"}]"
 
-logs_output=$(bash "$PERSONAL_CTL" logs)
+logs_output=$(bash "$PERSONAL_CTL" logs project)
 [[ "$logs_output" == *'Claude transcript line'* ]] || {
     echo "❌ logs did not capture the managed Claude TUI"
     exit 1
 }
-bash "$PERSONAL_CTL" attach
-bash "$PERSONAL_CTL" interrupt
+bash "$PERSONAL_CTL" attach project
+bash "$PERSONAL_CTL" interrupt project
 grep -Fq 'attach-session -t claudectl-project' "$TMUX_LOG" || {
     echo "❌ attach did not target the managed tmux session"
     exit 1
@@ -363,7 +393,7 @@ export TMUX_SESSION_EXISTS=0
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"idle\"}]"
 export GIT_STATUS_OUTPUT=''
 export GIT_BRANCH_MERGED=1
-if bash "$PERSONAL_CTL" cleanup > /dev/null 2>&1; then
+if bash "$PERSONAL_CTL" cleanup project > /dev/null 2>&1; then
     echo "❌ cleanup ran when it could not confirm the managed tmux session"
     exit 1
 fi
@@ -379,7 +409,7 @@ fi
 export TMUX_SESSION_EXISTS=1
 export TMUX_SESSION_EXISTS=1
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
-if bash "$PERSONAL_CTL" cleanup > /dev/null 2>&1; then
+if bash "$PERSONAL_CTL" cleanup project > /dev/null 2>&1; then
     echo "❌ cleanup ran while the managed Claude session was busy"
     exit 1
 fi
@@ -390,7 +420,7 @@ fi
 
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"idle\"}]"
 export GIT_STATUS_OUTPUT=' M uncommitted.txt'
-if bash "$PERSONAL_CTL" cleanup > /dev/null 2>&1; then
+if bash "$PERSONAL_CTL" cleanup project > /dev/null 2>&1; then
     echo "❌ cleanup ran with uncommitted work"
     exit 1
 fi
@@ -401,7 +431,7 @@ fi
 
 export GIT_STATUS_OUTPUT=''
 export GIT_BRANCH_MERGED=0
-if bash "$PERSONAL_CTL" cleanup > /dev/null 2>&1; then
+if bash "$PERSONAL_CTL" cleanup project > /dev/null 2>&1; then
     echo "❌ cleanup deleted an unmerged branch"
     exit 1
 fi
@@ -411,7 +441,7 @@ fi
 }
 
 export GIT_BRANCH_MERGED=1
-bash "$PERSONAL_CTL" cleanup
+bash "$PERSONAL_CTL" cleanup project
 [[ ! -e "$personal_state" ]] || {
     echo "❌ cleanup did not remove state after all guards passed"
     exit 1

@@ -181,15 +181,15 @@ Git repository の clean な base checkout から、profile ごとに次のコ�
 
 ```bash
 claudectl start task-name
-claudectl status
-claudectl prompt "Review the failing test"
-claudectl logs
-claudectl attach
-claudectl interrupt
-claudectl cleanup
+claudectl status task-name
+claudectl prompt task-name "Review the failing test"
+claudectl logs task-name
+claudectl attach task-name
+claudectl interrupt task-name
+claudectl cleanup task-name
 ```
 
-`prompt` は busy な Claude Code を通常は interrupt せず、literal text と別操作の Enter で次の tool-use boundary へ queue します。`interrupt` だけが明示的に Ctrl-C を送信します。`cleanup` は managed session が busy、worktree が dirty、または branch が base に未 merge の場合に停止し、変更の破棄や force delete を行いません。
+profile ごとに複数の名前付き session を並行して管理でき、同じ name は `claude-workctl` と独立しています。`start` は clean な現在の local branch を base として保存します。`prompt` は busy な Claude Code を通常は interrupt せず、literal text と別操作の Enter で次の tool-use boundary へ queue します。`interrupt` だけが明示的に Ctrl-C を送信します。managed session には `git push`、`git merge`、`gh pr merge` を拒否する session-only hook が追加され、通常の Claude profile 設定は変更しません。`cleanup` は managed session が busy、worktree が dirty、または branch が保存済み local base に未 merge の場合に停止し、変更の破棄や force delete を行いません。
 
 ### issue-pr
 

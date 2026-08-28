@@ -10,28 +10,51 @@ claudectl_session_state() {
     local profile="$1"
     local name="$2"
 
+    printf '%s/session.json\n' "$(claudectl_session_dir "$profile" "$name")"
+}
+
+claudectl_session_dir() {
+    local profile="$1"
+    local name="$2"
+
     claudectl_validate_name "$name"
-    printf '%s/sessions/%s/session.json\n' "$(claudectl_state_root "$profile")" "$name"
+    printf '%s/sessions/%s\n' "$(claudectl_state_root "$profile")" "$name"
+}
+
+claudectl_remove_session_dir() {
+    local profile="$1"
+    local name="$2"
+    local state_root sessions_root session_dir
+
+    state_root=$(claudectl_state_root "$profile")
+    sessions_root="$state_root/sessions"
+    session_dir=$(claudectl_session_dir "$profile" "$name")
+    [[ "$session_dir" == "$sessions_root/"* && "${session_dir##*/}" == "$name" ]] || {
+        printf 'Refusing to remove an invalid managed session directory.\n' >&2
+        return 1
+    }
+    rm -rf -- "$session_dir"
 }
 
 claudectl_validate_state() {
     local profile="$1"
     local state="$2"
-    local state_root stored_profile worktree branch tmux_session tmux_pane name
+    local name="$3"
+    local state_root expected_state stored_profile worktree branch tmux_session tmux_pane
 
+    claudectl_validate_name "$name"
     state_root=$(claudectl_state_root "$profile")
+    expected_state=$(claudectl_session_state "$profile" "$name")
     stored_profile=$(jq -er '.profile' "$state")
     worktree=$(jq -er '.worktree' "$state")
     branch=$(jq -er '.branch' "$state")
     tmux_session=$(jq -er '.tmux_session' "$state")
     tmux_pane=$(jq -er '.tmux_pane' "$state")
-    name=${worktree##*/}
 
-    [[ "$stored_profile" == "$profile" && "$worktree" == "$state_root/worktrees/"* ]] || {
+    [[ "$state" == "$expected_state" && "$stored_profile" == "$profile" && "$worktree" == "$state_root/worktrees/$name" ]] || {
         printf 'Managed state does not belong to %s.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_name "$name"
     [[ "$branch" == "$profile/$name" && "$tmux_session" == "$profile-$name" && "$tmux_pane" =~ ^%[0-9]+$ ]] || {
         printf 'Managed state has invalid resource identifiers.\n' >&2
         return 1
@@ -81,7 +104,7 @@ claudectl_status() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
 
     worktree=$(jq -er '.worktree' "$state")
     tmux_session=$(jq -er '.tmux_session' "$state")
@@ -149,8 +172,8 @@ claudectl_write_state() {
     mkdir -p "$session_dir"
     chmod 700 "$state_root"
     chmod 700 "$state_root/sessions" "$session_dir"
-    tmp=$(mktemp "$state.XXXXXX")
-    jq -n \
+    tmp=$(mktemp "$state.XXXXXX") || return 1
+    if ! jq -n \
         --arg profile "$profile" \
         --arg repository "$repository" \
         --arg worktree "$worktree" \
@@ -158,9 +181,14 @@ claudectl_write_state() {
         --arg base "$base" \
         --arg tmux_session "$tmux_session" \
         --arg tmux_pane "$tmux_pane" \
-        '{profile: $profile, repository: $repository, worktree: $worktree, branch: $branch, base: $base, tmux_session: $tmux_session, tmux_pane: $tmux_pane}' > "$tmp"
-    chmod 600 "$tmp"
-    mv "$tmp" "$state"
+        '{profile: $profile, repository: $repository, worktree: $worktree, branch: $branch, base: $base, tmux_session: $tmux_session, tmux_pane: $tmux_pane}' > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! chmod 600 "$tmp" || ! mv "$tmp" "$state"; then
+        rm -f "$tmp"
+        return 1
+    fi
 }
 
 claudectl_write_session_settings() {
@@ -175,10 +203,15 @@ claudectl_write_session_settings() {
     umask 077
     mkdir -p "$session_dir"
     chmod 700 "$state_root" "$state_root/sessions" "$session_dir"
-    tmp=$(mktemp "$settings.XXXXXX")
-    jq -n --arg hook "$hook" '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: $hook}]}]}}' > "$tmp"
-    chmod 600 "$tmp"
-    mv "$tmp" "$settings"
+    tmp=$(mktemp "$settings.XXXXXX") || return 1
+    if ! jq -n --arg hook "$hook" '{hooks: {PreToolUse: [{matcher: "Bash", hooks: [{type: "command", command: $hook}]}]}}' > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! chmod 600 "$tmp" || ! mv "$tmp" "$settings"; then
+        rm -f "$tmp"
+        return 1
+    fi
     printf '%s\n' "$settings"
 }
 
@@ -226,6 +259,7 @@ claudectl_start() {
     settings=$(claudectl_write_session_settings "$profile" "$name") || {
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
+        claudectl_remove_session_dir "$profile" "$name" || true
         return 1
     }
     guard='Never run git push or git merge. The controller owns the Git worktree.'
@@ -233,12 +267,14 @@ claudectl_start() {
         if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env -u CLAUDE_CONFIG_DIR claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
+            claudectl_remove_session_dir "$profile" "$name" || true
             return 1
         fi
     else
         if ! tmux new-session -d -s "$tmux_session" -c "$worktree" env "CLAUDE_CONFIG_DIR=$HOME/.claude-work" claude --permission-mode auto --settings "$settings" --disallowed-tools 'Bash(git push *)' 'Bash(git merge *)' 'Bash(gh pr merge *)' --append-system-prompt "$guard"; then
             (cd "$repository" && git worktree remove "$worktree") || true
             (cd "$repository" && git branch -d "$branch") || true
+            claudectl_remove_session_dir "$profile" "$name" || true
             return 1
         fi
     fi
@@ -247,6 +283,7 @@ claudectl_start() {
         tmux kill-session -t "$tmux_session" 2> /dev/null || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
+        claudectl_remove_session_dir "$profile" "$name" || true
         printf 'Managed tmux session has no pane.\n' >&2
         return 1
     }
@@ -254,6 +291,7 @@ claudectl_start() {
         tmux kill-session -t "$tmux_session" 2> /dev/null || true
         (cd "$repository" && git worktree remove "$worktree") || true
         (cd "$repository" && git branch -d "$branch") || true
+        claudectl_remove_session_dir "$profile" "$name" || true
         return 1
     fi
     printf 'Started %s in %s.\n' "$tmux_session" "$worktree"
@@ -270,7 +308,7 @@ claudectl_prompt() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
     worktree=$(jq -er '.worktree' "$state")
     tmux_session=$(jq -er '.tmux_session' "$state")
     tmux_pane=$(jq -er '.tmux_pane' "$state")
@@ -321,7 +359,7 @@ claudectl_logs() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
     tmux_pane=$(jq -er '.tmux_pane' "$state")
     tmux capture-pane -p -J -t "$tmux_pane" -S -1000
 }
@@ -336,7 +374,7 @@ claudectl_attach() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
     tmux_session=$(jq -er '.tmux_session' "$state")
     tmux attach-session -t "$tmux_session"
 }
@@ -351,7 +389,7 @@ claudectl_interrupt() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
     worktree=$(jq -er '.worktree' "$state")
     tmux_session=$(jq -er '.tmux_session' "$state")
     tmux_pane=$(jq -er '.tmux_pane' "$state")
@@ -387,7 +425,7 @@ claudectl_cleanup() {
         printf '%s has no managed Claude session.\n' "$profile" >&2
         return 1
     }
-    claudectl_validate_state "$profile" "$state"
+    claudectl_validate_state "$profile" "$state" "$name"
     repository=$(jq -er '.repository' "$state")
     worktree=$(jq -er '.worktree' "$state")
     branch=$(jq -er '.branch' "$state")
@@ -422,7 +460,7 @@ claudectl_cleanup() {
     tmux kill-session -t "$tmux_session" 2> /dev/null || true
     (cd "$repository" && git worktree remove "$worktree")
     (cd "$repository" && git branch -d "$branch")
-    rm -f "$state"
+    claudectl_remove_session_dir "$profile" "$name"
     printf 'Cleaned up %s.\n' "$tmux_session"
 }
 

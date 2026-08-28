@@ -72,7 +72,7 @@ case "$1" in
         ;;
     list-panes)
         if [[ "$*" == *'#{pane_id}'* ]]; then
-            printf '%%42\n'
+            printf '%s\n' "${TMUX_PANE_ID:-%42}"
         elif [[ "$*" == *' -t %42 '* ]]; then
             printf '4242\n'
         else
@@ -138,6 +138,20 @@ case "$1 ${2:-}" in
 esac
 EOF
 chmod +x "$TEST_BIN/git"
+
+cat > "$TEST_BIN/mktemp" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+if [[ "${MK_TEMP_FAIL_STATE_WRITE:-0}" == '1' && "$1" == *'/session.json.XXXXXX' ]]; then
+    exit 1
+fi
+if [[ "${MK_TEMP_FAIL_SETTINGS_WRITE:-0}" == '1' && "$1" == *'/claude-settings.json.XXXXXX' ]]; then
+    exit 1
+fi
+exec /usr/bin/mktemp "$@"
+EOF
+chmod +x "$TEST_BIN/mktemp"
 
 write_state() {
     local profile="$1"
@@ -210,11 +224,68 @@ fi
     echo "❌ start left a worktree behind after tmux launch failed"
     exit 1
 }
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/failed-launch" ]] || {
+    echo "❌ start left session-private settings behind after tmux launch failed"
+    exit 1
+}
+if (
+    cd "$TEST_REPO"
+    bash "$WORK_CTL" start failed-launch
+); then
+    echo "❌ claude-workctl start succeeded when tmux could not launch Claude"
+    exit 1
+fi
+[[ ! -e "$XDG_STATE_HOME/claude-workctl/sessions/failed-launch" ]] || {
+    echo "❌ claude-workctl left session-private settings behind after tmux launch failed"
+    exit 1
+}
 grep -Fq 'branch -d claudectl/failed-launch' "$GIT_LOG" || {
     echo "❌ start did not safely roll back the failed branch"
     exit 1
 }
 unset TMUX_NEW_SESSION_FAIL
+
+export TMUX_PANE_ID='invalid-pane'
+if (
+    cd "$TEST_REPO"
+    bash "$PERSONAL_CTL" start failed-pane
+) > /dev/null 2>&1; then
+    echo "❌ start succeeded when tmux did not expose a pane"
+    exit 1
+fi
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/failed-pane" ]] || {
+    echo "❌ start left session-private settings behind after pane discovery failed"
+    exit 1
+}
+unset TMUX_PANE_ID
+
+export MK_TEMP_FAIL_STATE_WRITE=1
+if (
+    cd "$TEST_REPO"
+    bash "$PERSONAL_CTL" start failed-state
+); then
+    echo "❌ start succeeded when the session state could not be written"
+    exit 1
+fi
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/failed-state" ]] || {
+    echo "❌ start left session-private settings behind after state writing failed"
+    exit 1
+}
+unset MK_TEMP_FAIL_STATE_WRITE
+
+export MK_TEMP_FAIL_SETTINGS_WRITE=1
+if (
+    cd "$TEST_REPO"
+    bash "$PERSONAL_CTL" start failed-settings
+); then
+    echo "❌ start succeeded when the private settings could not be written"
+    exit 1
+fi
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/failed-settings" ]] || {
+    echo "❌ start left a session directory behind after settings writing failed"
+    exit 1
+}
+unset MK_TEMP_FAIL_SETTINGS_WRITE
 
 (
     cd "$TEST_REPO"
@@ -296,6 +367,18 @@ grep -Fq -- '--disallowed-tools Bash(git push *) Bash(git merge *) Bash(gh pr me
     echo "❌ state root was not written with restrictive permissions"
     exit 1
 }
+
+cp "$personal_state" "$personal_state.backup"
+jq \
+    --arg worktree "$XDG_STATE_HOME/claudectl/worktrees/second" \
+    '.worktree = $worktree | .branch = "claudectl/second" | .tmux_session = "claudectl-second"' \
+    "$personal_state" > "$personal_state.tmp"
+mv "$personal_state.tmp" "$personal_state"
+if bash "$PERSONAL_CTL" logs project > /dev/null 2>&1; then
+    echo "❌ claudectl accepted a project state payload that targets a different named session"
+    exit 1
+fi
+mv "$personal_state.backup" "$personal_state"
 
 jq --arg worktree "$TEST_DIR/unmanaged" '.worktree = $worktree' "$work_state" > "$work_state.tmp"
 mv "$work_state.tmp" "$work_state"
@@ -444,6 +527,10 @@ export GIT_BRANCH_MERGED=1
 bash "$PERSONAL_CTL" cleanup project
 [[ ! -e "$personal_state" ]] || {
     echo "❌ cleanup did not remove state after all guards passed"
+    exit 1
+}
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/project" ]] || {
+    echo "❌ cleanup left session-private settings behind after all guards passed"
     exit 1
 }
 grep -Fq 'worktree remove' "$GIT_LOG" || {

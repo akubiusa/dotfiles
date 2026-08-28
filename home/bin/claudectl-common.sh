@@ -6,6 +6,26 @@ claudectl_state_root() {
     printf '%s/%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}" "$1"
 }
 
+claudectl_normalize_rendered_text() {
+    tr '\r\n\t' '   ' | sed -E 's/ +/ /g'
+}
+
+claudectl_count_literal_occurrences() {
+    local haystack="$1"
+    local needle="$2"
+    local count=0
+
+    [[ -n "$needle" ]] || {
+        printf '0\n'
+        return 0
+    }
+    while [[ "$haystack" == *"$needle"* ]]; do
+        haystack=${haystack#*"$needle"}
+        count=$((count + 1))
+    done
+    printf '%s\n' "$count"
+}
+
 claudectl_session_state() {
     local profile="$1"
     local name="$2"
@@ -301,7 +321,7 @@ claudectl_prompt() {
     local profile="$1"
     local name="$2"
     local prompt="$3"
-    local state worktree tmux_session tmux_pane pane_pid before_agent before_status typed after after_agent after_status attempt
+    local state worktree tmux_session tmux_pane pane_pid before_agent before_status baseline normalized_baseline baseline_count typed normalized_typed normalized_prompt rendered_count after after_agent after_status attempt
 
     state=$(claudectl_session_state "$profile" "$name")
     [[ -f "$state" ]] || {
@@ -324,13 +344,19 @@ claudectl_prompt() {
     before_agent=$(claudectl_managed_agent "$profile" "$worktree" "$pane_pid")
     before_status=$(jq -r '.status // .state // "unknown"' <<< "$before_agent")
 
+    normalized_prompt=$(printf '%s' "$prompt" | claudectl_normalize_rendered_text)
+    baseline=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
+    normalized_baseline=$(printf '%s' "$baseline" | claudectl_normalize_rendered_text)
+    baseline_count=$(claudectl_count_literal_occurrences "$normalized_baseline" "$normalized_prompt")
     tmux send-keys -t "$tmux_pane" -l -- "$prompt"
     for attempt in {1..5}; do
         typed=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
-        grep -Fq -- "$prompt" <<< "$typed" && break
+        normalized_typed=$(printf '%s' "$typed" | claudectl_normalize_rendered_text)
+        rendered_count=$(claudectl_count_literal_occurrences "$normalized_typed" "$normalized_prompt")
+        [[ "$rendered_count" -gt "$baseline_count" ]] && break
         [[ "$attempt" -eq 5 ]] || sleep 0.1
     done
-    grep -Fq -- "$prompt" <<< "$typed" || {
+    [[ "$rendered_count" -gt "$baseline_count" ]] || {
         printf 'Claude did not show the literal prompt before submission.\n' >&2
         return 1
     }

@@ -83,10 +83,14 @@ case "$1" in
         capture_count_file="$TEST_DIR/capture-count"
         capture_count=$(cat "$capture_count_file" 2> /dev/null || printf '0')
         capture_count=$((capture_count + 1))
+        capture_pre_delay="${TMUX_CAPTURE_PRE_DELAY:-0}"
+        capture_post_delay="${TMUX_CAPTURE_DELAY:-1}"
         printf '%s\n' "$capture_count" > "$capture_count_file"
-        if [[ "$capture_count" -eq 1 ]]; then
+        if [[ "$capture_count" -le "$capture_pre_delay" ]]; then
+            printf '\n'
+        elif [[ "$capture_count" -eq $((capture_pre_delay + 1)) ]]; then
             printf '%s\n' "${TMUX_CAPTURE_BEFORE:-}"
-        elif [[ "$capture_count" -le "${TMUX_CAPTURE_DELAY:-1}" ]]; then
+        elif [[ "$capture_count" -le $((capture_pre_delay + capture_post_delay + 1)) ]]; then
             printf '\n'
         else
             printf '%s\n' "${TMUX_CAPTURE_AFTER:-}"
@@ -392,6 +396,35 @@ echo "✅ starts isolated profile-specific worktrees with guarded interactive Cl
 : > "$TMUX_LOG"
 rm -f "$TEST_DIR/capture-count"
 export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
+export TMUX_CAPTURE_PRE_DELAY=3
+export TMUX_CAPTURE_BEFORE='Delayed prompt render'
+export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
+export TMUX_CAPTURE_DELAY=0
+
+bash "$PERSONAL_CTL" prompt project 'Delayed prompt render'
+
+pre_submit_captures=$(awk '
+    /^send-keys -t %42 Enter$/ { print captures; exit }
+    /^capture-pane/ { captures++ }
+' "$TMUX_LOG")
+[[ "$pre_submit_captures" == '4' ]] || {
+    echo "❌ prompt did not wait for the delayed literal prompt render before Enter"
+    cat "$TMUX_LOG"
+    exit 1
+}
+mapfile -t delayed_prompt_sends < <(grep '^send-keys' "$TMUX_LOG")
+[[ "${delayed_prompt_sends[0]:-}" == 'send-keys -t %42 -l -- Delayed prompt render' && "${delayed_prompt_sends[1]:-}" == 'send-keys -t %42 Enter' && "${#delayed_prompt_sends[@]}" -eq 2 ]] || {
+    echo "❌ delayed prompt did not send literal text and Enter as separate operations"
+    cat "$TMUX_LOG"
+    exit 1
+}
+
+echo "✅ prompt waits for the delayed literal render before sending Enter"
+
+: > "$TMUX_LOG"
+rm -f "$TEST_DIR/capture-count"
+export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/project\",\"pid\":4242,\"status\":\"busy\"}]"
+export TMUX_CAPTURE_PRE_DELAY=0
 export TMUX_CAPTURE_BEFORE='Review the pending change'
 export TMUX_CAPTURE_AFTER='Press up to edit queued messages'
 export TMUX_CAPTURE_DELAY=3

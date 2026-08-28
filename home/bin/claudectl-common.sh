@@ -325,7 +325,11 @@ claudectl_prompt() {
     before_status=$(jq -r '.status // .state // "unknown"' <<< "$before_agent")
 
     tmux send-keys -t "$tmux_pane" -l -- "$prompt"
-    typed=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
+    for attempt in {1..5}; do
+        typed=$(tmux capture-pane -p -J -t "$tmux_pane" -S -200)
+        grep -Fq -- "$prompt" <<< "$typed" && break
+        [[ "$attempt" -eq 5 ]] || sleep 0.1
+    done
     grep -Fq -- "$prompt" <<< "$typed" || {
         printf 'Claude did not show the literal prompt before submission.\n' >&2
         return 1

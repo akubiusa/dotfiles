@@ -210,7 +210,13 @@ fi
 echo "✅ profile-specific status queries are isolated"
 
 TEST_REPO="$TEST_DIR/repository"
-mkdir -p "$TEST_REPO/.git"
+mkdir -p "$TEST_REPO/.git" "$TEST_HOME/.claude-work"
+cat > "$TEST_HOME/.claude.json" <<'EOF'
+{"projects":{"/keep-personal":{"hasTrustDialogAccepted":true}}}
+EOF
+cat > "$TEST_HOME/.claude-work/.claude.json" <<'EOF'
+{"projects":{"/keep-work":{"hasTrustDialogAccepted":true}}}
+EOF
 rm -rf "$XDG_STATE_HOME/claudectl/sessions" "$XDG_STATE_HOME/claude-workctl/sessions"
 rm -rf "$XDG_STATE_HOME/claudectl/worktrees" "$XDG_STATE_HOME/claude-workctl/worktrees"
 : > "$TMUX_LOG"
@@ -232,6 +238,14 @@ fi
     echo "❌ start left session-private settings behind after tmux launch failed"
     exit 1
 }
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claudectl/worktrees/failed-launch" '.projects[$p] // null' "$TEST_HOME/.claude.json")" == 'null' ]] || {
+    echo "❌ start left managed Claude trust behind after tmux launch failed"
+    exit 1
+}
+[[ "$(jq -r '.projects["/keep-personal"].hasTrustDialogAccepted' "$TEST_HOME/.claude.json")" == 'true' ]] || {
+    echo "❌ start rollback removed an unrelated Claude trust entry"
+    exit 1
+}
 if (
     cd "$TEST_REPO"
     bash "$WORK_CTL" start failed-launch
@@ -241,6 +255,14 @@ if (
 fi
 [[ ! -e "$XDG_STATE_HOME/claude-workctl/sessions/failed-launch" ]] || {
     echo "❌ claude-workctl left session-private settings behind after tmux launch failed"
+    exit 1
+}
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claude-workctl/worktrees/failed-launch" '.projects[$p] // null' "$TEST_HOME/.claude-work/.claude.json")" == 'null' ]] || {
+    echo "❌ claude-workctl left managed work trust behind after tmux launch failed"
+    exit 1
+}
+[[ "$(jq -r '.projects["/keep-work"].hasTrustDialogAccepted' "$TEST_HOME/.claude-work/.claude.json")" == 'true' ]] || {
+    echo "❌ claude-workctl rollback removed an unrelated work trust entry"
     exit 1
 }
 grep -Fq 'branch -d claudectl/failed-launch' "$GIT_LOG" || {
@@ -261,6 +283,10 @@ fi
     echo "❌ start left session-private settings behind after pane discovery failed"
     exit 1
 }
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claudectl/worktrees/failed-pane" '.projects[$p] // null' "$TEST_HOME/.claude.json")" == 'null' ]] || {
+    echo "❌ start left managed Claude trust behind after pane discovery failed"
+    exit 1
+}
 unset TMUX_PANE_ID
 
 export MK_TEMP_FAIL_STATE_WRITE=1
@@ -275,6 +301,10 @@ fi
     echo "❌ start left session-private settings behind after state writing failed"
     exit 1
 }
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claudectl/worktrees/failed-state" '.projects[$p] // null' "$TEST_HOME/.claude.json")" == 'null' ]] || {
+    echo "❌ start left managed Claude trust behind after state writing failed"
+    exit 1
+}
 unset MK_TEMP_FAIL_STATE_WRITE
 
 export MK_TEMP_FAIL_SETTINGS_WRITE=1
@@ -287,6 +317,10 @@ if (
 fi
 [[ ! -e "$XDG_STATE_HOME/claudectl/sessions/failed-settings" ]] || {
     echo "❌ start left a session directory behind after settings writing failed"
+    exit 1
+}
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claudectl/worktrees/failed-settings" '.projects[$p] // null' "$TEST_HOME/.claude.json")" == 'null' ]] || {
+    echo "❌ start left managed Claude trust behind after settings writing failed"
     exit 1
 }
 unset MK_TEMP_FAIL_SETTINGS_WRITE
@@ -607,6 +641,14 @@ bash "$PERSONAL_CTL" cleanup project
 }
 [[ ! -e "$XDG_STATE_HOME/claudectl/sessions/project" ]] || {
     echo "❌ cleanup left session-private settings behind after all guards passed"
+    exit 1
+}
+[[ "$(jq -r --arg p "$XDG_STATE_HOME/claudectl/worktrees/project" '.projects[$p] // null' "$TEST_HOME/.claude.json")" == 'null' ]] || {
+    echo "❌ cleanup left managed Claude trust behind after all guards passed"
+    exit 1
+}
+[[ "$(jq -r '.projects["/keep-personal"].hasTrustDialogAccepted' "$TEST_HOME/.claude.json")" == 'true' ]] || {
+    echo "❌ cleanup removed an unrelated Claude trust entry"
     exit 1
 }
 grep -Fq 'worktree remove' "$GIT_LOG" || {

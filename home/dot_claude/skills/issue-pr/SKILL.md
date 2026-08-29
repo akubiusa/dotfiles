@@ -8,12 +8,13 @@ disable-model-invocation: true
 # Create PR from Issue
 
 This skill is a thin dispatcher: it enters a worktree, fetches the Issue,
-judges the change's scale, and hands off to either `issue-pr-deep` (full
-spec/plan approval flow) or `issue-pr-lite` (direct implementation, no
-spec/plan) — see Phase 2.5. It has no Phase 3-onward logic of its own.
+judges the change's scale, and hands off to either `issue-pr-deep`
+(spec-approval and plan-review flow) or `issue-pr-lite` (direct
+implementation, no spec/plan) — see Phase 2.5. It has no Phase 3-onward
+logic of its own.
 
 Where approval is needed further down this flow (e.g. `issue-pr-deep`'s
-spec/plan sign-off), it is done via **AskUserQuestion**, not Claude Code's
+spec sign-off), it is done via **AskUserQuestion**, not Claude Code's
 native Plan Mode — Plan Mode only allows a single
 read-only-until-ExitPlanMode gate, and blocks the Write/Bash/MCP calls this
 skill needs starting at Phase 1. This dispatcher's own Phase 2.5 scale
@@ -211,9 +212,9 @@ invoked here.
 ## Notes
 
 - Do not drift to other tasks while waiting for review or CI.
-- Record the decision log in the superpowers spec/plan files (already
-  required by `rules/superpowers.md`) or in the Issue comment / PR body — not
-  in extra ad-hoc Markdown files.
+- Record the decision log in the spec/plan files under `.agent-work/`
+  (already required by `rules/design-workflow.md`) or in the Issue comment /
+  PR body — not in extra ad-hoc Markdown files.
 - `disable-model-invocation: true` is intentional: this skill hands off to
   a branch-and-PR-creating flow (`issue-pr-deep`/`issue-pr-lite`), which
   requires explicit invocation — not opportunistic auto-trigger on an

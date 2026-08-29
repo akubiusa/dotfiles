@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 This skill is a thin dispatcher: it identifies and fetches a GlitchTip
 issue, enters a worktree, judges the change's scale, and hands off to
-either `glitchtip-pr-deep` (full spec/plan approval flow) or
+either `glitchtip-pr-deep` (spec-approval and plan-review flow) or
 `glitchtip-pr-lite` (direct implementation, no spec/plan) — see Phase 2.5.
 It has no Phase 3-onward logic of its own.
 
@@ -22,7 +22,7 @@ the PR's destination repository is resolved by
 `~/bin/gh-pr-target-repo.sh`), exactly as `ticket-pr` does.
 
 Where approval is needed further down this flow (e.g. `glitchtip-pr-deep`'s
-spec/plan sign-off), it is done via **AskUserQuestion**, not Claude Code's
+spec sign-off), it is done via **AskUserQuestion**, not Claude Code's
 native Plan Mode — Plan Mode only allows a single
 read-only-until-ExitPlanMode gate, and blocks the Write/Bash/MCP calls this
 skill needs starting at Phase 1. This dispatcher's own Phase 2.5 scale
@@ -184,9 +184,9 @@ whichever skill is invoked here.
 ## Notes
 
 - Do not drift to other tasks while waiting for review or CI.
-- Record the decision log in the superpowers spec/plan files (already
-  required by `rules/superpowers.md`) or in the PR body — not in extra
-  ad-hoc Markdown files.
+- Record the decision log in the spec/plan files under `.agent-work/`
+  (already required by `rules/design-workflow.md`) or in the PR body — not
+  in extra ad-hoc Markdown files.
 - `disable-model-invocation: true` is intentional: this skill hands off to
   a branch-and-PR-creating flow (`glitchtip-pr-deep`/`glitchtip-pr-lite`),
   which requires explicit invocation — not opportunistic auto-trigger on a

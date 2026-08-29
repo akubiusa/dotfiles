@@ -25,9 +25,8 @@ do not batch updates at the end.
 ## Phase 3: Implement Directly
 
 Read the Issue body already fetched by the dispatcher. Implement the
-change directly — do not invoke `superpowers:brainstorming`,
-`superpowers:writing-plans`, or `superpowers:executing-plans` (there is no
-plan document to execute against).
+change directly — this path has no Spec/Plan authoring phase to execute
+against.
 
 If, while implementing, you discover the change is more involved than the
 dispatcher's Phase 2.5 judgment assumed (e.g. it turns out to require a
@@ -53,8 +52,14 @@ to proceed.
 
 ## Phase 5: Verify
 
-Invoke **superpowers:verification-before-completion** before creating the
-PR. If it reports a failure, fix it and re-run before moving on.
+Follow `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only
+Contract) before creating the PR: record snapshot `S` (`HEAD`, staged
+state, tracked working-tree diff, untracked files, and the identity of the
+verification evidence collected so far), then run a fresh full
+verification. Carry the same gate discipline into Phase 6 (Lite Review) —
+re-confirm the working tree still matches `S` before each subsequent step,
+restart the whole gate from scratch if anything changes, and never treat a
+sub-agent's own "done" or "tests pass" self-report as completion evidence.
 
 ## Phase 6: Lite Review
 

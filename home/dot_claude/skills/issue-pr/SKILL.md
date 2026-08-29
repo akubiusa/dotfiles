@@ -211,9 +211,9 @@ invoked here.
 ## Notes
 
 - Do not drift to other tasks while waiting for review or CI.
-- Record the decision log in the superpowers spec/plan files (already
-  required by `rules/superpowers.md`) or in the Issue comment / PR body — not
-  in extra ad-hoc Markdown files.
+- Record the decision log in the spec/plan files under `.agent-work/`
+  (already required by `rules/design-workflow.md`) or in the Issue comment /
+  PR body — not in extra ad-hoc Markdown files.
 - `disable-model-invocation: true` is intentional: this skill hands off to
   a branch-and-PR-creating flow (`issue-pr-deep`/`issue-pr-lite`), which
   requires explicit invocation — not opportunistic auto-trigger on an

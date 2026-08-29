@@ -187,16 +187,15 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 
 1. **Worktree の作成**: `EnterWorktree` でこの Issue 専用の作業ツリーを作成
 2. **Issue 内容の取得**: `gh issue view` で Issue のタイトル・本文・コメントを取得
-3. **spec（設計）の作成**: `superpowers:brainstorming` により要件を対話的に確認し、spec を作成
+3. **spec（設計）の作成**: Fact/Decision separation に基づく自前の Spec 作成により要件を対話的に確認し、spec を作成
 4. **spec のレビュー**: sub-agent による自動レビューを実施
-5. **spec の Trilium アップロード**: レビュー後の spec を Trilium にアップロード
+5. **spec の Issue コメント投稿**: レビュー後の spec を GitHub Issue にコメントとして投稿
 6. **spec の承認**: `AskUserQuestion` でユーザーに承認を求める
-7. **plan（実装計画）の作成**: `superpowers:writing-plans` により plan を作成
-8. **plan のレビュー・Trilium アップロード・承認**: spec と同様の流れを plan にも適用
-9. **Issue へのコメント投稿**: spec/plan の Trilium URL を Issue にコメント
-10. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
-11. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
-12. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
+7. **plan（実装計画）の作成**: Task 契約に基づく自前の Plan 作成により plan を作成
+8. **plan のレビュー・Issue コメント投稿・承認**: spec と同様の流れを plan にも適用
+9. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
+10. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
+11. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
 
 **使用例:**
 

@@ -9,8 +9,8 @@ Rules for posting spec/plan/investigation documents as GitHub Issue comments, fo
 Applies to Markdown documents created for the user to read or review as a deliverable, **when the work is tied to a GitHub Issue** (e.g. `issue-pr` execution, brainstorming conducted directly on a GitHub Issue):
 
 - Investigation results
-- Spec files (`docs/superpowers/specs/*.md`)
-- Plan files (`docs/superpowers/plans/*.md`)
+- Spec files (`.agent-work/specs/*.md`)
+- Plan files (`.agent-work/plans/*.md`)
 - Other standalone write-ups intended for the user, tied to that Issue
 
 Does not apply to:
@@ -47,7 +47,7 @@ After posting or updating, report **the URL only** — do not paste the document
 
 Trilium notes were viewed only by the user, so they followed the user's private language setting. GitHub Issue comments are **public**, and the target project's main language may differ from the user's private setting. Documents posted here must follow **the language specified by the target project's CLAUDE.md (or AGENTS.md, etc.)** — not the user's private language preference. Default to English only if the project specifies no language. Code blocks, commands, and identifiers stay in their original form regardless of the body language.
 
-This matches the instruction `issue-pr` already gives when invoking `superpowers:brainstorming`/`superpowers:writing-plans` to write the spec/plan documents ("the language required by the target project's CLAUDE.md").
+This matches the instruction `issue-pr-deep`/`glitchtip-pr-deep` already give in their own Spec/Plan authoring phases ("the language required by the target project's CLAUDE.md").
 
 ## Notes
 

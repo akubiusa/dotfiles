@@ -50,7 +50,7 @@ Not auto-loaded. Read the relevant file only when the situation applies:
 | Deciding whether to delegate to a sub-agent (esp. any work touching Claude Code's own prompt files: `CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) | `rules/workflow-sub-agents.md` |
 | An idle notification arrives from a background sub-agent | `rules/workflow-sub-agents.md` ("Handling Idle Notifications from Background Sub-Agents" section) |
 | Writing/reviewing code, comments, tests, commits | `rules/coding-common.md` |
-| Writing a spec or plan document | `rules/superpowers.md` |
+| Writing a spec or plan document | `rules/design-workflow.md` |
 | Posting a spec/plan/investigation doc to a GitHub Issue | `rules/issue-comment-docs.md` |
 | Posting a spec/plan/investigation doc not tied to a GitHub Issue | `trilium` skill (invoke via Skill tool) |
 | Using an `rtk` meta command (`gain`, `discover`, `proxy`) | `rtk` skill |

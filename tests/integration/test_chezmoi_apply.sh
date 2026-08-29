@@ -315,6 +315,117 @@ fi
 
 echo "✅ PR quality-gate fail-closed decisions and recovery ordering verified"
 
+# Superpowers plugin 依存除去 (Issue #352) の回帰テスト。
+SUPERPOWERS_INVOCATIONS=(
+  'superpowers:brainstorming'
+  'superpowers:writing-plans'
+  'superpowers:subagent-driven-development'
+  'superpowers:executing-plans'
+  'superpowers:verification-before-completion'
+)
+CLAUDE_WORKFLOW_SKILLS=(
+  "$HOME/.claude/skills/issue-pr-deep/SKILL.md"
+  "$HOME/.claude/skills/issue-pr-lite/SKILL.md"
+  "$HOME/.claude/skills/glitchtip-pr-deep/SKILL.md"
+  "$HOME/.claude/skills/glitchtip-pr-lite/SKILL.md"
+)
+
+for skill in "${CLAUDE_WORKFLOW_SKILLS[@]}"; do
+  if [ ! -f "$skill" ]; then
+    echo "❌ Expected active Claude workflow skill not deployed: $skill"
+    exit 1
+  fi
+  for invocation in "${SUPERPOWERS_INVOCATIONS[@]}"; do
+    if grep -Fq "$invocation" "$skill"; then
+      echo "❌ Stale $invocation invocation still present in $skill"
+      exit 1
+    fi
+  done
+done
+
+for rule in "$HOME/.claude/rules/"*.md; do
+  for invocation in "${SUPERPOWERS_INVOCATIONS[@]}"; do
+    if grep -Fq "$invocation" "$rule"; then
+      echo "❌ Stale $invocation invocation still present in $rule"
+      exit 1
+    fi
+  done
+done
+
+if [ -f "$HOME/.claude/rules/superpowers.md" ]; then
+  echo "❌ deleted rules/superpowers.md still deployed"
+  exit 1
+fi
+
+echo "✅ No superpowers: invocation remains in active Claude workflow"
+
+# Superpowers plugin が展開後 settings.json (private_settings.json から生成) で
+# enabled でないこと。
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+if [ ! -f "$CLAUDE_SETTINGS" ]; then
+  echo "❌ Claude Code settings.json not deployed"
+  exit 1
+fi
+if ! jq -e '.enabledPlugins["superpowers@claude-plugins-official"] // false | not' "$CLAUDE_SETTINGS" >/dev/null; then
+  echo "❌ superpowers@claude-plugins-official is still enabled in settings.json"
+  exit 1
+fi
+
+echo "✅ Superpowers plugin not enabled in deployed settings.json"
+
+# .agent-work/ と legacy な docs/superpowers/ / .superpowers/ が
+# global gitignore に残っていること (移行期間中の後方互換)。
+GLOBAL_GITIGNORE="$XDG_CONFIG_HOME/git/ignore"
+if ! grep -Fxq '.agent-work/' "$GLOBAL_GITIGNORE" \
+  || ! grep -Fxq 'docs/superpowers/' "$GLOBAL_GITIGNORE" \
+  || ! grep -Fxq '.superpowers/' "$GLOBAL_GITIGNORE"; then
+  echo "❌ global gitignore missing .agent-work/ or legacy superpowers entries"
+  exit 1
+fi
+
+echo "✅ global gitignore excludes .agent-work/ and legacy superpowers paths"
+
+# deep path (issue-pr-deep / glitchtip-pr-deep) の Spec review → Spec human
+# approval → Plan review → 実行方式の自己判断 → Final evidence gate →
+# deep-review、という契約順序が展開後も保持されること。
+DEEP_WORKFLOW_SKILLS=(
+  "$HOME/.claude/skills/issue-pr-deep/SKILL.md"
+  "$HOME/.claude/skills/glitchtip-pr-deep/SKILL.md"
+)
+for skill in "${DEEP_WORKFLOW_SKILLS[@]}"; do
+  # shellcheck disable=SC2016
+  assert_ordered_policy "$skill" "self-hosted design-workflow contract order" \
+    '## Phase 4: Review the Spec' \
+    'Use **AskUserQuestion** to get explicit spec approval before Phase 7' \
+    '## Phase 8: Review the Plan' \
+    'Decide the execution approach yourself, per `rules/design-workflow.md`' \
+    'Final Evidence Gate (Prompt-Only Contract)' \
+    '## Phase 13: Deep Review'
+done
+
+echo "✅ Self-hosted deep workflow contract order preserved after deployment"
+
+# lite path (issue-pr-lite / glitchtip-pr-lite) に Spec/Plan フェーズが存在せず、
+# Final evidence gate と lite-review が保持されていること。
+LITE_WORKFLOW_SKILLS=(
+  "$HOME/.claude/skills/issue-pr-lite/SKILL.md"
+  "$HOME/.claude/skills/glitchtip-pr-lite/SKILL.md"
+)
+for skill in "${LITE_WORKFLOW_SKILLS[@]}"; do
+  if grep -Fq 'Write the Spec' "$skill" || grep -Fq 'Write the Plan' "$skill"; then
+    echo "❌ lite path unexpectedly gained a Spec/Plan authoring phase: $skill"
+    exit 1
+  fi
+  # shellcheck disable=SC2016
+  if ! grep -Fq 'Final Evidence Gate' "$skill" \
+    || ! grep -Fq 'Run `/lite-review` (no arguments' "$skill"; then
+    echo "❌ lite path missing Final Evidence Gate / lite-review contract: $skill"
+    exit 1
+  fi
+done
+
+echo "✅ Lite workflow contract (no spec/plan, Final Evidence Gate + lite-review) preserved"
+
 # Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
 # modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。
 CODEX_CONFIG="$HOME/.codex/config.toml"

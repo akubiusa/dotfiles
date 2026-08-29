@@ -1,10 +1,10 @@
 ---
 name: issue-pr-deep
-description: Full spec/plan approval flow for turning a GitHub Issue into a pull request. Invoked by the `issue-pr` dispatcher for non-trivial changes.
+description: Spec-approval and plan-review flow for turning a GitHub Issue into a pull request. Invoked by the `issue-pr` dispatcher for non-trivial changes.
 disable-model-invocation: false
 ---
 
-# issue-pr-deep: full spec/plan approval flow
+# issue-pr-deep: spec-approval and plan-review flow
 
 > **Note:** This skill is invoked by the `issue-pr` dispatcher after its
 > Phase 1 (worktree) and Phase 2 (Issue fetch) complete. It assumes
@@ -185,8 +185,13 @@ confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
-Same as Phase 4, for the plan file: wait for the automatic sub-agent review
-and confirm the result. If it doesn't fire, same rule — stop and ask.
+`rules/design-workflow.md`'s Plan Review Contract requires dispatching the
+`plan-reviewer` sub-agent (`Agent` tool, `subagent_type: plan-reviewer`)
+against the plan file. Dispatch it now, wait for it, and confirm the
+reported fixes look correct before moving on.
+
+If the dispatch fails or the sub-agent cannot run, do not skip the review
+yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 9: Post the Plan as an Issue Comment
 
@@ -200,9 +205,9 @@ PLAN_COMMENT_ID=${url##*issuecomment-}
 ```
 
 This must be a **new** comment, never reusing `SPEC_COMMENT_ID`. Posted for
-record/audit purposes — Phase 8's automatic sub-agent review already ran
-before this posting, and there is no human approval step for the plan (see
-Notes for why), so this comment is not revised afterward.
+record/audit purposes — Phase 8's dispatched `plan-reviewer` review already
+ran before this posting, and there is no human approval step for the plan
+(see Notes for why), so this comment is not revised afterward.
 
 Same fallback as Phase 5 if the post fails.
 

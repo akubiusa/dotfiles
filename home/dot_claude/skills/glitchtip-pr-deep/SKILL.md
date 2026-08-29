@@ -1,10 +1,10 @@
 ---
 name: glitchtip-pr-deep
-description: Full spec/plan approval flow for turning a GlitchTip issue into a pull request. Invoked by the `glitchtip-pr` dispatcher for non-trivial fixes.
+description: Spec-approval and plan-review flow for turning a GlitchTip issue into a pull request. Invoked by the `glitchtip-pr` dispatcher for non-trivial fixes.
 disable-model-invocation: false
 ---
 
-# glitchtip-pr-deep: full spec/plan approval flow
+# glitchtip-pr-deep: spec-approval and plan-review flow
 
 > **Note:** This skill is invoked by the `glitchtip-pr` dispatcher after its
 > Phase 1 (issue identification/fetch) and Phase 2 (worktree) complete. It
@@ -180,8 +180,13 @@ confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
-Same as Phase 4, for the plan file: wait for the automatic sub-agent review
-and confirm the result. If it doesn't fire, same rule — stop and ask.
+`rules/design-workflow.md`'s Plan Review Contract requires dispatching the
+`plan-reviewer` sub-agent (`Agent` tool, `subagent_type: plan-reviewer`)
+against the plan file. Dispatch it now, wait for it, and confirm the
+reported fixes look correct before moving on.
+
+If the dispatch fails or the sub-agent cannot run, do not skip the review
+yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 9: Upload the Plan to Trilium
 
@@ -191,9 +196,9 @@ the same Trilium folder as the spec and gets cross-linked) but
 `plan_glitchtip_4821`). This must be a fresh upload (its own `noteId`),
 never reusing the spec's. Capture the returned URL as `PLAN_SHARE_URL`.
 
-Posted for record purposes — Phase 8's automatic sub-agent review already
-ran before this upload, and there is no human approval step for the plan,
-so this upload is not revised afterward.
+Posted for record purposes — Phase 8's dispatched `plan-reviewer` review
+already ran before this upload, and there is no human approval step for
+the plan, so this upload is not revised afterward.
 
 Same fallback as Phase 5 if the upload fails.
 

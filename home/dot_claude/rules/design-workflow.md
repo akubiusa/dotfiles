@@ -1,6 +1,6 @@
 # Design Workflow Rules
 
-Rules for the design phase of any non-trivial change: turning a source of intent (a GitHub Issue, a GlitchTip issue, a user request) into an approved spec, then an approved plan, then implementation.
+Rules for the design phase of any non-trivial change: turning a source of intent (a GitHub Issue, a GlitchTip issue, a user request) into an approved spec, then a reviewed plan, then implementation.
 
 ## Principle
 
@@ -82,7 +82,7 @@ Stop and ask the user only for one of these six reasons:
 3. A security-sensitive action that needs explicit approval.
 4. A side effect outside the repository that would normally need approval — e.g. disabling or uninstalling a plugin on the live, running Claude Code installation, since that reaches outside the repo and affects sessions beyond this one.
 5. The plan is fundamentally broken and every path forward would be a guess.
-6. A credential or permission blocker that only a human can clear.
+6. A required tool or sub-agent invocation fails with no safe automatic recovery, and only a human can decide how to proceed — e.g. a credential/permission blocker, or a review sub-agent (spec-reviewer/plan-reviewer) that cannot be dispatched at all.
 
 Ordinary technical judgment calls proceed without asking.
 

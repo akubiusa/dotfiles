@@ -192,7 +192,7 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 5. **spec の Issue コメント投稿**: レビュー後の spec を GitHub Issue にコメントとして投稿
 6. **spec の承認**: `AskUserQuestion` でユーザーに承認を求める
 7. **plan（実装計画）の作成**: Task 契約に基づく自前の Plan 作成により plan を作成
-8. **plan のレビュー・Issue コメント投稿・承認**: spec と同様の流れを plan にも適用
+8. **plan のレビュー・Issue コメント投稿**: sub-agent による自動レビューの後、記録として Issue にコメントを投稿する(承認ゲートはない)
 9. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
 10. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
 11. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
@@ -203,7 +203,7 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 # Issue #49 に対応
 /issue-pr 49
 
-# Worktree 作成 → spec/plan 作成・レビュー・承認 → ブランチ作成 → 実装 → PR 作成 → CI 確認 → Copilot レビュー対応
+# Worktree 作成 → spec 作成・レビュー・承認 → plan 作成・レビュー → ブランチ作成 → 実装 → PR 作成 → CI 確認 → Copilot レビュー対応
 ```
 
 ### ticket-pr
@@ -272,7 +272,7 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 
 1. **GlitchTip issue の特定・取得**: 引数があれば ID/URL から直接取得、なければ組織を解決して未解決 issue 一覧から選択
 2. **Worktree の作成**: `EnterWorktree` でこの issue 専用の作業ツリーを作成
-3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec/plan フル承認フロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
+3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec 承認 + plan レビューのフルフロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
 4. **実装・PR 作成**: `glitchtip-pr-deep` の場合は `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、`glitchtip-pr-lite` の場合は spec/plan を作らず直接実装したうえで、PR を作成
 5. **PR マージ後の verified Resolve**: user が明示的に要求した場合だけ、PR がマージされたこと、issue permalink、PR body を再確認して GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
 

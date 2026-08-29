@@ -324,8 +324,10 @@ SUPERPOWERS_INVOCATIONS=(
   'superpowers:verification-before-completion'
 )
 CLAUDE_WORKFLOW_SKILLS=(
+  "$HOME/.claude/skills/issue-pr/SKILL.md"
   "$HOME/.claude/skills/issue-pr-deep/SKILL.md"
   "$HOME/.claude/skills/issue-pr-lite/SKILL.md"
+  "$HOME/.claude/skills/glitchtip-pr/SKILL.md"
   "$HOME/.claude/skills/glitchtip-pr-deep/SKILL.md"
   "$HOME/.claude/skills/glitchtip-pr-lite/SKILL.md"
 )

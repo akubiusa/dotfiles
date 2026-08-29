@@ -362,8 +362,8 @@ Run `/pr-health-monitor <PR number>` immediately, without asking first.
 `pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the
 PR body, and can trigger `/handle-pr-reviews` — none of that is "merging,"
 so the merge guardrail doesn't apply. No separate confirmation is needed;
-the plan was already reviewed automatically (Phase 8) and posted for the
-record (Phase 9).
+the plan was already reviewed via Phase 8's dispatched `plan-reviewer`
+sub-agent and posted for the record (Phase 9).
 
 `pr-health-monitor` starts the Copilot review wait as a `Monitor(persistent:
 true)` instance in this same session (see `wait-for-copilot-review`'s
@@ -406,10 +406,9 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - `disable-model-invocation: true` is intentional: only the `issue-pr`
   dispatcher's explicit hand-off reaches this skill, not opportunistic
   auto-trigger on an issue number appearing in conversation.
-- The plan has no human approval step by design: Phase 8's automatic
-  sub-agent review and Phase 9's Issue-comment posting already surface the
-  plan's content for review/record before implementation starts, so an
-  additional explicit `AskUserQuestion` gate (the old Phase 10) was removed
-  as redundant. If a plan needs correction after Phase 9, treat it the same
-  as any other implementation issue found during Phase 11 (Execute the
+- The plan has no human approval step by design: Phase 8's dispatched `plan-reviewer` sub-agent
+  review and Phase 9's Issue-comment posting already surface the plan's content for
+  review/record before implementation starts, so an additional explicit `AskUserQuestion`
+  gate (the old Phase 10) was removed as redundant. If a plan needs correction after Phase 9,
+  treat it the same as any other implementation issue found during Phase 11 (Execute the
   Plan) rather than reopening an approval loop.

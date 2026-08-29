@@ -315,7 +315,7 @@ fi
 
 echo "✅ PR quality-gate fail-closed decisions and recovery ordering verified"
 
-# Superpowers plugin 依存除去 (Issue #352) の回帰テスト。
+# Superpowers plugin 依存除去の回帰テスト。
 SUPERPOWERS_INVOCATIONS=(
   'superpowers:brainstorming'
   'superpowers:writing-plans'
@@ -385,9 +385,8 @@ fi
 
 echo "✅ global gitignore excludes .agent-work/ and legacy superpowers paths"
 
-# deep path (issue-pr-deep / glitchtip-pr-deep) の Spec review → Spec human
-# approval → Plan review → 実行方式の自己判断 → Final evidence gate →
-# deep-review、という契約順序が展開後も保持されること。
+# deep path (issue-pr-deep / glitchtip-pr-deep) の自前 workflow 契約順序が
+# 展開後も保持されること。
 DEEP_WORKFLOW_SKILLS=(
   "$HOME/.claude/skills/issue-pr-deep/SKILL.md"
   "$HOME/.claude/skills/glitchtip-pr-deep/SKILL.md"

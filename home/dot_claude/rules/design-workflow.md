@@ -14,6 +14,10 @@ Finding facts is the agent's responsibility. Decisions are the user's responsibi
 
 Before asking the user anything, classify it. If it is a Fact, go verify it yourself instead of asking.
 
+## Clarifying Questions
+
+A clarifying question directed at the user must go through `AskUserQuestion`, never as plain prose — and only the main agent can call it. A sub-agent cannot call `AskUserQuestion` itself: if it hits a real Decision it cannot resolve alone, it reports the question (with options where applicable) back to the main agent in its output, and the main agent relays it to the user via `AskUserQuestion`.
+
 ## Intent Contract
 
 Before writing a spec, establish: Outcome, Success criteria, Scope, Non-goals, Constraints, Accepted facts, Assumptions, and Remaining unknowns. Do not re-ask the user something the source Issue (or ticket) already states clearly — read it first.

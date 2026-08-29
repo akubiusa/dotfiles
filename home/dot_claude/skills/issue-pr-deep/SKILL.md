@@ -403,9 +403,13 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - Do not drift to other tasks while waiting for review or CI.
 - Record the decision log in the spec/plan files or the Issue comment/PR
   body — not extra ad-hoc Markdown files.
-- `disable-model-invocation: true` is intentional: only the `issue-pr`
-  dispatcher's explicit hand-off reaches this skill, not opportunistic
-  auto-trigger on an issue number appearing in conversation.
+- `disable-model-invocation: false` is intentional: this skill needs to
+  stay model-invocable so the `issue-pr` dispatcher's own Skill-tool
+  hand-off can reach it — `disable-model-invocation: true` would block
+  that hand-off too, not just opportunistic auto-trigger on an issue
+  number appearing in conversation. The `issue-pr` dispatcher's own
+  contract, not this flag, is what keeps this skill from being invoked
+  outside that hand-off.
 - The plan has no human approval step by design: Phase 8's dispatched `plan-reviewer` sub-agent
   review and Phase 9's Issue-comment posting already surface the plan's content for
   review/record before implementation starts, so an additional explicit `AskUserQuestion`

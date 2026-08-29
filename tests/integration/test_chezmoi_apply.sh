@@ -366,7 +366,7 @@ if [ ! -f "$CLAUDE_SETTINGS" ]; then
   echo "❌ Claude Code settings.json not deployed"
   exit 1
 fi
-if ! jq -e '.enabledPlugins["superpowers@claude-plugins-official"] // false | not' "$CLAUDE_SETTINGS" >/dev/null; then
+if grep -Fq '"superpowers@claude-plugins-official"' "$CLAUDE_SETTINGS"; then
   echo "❌ superpowers@claude-plugins-official is still enabled in settings.json"
   exit 1
 fi

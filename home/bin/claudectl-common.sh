@@ -476,9 +476,59 @@ claudectl_interrupt() {
     printf 'Claude interrupt acknowledged.\n'
 }
 
+claudectl_branch_integrated() {
+    local repository="$1"
+    local branch="$2"
+    local base="$3"
+    local ancestry_status merge_base cherry_output cherry_marker cherry_commit cherry_extra cherry_all_equivalent cherry_count
+    local branch_patch_output branch_patch_id base_commits base_commit commit_patch_output commit_patch_id matching_commit_count
+
+    if (cd "$repository" && git merge-base --is-ancestor "$branch" "$base"); then
+        return 0
+    else
+        ancestry_status=$?
+    fi
+    [[ "$ancestry_status" -eq 1 ]] || return 1
+
+    merge_base=$(cd "$repository" && git merge-base "$branch" "$base") || return 1
+    [[ "$merge_base" =~ ^[[:xdigit:]]{40,64}$ ]] || return 1
+
+    cherry_output=$(cd "$repository" && git cherry "$base" "$branch") || return 1
+    [[ -n "$cherry_output" ]] || return 1
+    cherry_all_equivalent=1
+    cherry_count=0
+    while IFS=' ' read -r cherry_marker cherry_commit cherry_extra; do
+        [[ "$cherry_marker" =~ ^[-+]$ && "$cherry_commit" =~ ^[[:xdigit:]]{40,64}$ && -z "$cherry_extra" ]] || return 1
+        [[ "$cherry_marker" == '-' ]] || cherry_all_equivalent=0
+        cherry_count=$((cherry_count + 1))
+    done <<< "$cherry_output"
+    [[ "$cherry_count" -gt 0 ]] || return 1
+    [[ "$cherry_all_equivalent" -eq 1 ]] && return 0
+
+    branch_patch_output=$(cd "$repository" && git diff "$merge_base" "$branch" | git patch-id --stable) || return 1
+    [[ "$branch_patch_output" =~ ^([[:xdigit:]]{40,64})[[:space:]]+([[:xdigit:]]{40,64})$ ]] || return 1
+    branch_patch_id="${BASH_REMATCH[1]}"
+
+    base_commits=$(cd "$repository" && git rev-list --no-merges "$merge_base..$base") || return 1
+    [[ -n "$base_commits" ]] || return 1
+    matching_commit_count=0
+    while IFS= read -r base_commit; do
+        [[ "$base_commit" =~ ^[[:xdigit:]]{40,64}$ ]] || return 1
+        commit_patch_output=$(cd "$repository" && git show "$base_commit" | git patch-id --stable) || return 1
+        [[ -n "$commit_patch_output" ]] || continue
+        [[ "$commit_patch_output" =~ ^([[:xdigit:]]{40,64})[[:space:]]+([[:xdigit:]]{40,64})$ ]] || return 1
+        commit_patch_id="${BASH_REMATCH[1]}"
+        if [[ "$commit_patch_id" == "$branch_patch_id" ]]; then
+            matching_commit_count=$((matching_commit_count + 1))
+        fi
+    done <<< "$base_commits"
+    [[ "$matching_commit_count" -eq 1 ]]
+}
+
 claudectl_cleanup() {
     local profile="$1"
     local name="$2"
+    local discard_unmerged="$3"
     local state repository worktree branch base tmux_session tmux_pane pane_pid agent status
 
     state=$(claudectl_session_state "$profile" "$name")
@@ -513,10 +563,12 @@ claudectl_cleanup() {
         printf 'Refusing cleanup because the managed worktree is dirty.\n' >&2
         return 1
     }
-    (cd "$repository" && git merge-base --is-ancestor "$branch" "$base") || {
-        printf 'Refusing cleanup because %s is not merged into %s.\n' "$branch" "$base" >&2
-        return 1
-    }
+    if [[ "$discard_unmerged" != 'true' ]]; then
+        claudectl_branch_integrated "$repository" "$branch" "$base" || {
+            printf 'Refusing cleanup because %s is not merged into %s.\n' "$branch" "$base" >&2
+            return 1
+        }
+    fi
     claudectl_untrust_worktree "$profile" "$worktree" || {
         printf 'Refusing cleanup because the managed Claude trust entry could not be removed.\n' >&2
         return 1
@@ -524,7 +576,7 @@ claudectl_cleanup() {
 
     tmux kill-session -t "$tmux_session" 2> /dev/null || true
     (cd "$repository" && git worktree remove "$worktree")
-    (cd "$repository" && git branch -d "$branch")
+    (cd "$repository" && git branch -D "$branch")
     claudectl_remove_session_dir "$profile" "$name"
     printf 'Cleaned up %s.\n' "$tmux_session"
 }
@@ -568,8 +620,22 @@ claudectl_main() {
             ;;
         cleanup)
             shift
-            [[ "$#" -eq 1 ]] || return 2
-            claudectl_cleanup "$profile" "$1"
+            case "$#" in
+                1)
+                    claudectl_cleanup "$profile" "$1" false
+                    ;;
+                2)
+                    [[ "$1" == '--discard-unmerged' ]] || {
+                        printf 'Usage: %s cleanup [--discard-unmerged] <name>\n' "$command_name" >&2
+                        return 2
+                    }
+                    claudectl_cleanup "$profile" "$2" true
+                    ;;
+                *)
+                    printf 'Usage: %s cleanup [--discard-unmerged] <name>\n' "$command_name" >&2
+                    return 2
+                    ;;
+            esac
             ;;
         status)
             shift

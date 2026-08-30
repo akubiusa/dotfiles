@@ -130,10 +130,46 @@ case "$1 ${2:-}" in
     "merge-base --is-ancestor")
         [[ "${GIT_BRANCH_MERGED:-0}" == '1' ]]
         ;;
+    "merge-base "*)
+        [[ "${GIT_MERGE_BASE_FAIL:-0}" != '1' ]]
+        printf '%s\n' "${GIT_MERGE_BASE:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+        ;;
+    "cherry "*)
+        [[ "${GIT_CHERRY_FAIL:-0}" != '1' ]]
+        printf '%s\n' "${GIT_CHERRY_OUTPUT:-}"
+        ;;
+    "diff "*)
+        [[ "${GIT_DIFF_FAIL:-0}" != '1' ]]
+        printf '%s\n' "${GIT_BRANCH_DIFF:-}"
+        ;;
+    "rev-list "*)
+        [[ "${GIT_REV_LIST_FAIL:-0}" != '1' ]]
+        if [[ "$*" == *'--no-merges'* ]]; then
+            printf '%s\n' "${GIT_NON_MERGE_BASE_COMMITS:-}"
+        else
+            printf '%s\n' "${GIT_BASE_COMMITS:-}"
+        fi
+        ;;
+    "show "*)
+        [[ "${GIT_SHOW_FAIL:-0}" != '1' ]]
+        printf 'commit:%s\n' "$2"
+        ;;
+    "patch-id --stable")
+        patch_input=$(cat)
+        if [[ "$patch_input" == "${GIT_BRANCH_DIFF:-}" && -n "${GIT_BRANCH_DIFF:-}" ]]; then
+            printf '%s %s\n' "${GIT_BRANCH_PATCH_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" '0000000000000000000000000000000000000000'
+        elif [[ "$patch_input" == "commit:${GIT_EMPTY_PATCH_COMMIT:-}" ]]; then
+            :
+        elif [[ "${GIT_SQUASH_MATCH_ALL:-0}" == '1' || "$patch_input" == "commit:${GIT_SQUASH_MATCH_COMMIT:-}" ]]; then
+            printf '%s %s\n' "${GIT_BRANCH_PATCH_ID:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}" '0000000000000000000000000000000000000000'
+        else
+            printf '%s %s\n' 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' '0000000000000000000000000000000000000000'
+        fi
+        ;;
     "worktree remove")
         rmdir "${@: -1}"
         ;;
-    "branch -d")
+    "branch -d"|"branch -D")
         exit 0
         ;;
     *)
@@ -173,6 +209,49 @@ write_state() {
   "base": "master"
 }
 EOF
+}
+
+write_cleanup_state() {
+    local profile="$1"
+    local name="$2"
+    local state_root="$XDG_STATE_HOME/$profile"
+    local worktree="$state_root/worktrees/$name"
+
+    mkdir -p "$worktree" "$state_root/sessions/$name"
+    cat > "$state_root/sessions/$name/session.json" <<EOF
+{
+  "profile": "$profile",
+  "repository": "$TEST_DIR/repository",
+  "worktree": "$worktree",
+  "tmux_session": "$profile-$name",
+  "tmux_pane": "%42",
+  "branch": "$profile/$name",
+  "base": "master"
+}
+EOF
+}
+
+prepare_cleanup_case() {
+    local name="$1"
+
+    write_cleanup_state claudectl "$name"
+    export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/$name\",\"pid\":4242,\"status\":\"idle\"}]"
+    export TMUX_SESSION_EXISTS=1
+    export GIT_STATUS_OUTPUT=''
+    export GIT_BRANCH_MERGED=0
+    export GIT_MERGE_BASE='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    export GIT_CHERRY_OUTPUT=''
+    export GIT_CHERRY_FAIL=0
+    export GIT_BRANCH_DIFF=''
+    export GIT_BRANCH_PATCH_ID='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    export GIT_BASE_COMMITS=''
+    export GIT_NON_MERGE_BASE_COMMITS=''
+    export GIT_REV_LIST_FAIL=0
+    export GIT_SHOW_FAIL=0
+    export GIT_EMPTY_PATCH_COMMIT=''
+    export GIT_SQUASH_MATCH_COMMIT=''
+    export GIT_SQUASH_MATCH_ALL=0
+    : > "$GIT_LOG"
 }
 
 write_state claudectl
@@ -655,13 +734,142 @@ grep -Fq 'worktree remove' "$GIT_LOG" || {
     echo "❌ cleanup did not remove the verified worktree"
     exit 1
 }
-grep -Fq 'branch -d claudectl/project' "$GIT_LOG" || {
-    echo "❌ cleanup did not safely delete the merged branch"
+grep -Fq 'branch -D claudectl/project' "$GIT_LOG" || {
+    echo "❌ cleanup did not force-delete the integration-proven branch"
     exit 1
 }
-! grep -Fq 'branch -D' "$GIT_LOG" || {
-    echo "❌ cleanup force-deleted a branch"
+! grep -Fq 'branch -d claudectl/project' "$GIT_LOG" || {
+    echo "❌ cleanup used ancestry-only branch deletion after integration proof"
     exit 1
 }
 
 echo "✅ logs, attach, interrupt, and cleanup safety guards work"
+
+prepare_cleanup_case cherry-picked
+export GIT_CHERRY_OUTPUT=$'- 1111111111111111111111111111111111111111\n- 2222222222222222222222222222222222222222'
+bash "$PERSONAL_CTL" cleanup cherry-picked
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/cherry-picked/session.json" ]] || {
+    echo "❌ cleanup did not accept a branch whose commits were cherry-picked"
+    exit 1
+}
+grep -Fq 'branch -D claudectl/cherry-picked' "$GIT_LOG" || {
+    echo "❌ cleanup did not force-delete the cherry-picked branch"
+    exit 1
+}
+
+prepare_cleanup_case squash-merged
+export GIT_CHERRY_OUTPUT=$'+ 1111111111111111111111111111111111111111\n+ 2222222222222222222222222222222222222222'
+export GIT_BRANCH_DIFF='cumulative-branch-diff'
+export GIT_BASE_COMMITS=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444'
+export GIT_NON_MERGE_BASE_COMMITS=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444'
+export GIT_SQUASH_MATCH_COMMIT='3333333333333333333333333333333333333333'
+bash "$PERSONAL_CTL" cleanup squash-merged
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/squash-merged/session.json" ]] || {
+    echo "❌ cleanup did not accept a branch merged by a cumulative squash commit"
+    exit 1
+}
+grep -Fq 'branch -D claudectl/squash-merged' "$GIT_LOG" || {
+    echo "❌ cleanup did not force-delete the squash-merged branch"
+    exit 1
+}
+
+prepare_cleanup_case squash-with-empty-candidate
+export GIT_CHERRY_OUTPUT=$'+ 1111111111111111111111111111111111111111\n+ 2222222222222222222222222222222222222222'
+export GIT_BRANCH_DIFF='cumulative-branch-diff'
+export GIT_BASE_COMMITS=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444\n5555555555555555555555555555555555555555'
+export GIT_NON_MERGE_BASE_COMMITS=$'4444444444444444444444444444444444444444\n5555555555555555555555555555555555555555'
+export GIT_EMPTY_PATCH_COMMIT='4444444444444444444444444444444444444444'
+export GIT_SQUASH_MATCH_COMMIT='5555555555555555555555555555555555555555'
+bash "$PERSONAL_CTL" cleanup squash-with-empty-candidate
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/squash-with-empty-candidate/session.json" ]] || {
+    echo "❌ cleanup did not skip non-matching empty patch evidence before the squash commit"
+    exit 1
+}
+
+prepare_cleanup_case unmerged
+export GIT_CHERRY_OUTPUT='+ 1111111111111111111111111111111111111111'
+export GIT_BRANCH_DIFF='unmerged-branch-diff'
+export GIT_BASE_COMMITS='3333333333333333333333333333333333333333'
+if bash "$PERSONAL_CTL" cleanup unmerged > /dev/null 2>&1; then
+    echo "❌ cleanup deleted a branch with no integration evidence"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/unmerged/session.json" ]] || {
+    echo "❌ cleanup discarded state for a truly unmerged branch"
+    exit 1
+}
+! grep -Fq 'worktree remove' "$GIT_LOG" || {
+    echo "❌ cleanup removed a truly unmerged worktree"
+    exit 1
+}
+
+prepare_cleanup_case cherry-error
+export GIT_CHERRY_FAIL=1
+if bash "$PERSONAL_CTL" cleanup cherry-error > /dev/null 2>&1; then
+    echo "❌ cleanup accepted a branch after git cherry failed"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/cherry-error/session.json" ]] || {
+    echo "❌ cleanup discarded state after git cherry failed"
+    exit 1
+}
+
+prepare_cleanup_case empty-evidence
+if bash "$PERSONAL_CTL" cleanup empty-evidence > /dev/null 2>&1; then
+    echo "❌ cleanup accepted a branch with empty integration evidence"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/empty-evidence/session.json" ]] || {
+    echo "❌ cleanup discarded state after empty integration evidence"
+    exit 1
+}
+
+prepare_cleanup_case ambiguous-squash
+export GIT_CHERRY_OUTPUT=$'+ 1111111111111111111111111111111111111111\n+ 2222222222222222222222222222222222222222'
+export GIT_BRANCH_DIFF='cumulative-branch-diff'
+export GIT_BASE_COMMITS=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444'
+export GIT_NON_MERGE_BASE_COMMITS=$'3333333333333333333333333333333333333333\n4444444444444444444444444444444444444444'
+export GIT_SQUASH_MATCH_ALL=1
+if bash "$PERSONAL_CTL" cleanup ambiguous-squash > /dev/null 2>&1; then
+    echo "❌ cleanup accepted ambiguous squash integration evidence"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/ambiguous-squash/session.json" ]] || {
+    echo "❌ cleanup discarded state after ambiguous squash evidence"
+    exit 1
+}
+
+prepare_cleanup_case discard-busy
+export CLAUDE_AGENTS_JSON="[{\"cwd\":\"$XDG_STATE_HOME/claudectl/worktrees/discard-busy\",\"pid\":4242,\"status\":\"busy\"}]"
+if bash "$PERSONAL_CTL" cleanup --discard-unmerged discard-busy > /dev/null 2>&1; then
+    echo "❌ discard cleanup ran while the managed Claude session was busy"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/discard-busy/session.json" ]] || {
+    echo "❌ discard cleanup removed state for a busy session"
+    exit 1
+}
+
+prepare_cleanup_case discard-dirty
+export GIT_STATUS_OUTPUT=' M uncommitted.txt'
+if bash "$PERSONAL_CTL" cleanup --discard-unmerged discard-dirty > /dev/null 2>&1; then
+    echo "❌ discard cleanup ran with uncommitted work"
+    exit 1
+fi
+[[ -f "$XDG_STATE_HOME/claudectl/sessions/discard-dirty/session.json" ]] || {
+    echo "❌ discard cleanup removed state for a dirty worktree"
+    exit 1
+}
+
+prepare_cleanup_case discarded
+bash "$PERSONAL_CTL" cleanup --discard-unmerged discarded
+[[ ! -e "$XDG_STATE_HOME/claudectl/sessions/discarded/session.json" ]] || {
+    echo "❌ discard cleanup did not remove state for an intentionally abandoned branch"
+    exit 1
+}
+grep -Fq 'branch -D claudectl/discarded' "$GIT_LOG" || {
+    echo "❌ discard cleanup did not force-delete the intentionally abandoned branch"
+    exit 1
+}
+
+echo "✅ cleanup recognizes equivalent integration and explicit clean-idle discard"

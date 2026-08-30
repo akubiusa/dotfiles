@@ -25,3 +25,4 @@ bin/tmux-ipc-cleanup.sh
 bin/tmux-ipc-receive.sh
 bin/tmux-ipc-register.sh
 bin/tmux-ipc-send.sh
+.claude/rules/superpowers.md

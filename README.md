@@ -205,16 +205,15 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 
 1. **Worktree の作成**: `EnterWorktree` でこの Issue 専用の作業ツリーを作成
 2. **Issue 内容の取得**: `gh issue view` で Issue のタイトル・本文・コメントを取得
-3. **spec（設計）の作成**: `superpowers:brainstorming` により要件を対話的に確認し、spec を作成
-4. **spec のレビュー**: sub-agent による自動レビューを実施
-5. **spec の Trilium アップロード**: レビュー後の spec を Trilium にアップロード
+3. **spec（設計）の作成**: Fact/Decision separation に基づく自前の Spec 作成により要件を対話的に確認し、spec を作成
+4. **spec のレビュー**: `spec-reviewer` sub-agent を明示的にディスパッチしてレビューを実施
+5. **spec の Issue コメント投稿**: レビュー後の spec を GitHub Issue にコメントとして投稿
 6. **spec の承認**: `AskUserQuestion` でユーザーに承認を求める
-7. **plan（実装計画）の作成**: `superpowers:writing-plans` により plan を作成
-8. **plan のレビュー・Trilium アップロード・承認**: spec と同様の流れを plan にも適用
-9. **Issue へのコメント投稿**: spec/plan の Trilium URL を Issue にコメント
-10. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
-11. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
-12. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
+7. **plan（実装計画）の作成**: Task 契約に基づく自前の Plan 作成により plan を作成
+8. **plan のレビュー・Issue コメント投稿**: `plan-reviewer` sub-agent を明示的にディスパッチしてレビューした後、記録として Issue にコメントを投稿する(承認ゲートはない)
+9. **ブランチ作成・実装**: Conventional Branch 名でブランチを作成し、plan を実行
+10. **検証・ローカルコードレビュー**: 動作確認と `/deep-review` を実施
+11. **PR 作成**: PR を作成し、CI 確認・Copilot レビュー対応まで行う
 
 **使用例:**
 
@@ -222,7 +221,7 @@ GitHub の issue を確認し、対応のためのブランチを作成して PR
 # Issue #49 に対応
 /issue-pr 49
 
-# Worktree 作成 → spec/plan 作成・レビュー・承認 → ブランチ作成 → 実装 → PR 作成 → CI 確認 → Copilot レビュー対応
+# Worktree 作成 → spec 作成・レビュー・承認 → plan 作成・レビュー → ブランチ作成 → 実装 → PR 作成 → CI 確認 → Copilot レビュー対応
 ```
 
 ### ticket-pr
@@ -291,7 +290,7 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 
 1. **GlitchTip issue の特定・取得**: 引数があれば ID/URL から直接取得、なければ組織を解決して未解決 issue 一覧から選択
 2. **Worktree の作成**: `EnterWorktree` でこの issue 専用の作業ツリーを作成
-3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec/plan フル承認フロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
+3. **規模判定**: 例外メッセージ・スタックトレースから規模を判定し、`glitchtip-pr-deep`(spec 承認 + plan レビューのフルフロー)または `glitchtip-pr-lite`(直接実装)に処理を委譲
 4. **実装・PR 作成**: `glitchtip-pr-deep` の場合は `issue-pr` と同様の流れ(spec/plan は Trilium にアップロード)で実装し、`glitchtip-pr-lite` の場合は spec/plan を作らず直接実装したうえで、PR を作成
 5. **PR マージ後の verified Resolve**: user が明示的に要求した場合だけ、PR がマージされたこと、issue permalink、PR body を再確認して GlitchTip issue を Resolved にする(マージされずクローズされた場合は変更しない)
 

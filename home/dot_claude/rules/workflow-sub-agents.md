@@ -33,7 +33,7 @@ Can I do this in ≤ 5 tool calls?
 
 Claude Code's own prompt files (`CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) get re-injected into every future session's context. Reading/editing them from the parent session leaves that exploration sitting in a context that persists for the rest of the conversation — so, regardless of tool-call count, delegate this work to an agent instead of doing it directly.
 
-Parent session's job: define the task, pass along any research/decisions already gathered, review the agent's output, and own all user-facing Q&A (agents can't call `AskUserQuestion` — relay per `rules/superpowers.md`). Keep direct tool use to quick recon (`ls`/`grep`) for scoping only.
+Parent session's job: define the task, pass along any research/decisions already gathered, review the agent's output, and own all user-facing Q&A (agents can't call `AskUserQuestion` — relay per `rules/design-workflow.md`). Keep direct tool use to quick recon (`ls`/`grep`) for scoping only.
 
 The agent has no memory of this rule file, so the dispatch prompt must restate the concrete scope and task inline — not just reference "this carve-out" by name.
 

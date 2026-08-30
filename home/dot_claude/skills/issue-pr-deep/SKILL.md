@@ -1,10 +1,10 @@
 ---
 name: issue-pr-deep
-description: Full spec/plan approval flow for turning a GitHub Issue into a pull request. Invoked by the `issue-pr` dispatcher for non-trivial changes.
+description: Spec-approval and plan-review flow for turning a GitHub Issue into a pull request. Invoked by the `issue-pr` dispatcher for non-trivial changes.
 disable-model-invocation: false
 ---
 
-# issue-pr-deep: full spec/plan approval flow
+# issue-pr-deep: spec-approval and plan-review flow
 
 > **Note:** This skill is invoked by the `issue-pr` dispatcher after its
 > Phase 1 (worktree) and Phase 2 (Issue fetch) complete. It assumes
@@ -56,57 +56,61 @@ phase's work.
 
 ## Phase 3: Write the Spec
 
-Invoke **superpowers:brainstorming** with the issue content as the starting
-problem, relaying any clarifying questions via AskUserQuestion. It produces
-a spec file under `docs/superpowers/specs/`.
+Author the spec yourself, following `rules/design-workflow.md`'s Intent
+Contract, Fact / Decision Separation, Decision Dependency / Frontier,
+Alternative Exploration, and Spec Synthesis sections:
 
-Explicitly instruct it, every time, to write the spec document's body in the
-language required by the target project's CLAUDE.md (for this repository,
-Japanese — `会話は日本語で行う`); code blocks/commands/identifiers may stay
-as-is. Do not assume this is inferred from context.
+- **Intent Contract**: establish Outcome, Success criteria, Scope,
+  Non-goals, Constraints, Accepted facts, Assumptions, and Remaining
+  unknowns. Skip anything the Issue body already states clearly — read it
+  first.
+- **Fact / Decision Separation**: a Fact is anything confirmable from the
+  repository, official documentation, or a command/test/PoC — investigate
+  these yourself (repo search, docs, tests, official sources); never ask
+  the user about a Fact. A Decision is a product requirement, UX
+  preference, trade-off, scope boundary, or irreversible policy choice —
+  these are the only things AskUserQuestion is for.
+- **Decision Dependency / Frontier**: batch every independent Decision into
+  a single AskUserQuestion round instead of asking one at a time; never
+  ask a dependent Decision before its prerequisite is resolved.
+- **Alternative Exploration**: only compare multiple approaches when
+  materially different designs actually exist; the simplest approach that
+  satisfies the Intent Contract wins by default (YAGNI).
+- **Spec Synthesis**: once the Decision frontier is empty, synthesize the
+  answers into one coherent spec covering the sections listed in
+  `rules/design-workflow.md`'s Spec Synthesis section, with an Acceptance
+  Criteria section that is observable/testable, not aspirational prose.
 
-Do not ask a content-free "may I proceed" confirmation before this phase.
-Genuine requirement-clarifying questions (real ambiguity in the Issue's
-request) are fine via AskUserQuestion; asking permission with no new
-information is not.
+Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
-Skip brainstorming's own "commit the spec to git" step: per
-`rules/superpowers.md`'s "Local-Only Artifacts" policy, `docs/superpowers/`
-is `.gitignore`d and stays a local untracked artifact.
+Write the spec document's body in the language required by the target
+project's CLAUDE.md (for this repository, Japanese — `会話は日本語で行う`);
+code blocks/commands/identifiers may stay as-is. Do not assume this is
+inferred from context.
 
-brainstorming's own `<HARD-GATE>` (approving each design section before the
-spec file is written) is a vendored-plugin default this repository
-overrides via instruction, not a mechanism this repository can disable at
-the tool level — see the Notes section for why that distinction matters.
-Explicitly instruct brainstorming, every time, **not** to ask for that
-per-section or overall "does this design look right, may I proceed"
-approval before writing the spec file — skip straight to writing it once
-enough information has been gathered. This does not affect genuine
-requirement-clarifying questions (still fine via AskUserQuestion, per the
-paragraph above) — only the "may I proceed with this design" confirmation
-is being skipped. The sole remaining human checkpoint for the spec's
-content is Phase 6, after the spec is posted as an Issue comment.
+Do not ask a content-free "may I proceed" confirmation before or during
+this phase. Genuine requirement-clarifying questions (real ambiguity in the
+Issue's request, i.e. a genuine Decision) are fine via AskUserQuestion;
+asking permission with no new information is not. The sole human
+checkpoint for the spec's content is Phase 6, after the spec is posted as
+an Issue comment.
 
-Also explicitly instruct brainstorming to stop once the spec file is
-written and its own self-review is complete: it must skip its own "User
-Review Gate" (the step where it asks the user to review the written spec
-file) and must not auto-chain into invoking writing-plans. This flow's own
-Phase 4 through Phase 7 own spec review, posting, approval, and plan
-creation instead — chaining from within brainstorming would duplicate
-Phase 6's approval and invoke writing-plans out of order.
+Per `rules/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
+is `.gitignore`d — do not `git add -f` the spec file.
 
-This boundary is a concrete case where the prohibited-actions list in the "Phase Transition Self-Check" section above directly applies.
-
-Once brainstorming returns control here after writing the spec file, this is a control return, not a pause for user input — proceed immediately into Phase 4 below without waiting for the user or announcing a stop.
+Once the spec file is written, proceed immediately into Phase 4 below
+without waiting for the user or announcing a stop — this flow's own
+Phase 4 through Phase 6 own spec review, posting, and approval.
 
 ## Phase 4: Review the Spec
 
-`rules/superpowers.md` requires a sub-agent review of every spec file; it
-fires automatically after Phase 3. Wait for it and confirm the reported
-fixes/ambiguities look correct before moving on.
+`rules/design-workflow.md`'s Spec Review Contract requires dispatching the
+`spec-reviewer` sub-agent (`Agent` tool, `subagent_type: spec-reviewer`)
+against the spec file. Dispatch it now, wait for it, and confirm the
+reported fixes/ambiguities look correct before moving on.
 
-If it doesn't fire, do not do it yourself — stop and tell the user it
-didn't run, and ask how to proceed.
+If the dispatch fails or the sub-agent cannot run, do not skip the review
+yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 5: Post the Spec as an Issue Comment
 
@@ -154,26 +158,40 @@ update the spec, and repeat Phases 3–6 (Phase 5 becomes an update via
 
 ## Phase 7: Write the Plan
 
-Invoke **superpowers:writing-plans** against the approved spec to produce a
-plan file under `docs/superpowers/plans/`.
+Author the plan yourself against the approved spec, following
+`rules/design-workflow.md`'s Plan Generation Contract: each task needs at
+minimum Files (Create/Modify/Test), Depends on, Change, Contracts/
+Invariants, a concrete Verification command with expected evidence, Stop
+Conditions, and Assumptions.
+
+Size tasks so each is independently verifiable and has clear dependencies —
+not so large it hides multiple decisions, not so small it becomes
+bureaucratic overhead. Do not force uniform micro-stepping, and do not
+embed full production/test code in the plan except where a signature,
+schema, migration command, external API shape, or rollback command is
+fragile enough that paraphrasing it would break it — record those exact
+values.
+
+Write the plan to `.agent-work/plans/YYYY-MM-DD-<topic>.md`.
 
 Same language instruction as Phase 3 (Japanese for this repository, code/
-commands/identifiers as-is), and same "skip the commit-to-git step" rule —
-the plan stays a local untracked artifact.
+commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
+stays a local untracked artifact under `.agent-work/`, never `git add -f`.
 
-Explicitly instruct writing-plans, as a hard rule with no exceptions, not
-to ask the Execution Handoff question (the question offering a choice
-between Subagent-Driven vs. Inline Execution) under any circumstance —
-writing-plans's own SKILL.md treats "offer execution choice" as a required
-step after saving the plan, and that step must not fire here. This flow
-decides the execution approach itself in Phase 11, without asking the
-user, and proceeds directly from plan completion into execution — no
+This flow decides the execution approach itself in Phase 11, without
+asking the user — do not raise an execution-approach question here
+either, and proceed directly from plan completion into Phase 8 with no
 confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
-Same as Phase 4, for the plan file: wait for the automatic sub-agent review
-and confirm the result. If it doesn't fire, same rule — stop and ask.
+`rules/design-workflow.md`'s Plan Review Contract requires dispatching the
+`plan-reviewer` sub-agent (`Agent` tool, `subagent_type: plan-reviewer`)
+against the plan file. Dispatch it now, wait for it, and confirm the
+reported fixes look correct before moving on.
+
+If the dispatch fails or the sub-agent cannot run, do not skip the review
+yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 9: Post the Plan as an Issue Comment
 
@@ -187,9 +205,9 @@ PLAN_COMMENT_ID=${url##*issuecomment-}
 ```
 
 This must be a **new** comment, never reusing `SPEC_COMMENT_ID`. Posted for
-record/audit purposes — Phase 8's automatic sub-agent review already ran
-before this posting, and there is no human approval step for the plan (see
-Notes for why), so this comment is not revised afterward.
+record/audit purposes — Phase 8's dispatched `plan-reviewer` review already
+ran before this posting, and there is no human approval step for the plan
+(see Notes for why), so this comment is not revised afterward.
 
 Same fallback as Phase 5 if the post fails.
 
@@ -220,23 +238,23 @@ force-rename over it — stop and ask whether to reuse, delete, or rename.
 
 ## Phase 11: Execute the Plan
 
-Decide the execution approach yourself — do not ask the user to choose.
-This decision must already be final by the time this phase starts: if you
-find yourself about to ask the user which approach to use, that is a bug
-in this flow, not a legitimate checkpoint. Move from plan completion
-directly into dispatching the chosen skill below, with no pause, no
-confirmation, and no waiting for a response before starting.
-Use **superpowers:subagent-driven-development** when the plan's tasks are
-independent of each other (a fresh subagent per task benefits from
-parallel review). Use **superpowers:executing-plans** (inline) when tasks
-are tightly sequential and each depends on the previous task's exact file
-state (e.g. a single file edited incrementally across tasks), where
-per-task subagents would need to re-derive context that's cheaper to keep
-in this session.
+Decide the execution approach yourself, per `rules/design-workflow.md`'s
+Implementation Execution section: this defers to the existing decision
+framework in `rules/workflow-sub-agents.md` as-is — main-agent-direct for
+tightly sequential, high-context-dependency, or few-file work; sub-agent
+dispatch for genuinely independent, specialized, or context-isolation-
+benefiting work. Do not ask the user to choose. This decision must already
+be final by the time this phase starts: if you find yourself about to ask
+the user which approach to use, that is a bug in this flow, not a
+legitimate checkpoint. Move from plan completion directly into execution,
+with no pause, no confirmation, and no waiting for a response before
+starting.
 
-Invoke the chosen skill against the approved plan. Run its tasks without
-re-confirming each one with the user; only stop for genuine blockers the
-plan didn't anticipate (missing credentials, contradictory requirements).
+Execute the plan's tasks directly (or via dispatched sub-agents, per the
+decision above) without re-confirming each one with the user; only stop
+for genuine blockers the plan didn't anticipate (missing credentials,
+contradictory requirements) — see `rules/design-workflow.md`'s Stop
+Conditions section.
 
 If a task fails (test failure, compile error, a sub-agent reporting it
 couldn't complete), stop and report it before moving to Phase 12 — do not
@@ -244,9 +262,23 @@ treat it as done.
 
 ## Phase 12: Verify
 
-Invoke **superpowers:verification-before-completion** before creating the PR.
-If it reports a failure, go back to Phase 11 to fix it — do not proceed to
-Phase 13 with a known-failing verification.
+Run `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only Contract)
+before creating the PR:
+
+1. Record a snapshot `S` of: `HEAD`, staged state, tracked working-tree
+   diff, untracked files, and the identity of the verification evidence
+   collected so far.
+2. Re-confirm the working tree still matches `S` while progressing
+   through, in order: fresh full verification → secret check → Phase 13's
+   `/deep-review` → diff/status/evidence check → a final check immediately
+   before commit/PR.
+3. If anything changes partway through this sequence, restart the whole
+   gate from scratch rather than patching around the drift.
+4. A sub-agent's own "done" or "tests pass" self-report is never itself
+   completion evidence — inspect the evidence directly.
+
+If any step reports a failure, go back to Phase 11 to fix it — do not
+proceed to Phase 13 with a known-failing verification.
 
 ## Phase 13: Deep Review
 
@@ -330,8 +362,8 @@ Run `/pr-health-monitor <PR number>` immediately, without asking first.
 `pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the
 PR body, and can trigger `/handle-pr-reviews` — none of that is "merging,"
 so the merge guardrail doesn't apply. No separate confirmation is needed;
-the plan was already reviewed automatically (Phase 8) and posted for the
-record (Phase 9).
+the plan was already reviewed via Phase 8's dispatched `plan-reviewer`
+sub-agent and posted for the record (Phase 9).
 
 `pr-health-monitor` starts the Copilot review wait as a `Monitor(persistent:
 true)` instance in this same session (see `wait-for-copilot-review`'s
@@ -371,23 +403,16 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - Do not drift to other tasks while waiting for review or CI.
 - Record the decision log in the spec/plan files or the Issue comment/PR
   body — not extra ad-hoc Markdown files.
-- `disable-model-invocation: true` is intentional: only the `issue-pr`
-  dispatcher's explicit hand-off reaches this skill, not opportunistic
-  auto-trigger on an issue number appearing in conversation.
-- brainstorming's `<HARD-GATE>` (per-design-section approval before the
-  spec file exists) is a default behavior of the vendored
-  `superpowers:brainstorming` plugin skill itself, not a mechanism this
-  repository's configuration can switch off at the tool level. What
-  `issue-pr-deep` *can* do — and does, per Phase 3 — is instruct
-  brainstorming, via the prompt it's invoked with, not to ask for that
-  approval before writing the spec file. Genuine requirement-clarifying
-  questions are unaffected; only the "may I proceed with this design"
-  confirmation is skipped, with Phase 6 serving as the sole human
-  checkpoint for the spec's content afterward.
-- The plan has no human approval step by design: Phase 8's automatic
-  sub-agent review and Phase 9's Issue-comment posting already surface the
-  plan's content for review/record before implementation starts, so an
-  additional explicit `AskUserQuestion` gate (the old Phase 10) was removed
-  as redundant. If a plan needs correction after Phase 9, treat it the same
-  as any other implementation issue found during Phase 11 (Execute the
+- `disable-model-invocation: false` is intentional: this skill needs to
+  stay model-invocable so the `issue-pr` dispatcher's own Skill-tool
+  hand-off can reach it — `disable-model-invocation: true` would block
+  that hand-off too, not just opportunistic auto-trigger on an issue
+  number appearing in conversation. The `issue-pr` dispatcher's own
+  contract, not this flag, is what keeps this skill from being invoked
+  outside that hand-off.
+- The plan has no human approval step by design: Phase 8's dispatched `plan-reviewer` sub-agent
+  review and Phase 9's Issue-comment posting already surface the plan's content for
+  review/record before implementation starts, so an additional explicit `AskUserQuestion`
+  gate (the old Phase 10) was removed as redundant. If a plan needs correction after Phase 9,
+  treat it the same as any other implementation issue found during Phase 11 (Execute the
   Plan) rather than reopening an approval loop.

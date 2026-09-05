@@ -5,6 +5,7 @@
 # - Claude Code (native install)
 # - GitHub Copilot CLI
 # - OpenAI Codex CLI (npm)
+# - Chrome MCP Router / Chrome DevTools MCP (npm)
 
 set -euo pipefail
 
@@ -204,6 +205,103 @@ update_codex() {
     fi
 }
 
+# 新しい release の MCP initialize を確認する。
+smoke_test_chrome_mcp() {
+    local release_dir="$1"
+    local browser_url="${CHROME_MCP_BROWSER_URL:-http://127.0.0.1:9222}"
+    local project="${CHROME_MCP_PROJECT:-}"
+    local timeout_seconds="${CHROME_MCP_SMOKE_TIMEOUT_SECONDS:-10}"
+    local router="$release_dir/node_modules/.bin/chrome-mcp-router"
+    local helper="${CHROME_MCP_SMOKE_HELPER:-$HOME/bin/chrome-mcp-smoke-test.mjs}"
+
+    if [[ ! -x "$router" ]]; then
+        log "❌ Chrome MCP Router executable was not installed"
+        return 1
+    fi
+
+    if ! [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+        log "❌ CHROME_MCP_SMOKE_TIMEOUT_SECONDS must be a positive integer"
+        return 1
+    fi
+    if [[ ! -f "$helper" ]]; then
+        log "❌ Chrome MCP smoke test helper was not installed"
+        return 1
+    fi
+
+    if [[ -n "$project" ]]; then
+        log "🔍 Running Chrome MCP initialize smoke test for project ${project}..."
+        if ! node "$helper" --router "$router" --project "$project" --timeout-seconds "$timeout_seconds"; then
+            log "❌ Chrome MCP initialize smoke test failed"
+            return 1
+        fi
+    else
+        log "🔍 Running Chrome MCP initialize smoke test against ${browser_url}..."
+        if ! node "$helper" --router "$router" --browser-url "$browser_url" --timeout-seconds "$timeout_seconds"; then
+            log "❌ Chrome MCP initialize smoke test failed"
+            return 1
+        fi
+    fi
+
+    log "✅ Chrome MCP initialize smoke test passed"
+}
+
+# chrome-mcp-router と chrome-devtools-mcp を同一 release として更新する。
+update_chrome_mcp_router() {
+    if ! command -v npm >/dev/null 2>&1; then
+        log "⚠️  npm not found, skipping Chrome MCP update"
+        return 1
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        log "⚠️  node not found, skipping Chrome MCP update"
+        return 1
+    fi
+
+    local install_dir="${CHROME_MCP_INSTALL_DIR:-$HOME/.local/share/chrome-mcp-router}"
+    local releases_dir="$install_dir/releases"
+    local staging_dir
+    local router_version
+    local devtools_version
+    local release_name
+    local release_dir
+    local switch_link
+
+    mkdir -p "$releases_dir"
+    staging_dir=$(mktemp -d "$releases_dir/.staging.XXXXXX")
+
+    log "🔄 Updating Chrome MCP packages in staging..."
+    if ! npm install --prefix "$staging_dir" --no-audit --no-fund chrome-mcp-router@latest chrome-devtools-mcp@latest 2>&1 | tee -a "$LOG_FILE"; then
+        rm -rf "$staging_dir"
+        log "❌ Chrome MCP package installation failed"
+        return 1
+    fi
+
+    if ! smoke_test_chrome_mcp "$staging_dir"; then
+        rm -rf "$staging_dir"
+        return 1
+    fi
+
+    router_version=$(node -p 'require(process.argv[1]).version' "$staging_dir/node_modules/chrome-mcp-router/package.json")
+    devtools_version=$(node -p 'require(process.argv[1]).version' "$staging_dir/node_modules/chrome-devtools-mcp/package.json")
+    release_name="router-${router_version//[^A-Za-z0-9._-]/_}__devtools-${devtools_version//[^A-Za-z0-9._-]/_}"
+    release_dir="$releases_dir/$release_name"
+
+    if [[ -e "$release_dir" && ! -d "$release_dir" ]]; then
+        rm -rf "$staging_dir"
+        log "❌ Chrome MCP release path is not a directory: $release_dir"
+        return 1
+    fi
+    if [[ -d "$release_dir" ]]; then
+        rm -rf "$staging_dir"
+    else
+        mv "$staging_dir" "$release_dir"
+    fi
+
+    switch_link="$install_dir/.current.$$"
+    ln -s "releases/$release_name" "$switch_link"
+    mv -Tf "$switch_link" "$install_dir/current"
+    log "✅ Chrome MCP release activated: $release_name"
+}
+
 # メイン処理
 main() {
     # オプション解析
@@ -214,13 +312,13 @@ main() {
             --quick) quick=1 ;;
             --only)
                 if [[ -z "${2:-}" ]]; then
-                    echo "❌ --only requires an agent name (claude|copilot|codex)" >&2
+                    echo "❌ --only requires a target name (claude|copilot|codex|chrome-mcp-router)" >&2
                     exit 1
                 fi
                 case "$2" in
-                    claude|copilot|codex) ;;
+                    claude|copilot|codex|chrome-mcp-router) ;;
                     *)
-                        echo "❌ Unknown agent for --only: $2 (claude|copilot|codex)" >&2
+                        echo "❌ Unknown update target: $2 (claude|copilot|codex|chrome-mcp-router)" >&2
                         exit 1
                         ;;
                 esac
@@ -266,6 +364,7 @@ main() {
             claude)  update_claude  || exit_code=1 ;;
             copilot) update_copilot || exit_code=1 ;;
             codex)   update_codex   || exit_code=1 ;;
+            chrome-mcp-router) update_chrome_mcp_router || exit_code=1 ;;
             *) log "⏭️  No update function for: ${only_agent}" ;;
         esac
     else

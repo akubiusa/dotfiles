@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rtk-hook-version: 3
+# rtk-hook-version: 6
 # RTK Claude Code hook — rewrites commands to use rtk for token savings.
 # Requires: rtk >= 0.23.0, jq
 #
@@ -38,6 +38,7 @@ fi
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 if [ -z "$CMD" ]; then
   exit 0
@@ -47,11 +48,37 @@ fi
 REWRITTEN=$(rtk rewrite "$CMD" 2>/dev/null)
 EXIT_CODE=$?
 
+# Claude Code の worktree isolation 下では、rtk が挿入する git launcher
+# (`rtk git ...`) を実行コマンドとして採用すると worktree スコープを
+# 静的に証明できず拒否ループになる。EnterWorktree が作る worktree は
+# `.claude/worktrees/` 配下に置かれる
+# (home/dot_claude/hooks/executable_trust-worktree-cwd.sh と同じ規約) ため、
+# それを cwd から検出し、git launcher が新規に導入された場合だけ compound
+# command 全体を元の $CMD に巻き戻す。`rtk git` の部分文字列置換では、
+# クォート文字列リテラルにたまたま `rtk git` という文字列が含まれるケース
+# (例: echo "rtk git status") まで書き換えてコマンドの意味を変えてしまうため
+# 採用しない。代わりに CMD と REWRITTEN それぞれに含まれる `rtk git` の
+# 出現回数を比較し、増えていれば新規導入とみなす。増えていなければ
+# (クォート内の文字列がそのまま残っているだけ、または git 呼び出し自体が
+# 無い場合) rewrite をそのまま採用する。全体巻き戻しにより同じ compound
+# command 内の他の rewrite (例: rtk ls) は犠牲になるが、正しさを優先する
+# Phase 1 では妥当なトレードオフとする。deny/ask 判定 (EXIT_CODE) は
+# rtk 側の結果をそのまま使い続けるため、安全網自体は失わない。
+ADOPTED_CMD="$REWRITTEN"
+if [[ "$CWD" == */.claude/worktrees/* ]]; then
+  COUNT_CMD=$(grep -o -F 'rtk git' <<< "$CMD" | wc -l)
+  COUNT_REWRITTEN=$(grep -o -F 'rtk git' <<< "$REWRITTEN" | wc -l)
+  if [ "$COUNT_REWRITTEN" -gt "$COUNT_CMD" ]; then
+    ADOPTED_CMD="$CMD"
+  fi
+fi
+
 case $EXIT_CODE in
   0)
     # Rewrite found, no permission rules matched — safe to auto-allow.
-    # If the output is identical, the command was already using RTK.
-    [ "$CMD" = "$REWRITTEN" ] && exit 0
+    # If the output is identical, the command was already using RTK
+    # (worktree 内で git だけ戻した結果が CMD と一致する場合も含む)。
+    [ "$CMD" = "$ADOPTED_CMD" ] && exit 0
     ;;
   1)
     # No RTK equivalent — pass through unchanged.
@@ -71,7 +98,7 @@ case $EXIT_CODE in
 esac
 
 ORIGINAL_INPUT=$(echo "$INPUT" | jq -c '.tool_input')
-UPDATED_INPUT=$(echo "$ORIGINAL_INPUT" | jq --arg cmd "$REWRITTEN" '.command = $cmd')
+UPDATED_INPUT=$(echo "$ORIGINAL_INPUT" | jq --arg cmd "$ADOPTED_CMD" '.command = $cmd')
 
 if [ "$EXIT_CODE" -eq 3 ]; then
   # Ask: rewrite the command, omit permissionDecision so Claude Code prompts.

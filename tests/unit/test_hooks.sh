@@ -14,6 +14,7 @@ HOOKS=(
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
   "home/dot_claude/hooks/executable_git-config-guard.sh"
   "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
+  "home/dot_claude/hooks/executable_rtk-rewrite.sh"
   "home/dot_codex/hooks/executable_git-config-guard.sh"
   "home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
 )
@@ -473,6 +474,191 @@ else
 fi
 
 rm -rf "$TEST_HOOK_HOME"
+
+echo "Testing rtk-rewrite hook worktree bypass behavior..."
+RTK_REWRITE_HOOK="home/dot_claude/hooks/executable_rtk-rewrite.sh"
+RTK_FAKE_BIN_DIR=$(mktemp -d)
+
+# jq --version は使わず rtk のみ差し替える。実際の rtk rewrite が観測した
+# 変換パターン (git/ls トークンの直前にだけ「rtk 」を挿入し、演算子や他の
+# 引数はそのまま) を sed の単語境界 (\<...\>) で模擬する。これにより
+# `echo x && git status` のような compound command 内に埋め込まれた git も
+# 検出でき、先頭アンカー方式の正規表現では拾えなかったケースを再現できる。
+# ただし単純な単語境界 sed はクォート文字列の中身も区別なく書き換えて
+# しまうため、クォート内にたまたま `rtk git` を含む 2 ケースだけは
+# 実際の rtk (クォート内は書き換えない) の挙動に忠実な出力を直接指定する。
+# コマンド文字列に DENYME / ASKME を含めることで、rtk 本体の
+# deny (exit 2) / ask (exit 3 + stdout) 判定も模擬する。
+cat > "$RTK_FAKE_BIN_DIR/rtk" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "--version" ]]; then
+  echo "rtk 0.43.0"
+  exit 0
+fi
+if [[ "$1" == "rewrite" ]]; then
+  CMD="$2"
+  case "$CMD" in
+    *DENYME*)
+      exit 2
+      ;;
+  esac
+  case "$CMD" in
+    'ls && echo "rtk git status"')
+      REWRITTEN='rtk ls && echo "rtk git status"'
+      ;;
+    'echo "rtk git status" && git status')
+      REWRITTEN='echo "rtk git status" && rtk git status'
+      ;;
+    *)
+      REWRITTEN=$(printf '%s' "$CMD" | sed -E 's/\<git\>/rtk git/g; s/\<ls\>/rtk ls/g')
+      ;;
+  esac
+  echo "$REWRITTEN"
+  case "$CMD" in
+    *ASKME*)
+      exit 3
+      ;;
+    *)
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+EOF
+chmod +x "$RTK_FAKE_BIN_DIR/rtk"
+
+run_rtk_rewrite() {
+  local cmd="$1"
+  local cwd="$2"
+  jq -n --arg cmd "$cmd" --arg cwd "$cwd" '{"cwd": $cwd, "tool_input": {"command": $cmd}}' \
+    | PATH="$RTK_FAKE_BIN_DIR:$PATH" bash "$RTK_REWRITE_HOOK"
+}
+
+assert_rtk_rewritten() {
+  local label="$1" cmd="$2" cwd="$3" expected_cmd="$4"
+  local output adopted
+  output=$(run_rtk_rewrite "$cmd" "$cwd")
+  adopted=$(echo "$output" | jq -r '.hookSpecificOutput.updatedInput.command // empty' 2>/dev/null)
+  if [[ "$adopted" != "$expected_cmd" ]]; then
+    echo "❌ $label: expected RTK rewrite '$expected_cmd', got: $output"
+    FAILED=1
+  else
+    echo "✅ $label"
+  fi
+}
+
+assert_rtk_bypassed() {
+  local label="$1" cmd="$2" cwd="$3"
+  local output
+  output=$(run_rtk_rewrite "$cmd" "$cwd")
+  if [[ -n "$output" ]]; then
+    echo "❌ $label: expected command to stay plain (no rtk rewrite), got: $output"
+    FAILED=1
+  else
+    echo "✅ $label"
+  fi
+}
+
+# deny 判定 (rtk rewrite exit 2) は元々このフック自身が何も出力せず、
+# Claude Code 側のネイティブ deny ルールに委ねる設計のため、
+# worktree 内外を問わず「出力なし」であることだけを確認すればよい。
+assert_rtk_denied() {
+  local label="$1" cmd="$2" cwd="$3"
+  local output
+  output=$(run_rtk_rewrite "$cmd" "$cwd")
+  if [[ -n "$output" ]]; then
+    echo "❌ $label: expected deny rule to pass through silently, got: $output"
+    FAILED=1
+  else
+    echo "✅ $label"
+  fi
+}
+
+# ask 判定 (rtk rewrite exit 3) は permissionDecision を出さずに
+# ユーザー確認を求める点を維持しつつ、採用コマンドだけを
+# 呼び出し側が指定した expected_cmd と比較する。
+assert_rtk_asked() {
+  local label="$1" cmd="$2" cwd="$3" expected_cmd="$4"
+  local output decision adopted
+  output=$(run_rtk_rewrite "$cmd" "$cwd")
+  decision=$(echo "$output" | jq -r '.hookSpecificOutput.permissionDecision // empty' 2>/dev/null)
+  adopted=$(echo "$output" | jq -r '.hookSpecificOutput.updatedInput.command // empty' 2>/dev/null)
+  if [[ -n "$decision" ]]; then
+    echo "❌ $label: expected ask (no auto permissionDecision), got decision=$decision"
+    FAILED=1
+  elif [[ "$adopted" != "$expected_cmd" ]]; then
+    echo "❌ $label: expected adopted command '$expected_cmd', got '$adopted'"
+    FAILED=1
+  else
+    echo "✅ $label"
+  fi
+}
+
+NORMAL_CWD="/home/user/project"
+WORKTREE_CWD="/home/user/project/.claude/worktrees/issue-357"
+RTK_DENY_CMD="git push --force DENYME"
+RTK_ASK_CMD="git reset --hard ASKME"
+
+assert_rtk_rewritten "normal cwd: git branch --show-current is still RTK-rewritten" \
+  "git branch --show-current" "$NORMAL_CWD" "rtk git branch --show-current"
+assert_rtk_bypassed "worktree cwd: git branch --show-current stays plain git" \
+  "git branch --show-current" "$WORKTREE_CWD"
+assert_rtk_bypassed "worktree cwd: git status --porcelain stays plain git" \
+  "git status --porcelain" "$WORKTREE_CWD"
+assert_rtk_rewritten "worktree cwd: non-git command ls -la is still RTK-rewritten" \
+  "ls -la" "$WORKTREE_CWD" "rtk ls -la"
+assert_rtk_bypassed "worktree cwd: 'command git status' stays plain git" \
+  "command git status" "$WORKTREE_CWD"
+assert_rtk_bypassed "worktree cwd: 'cd /some/path && git status' stays plain git" \
+  "cd /some/path && git status" "$WORKTREE_CWD"
+assert_rtk_rewritten "normal cwd: non-git command ls -la is still RTK-rewritten (regression)" \
+  "ls -la" "$NORMAL_CWD" "rtk ls -la"
+
+# 先頭アンカー方式の正規表現では検出できなかった、compound command 内に
+# 埋め込まれた git (`&&`/`;` の後ろ) も、git launcher の新規導入を検出
+# できれば漏れなく素通しできることを確認する。
+assert_rtk_bypassed "worktree cwd: 'echo x && git status' (compound, &&) stays fully plain" \
+  "echo x && git status" "$WORKTREE_CWD"
+assert_rtk_rewritten "normal cwd: 'echo x && git status' (compound, &&) is still RTK-rewritten (regression)" \
+  "echo x && git status" "$NORMAL_CWD" "echo x && rtk git status"
+assert_rtk_asked "worktree cwd: 'pwd; git status ASKME' (compound, ;) still prompts but keeps plain git" \
+  "pwd; git status ASKME" "$WORKTREE_CWD" "pwd; git status ASKME"
+
+# git launcher が新規導入された compound command は、他の rewrite (rtk ls)
+# を犠牲にしてでもコマンド全体を元に戻す (部分置換はしない、安全側優先)。
+assert_rtk_bypassed "worktree cwd: 'ls && git status' reverts the whole command, sacrificing the rtk ls optimization" \
+  "ls && git status" "$WORKTREE_CWD"
+assert_rtk_rewritten "normal cwd: 'ls && git status' is still fully RTK-rewritten (regression)" \
+  "ls && git status" "$NORMAL_CWD" "rtk ls && rtk git status"
+
+# クォート文字列リテラルに偶然 `rtk git` という文字列が含まれるケースでは、
+# 出現回数がリテラル分と一致するだけで増えないため、rewrite をそのまま
+# 採用してよい (git 呼び出し自体が無いので、クォートも他の rewrite も
+# 書き換えられてはならない)。
+assert_rtk_rewritten "worktree cwd: 'ls && echo \"rtk git status\"' preserves the quoted literal and keeps the ls rewrite (no real git call)" \
+  'ls && echo "rtk git status"' "$WORKTREE_CWD" 'rtk ls && echo "rtk git status"'
+assert_rtk_rewritten "normal cwd: 'ls && echo \"rtk git status\"' is still RTK-rewritten (regression)" \
+  'ls && echo "rtk git status"' "$NORMAL_CWD" 'rtk ls && echo "rtk git status"'
+
+# 引用符内に既存の `rtk git` を含みつつ、末尾で実際に git launcher が
+# 新規導入される場合は、出現回数が増えるため全体を巻き戻す。
+assert_rtk_bypassed "worktree cwd: 'echo \"rtk git status\" && git status' reverts the whole command (real git launcher newly introduced)" \
+  'echo "rtk git status" && git status' "$WORKTREE_CWD"
+assert_rtk_rewritten "normal cwd: 'echo \"rtk git status\" && git status' is still RTK-rewritten (regression)" \
+  'echo "rtk git status" && git status' "$NORMAL_CWD" 'echo "rtk git status" && rtk git status'
+
+# deny/ask 判定は worktree 内の git であっても失われてはならない
+# (rewrite だけをスキップし、safety net は維持する)。
+assert_rtk_denied "normal cwd: deny-matched git command passes through silently" \
+  "$RTK_DENY_CMD" "$NORMAL_CWD"
+assert_rtk_denied "worktree cwd: deny-matched git command still passes through silently (deny preserved)" \
+  "$RTK_DENY_CMD" "$WORKTREE_CWD"
+assert_rtk_asked "normal cwd: ask-matched git command still prompts with the RTK-rewritten command" \
+  "$RTK_ASK_CMD" "$NORMAL_CWD" "rtk git reset --hard ASKME"
+assert_rtk_asked "worktree cwd: ask-matched git command still prompts but keeps plain git (ask preserved, no rtk rewrite)" \
+  "$RTK_ASK_CMD" "$WORKTREE_CWD" "$RTK_ASK_CMD"
+
+rm -rf "$RTK_FAKE_BIN_DIR"
 
 if [ $FAILED -eq 0 ]; then
   echo "✅ All hook tests passed"

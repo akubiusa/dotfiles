@@ -79,12 +79,12 @@
           {
             "type": "command",
             "command": "bash ~/.codex/hooks/pr-monitor-pane-state.sh stopped",
-            "timeout": 5
+            "timeout": 3
           },
           {
             "type": "command",
             "command": "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh",
-            "timeout": 5
+            "timeout": 3
           }
         ]
       }

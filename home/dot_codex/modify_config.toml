@@ -8,6 +8,7 @@
 {{- $config = $config | setValueAtPath "project_doc_fallback_filenames" (list "AGENTS.local.md") -}}
 {{- $config = $config | setValueAtPath "notify" (list "codex-wakatime") -}}
 {{- $config = $config | setValueAtPath "sandbox_workspace_write.network_access" true -}}
+{{- $config = $config | setValueAtPath "suppress_unstable_features_warning" true -}}
 {{- $config = $config | setValueAtPath "features.hooks" true -}}
 {{- $_ := unset (index $config "features") "codex_hooks" -}}
 {{- $config = $config | setValueAtPath "features.unified_exec" true -}}

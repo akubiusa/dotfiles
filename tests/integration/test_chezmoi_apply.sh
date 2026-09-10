@@ -45,6 +45,16 @@ done
 LOCAL_RUNTIME_FILE="$HOME/.claude/local-runtime-state.keep"
 printf 'keep\n' > "$LOCAL_RUNTIME_FILE"
 
+# Claude Code のグローバル runtime state を保持しつつ、管理対象キーだけ更新されることを検証する。
+CLAUDE_GLOBAL_CONFIG="$HOME/.claude.json"
+cat > "$CLAUDE_GLOBAL_CONFIG" <<'JSON'
+{
+  "oauthAccount": {"accountUuid": "keep-me"},
+  "projects": {"/tmp/example": {"hasTrustDialogAccepted": true}},
+  "diffSidebarOpen": true
+}
+JSON
+
 # dotfiles 管理から外した chezmoi updater unit は既存 target を保持する。
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_USER_DIR/timers.target.wants"
@@ -67,6 +77,17 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
 fi
 
 echo "✅ chezmoi apply passed"
+
+if ! grep -Fq '"diffSidebarOpen": false' "$CLAUDE_GLOBAL_CONFIG"; then
+  echo "❌ Claude diff sidebar setting was not disabled"
+  exit 1
+fi
+if ! grep -Fq '"accountUuid": "keep-me"' "$CLAUDE_GLOBAL_CONFIG" \
+  || ! grep -Fq '"hasTrustDialogAccepted": true' "$CLAUDE_GLOBAL_CONFIG"; then
+  echo "❌ Claude global runtime state was not preserved"
+  exit 1
+fi
+echo "✅ Claude diff sidebar disabled while global runtime state was preserved"
 
 for target in "${STALE_TARGETS[@]}"; do
   if [ -e "$target" ] || [ -L "$target" ]; then

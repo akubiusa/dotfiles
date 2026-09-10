@@ -1,0 +1,822 @@
+#!/bin/bash
+# agentctl: 自律 AI agent runtime keeper CLI entrypoint。
+#
+# 設計方針 (spec: .agent-work/specs/2026-09-10-autonomous-agent-runtime-design.md):
+#   - keeper は Git/worktree/merge lifecycle を一切所有しない (git/gh を呼ばない)。
+#   - mission/steer 本文は argv/state/event に残さない (file/stdin のみ)。
+#   - runtime_id + caller expected token による fencing で stale command を拒否する。
+#
+# 実装範囲: start/status/logs/steer/attach/interrupt/stop/cleanup/resume/complete/doctor。
+# backend は fake/claude/claude-work/codex を実装済み
+# (agentctl-backend-claude.sh / agentctl-backend-codex.sh)。
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/agentctl-common.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/agentctl-backend-claude.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/agentctl-backend-codex.sh"
+
+AGENTCTL_SCHEMA_VERSION=1
+
+usage() {
+  cat <<'EOF'
+usage: agentctl <command> [options]
+
+commands:
+  start     --name NAME --cwd DIR --backend fake --policy-file FILE
+            (--mission-file FILE | --mission-stdin)
+  status    --name NAME [--json]
+  logs      --name NAME [--lines N] [--follow]
+  steer     --name NAME --runtime-id ID (--file FILE | --stdin)
+  attach    --name NAME --runtime-id ID
+  interrupt --name NAME --runtime-id ID
+  stop      --name NAME --runtime-id ID
+  cleanup   --name NAME --runtime-id ID
+  resume    --name NAME --cwd DIR --backend fake --from-runtime-id ID [--policy-file FILE]
+  complete  --name NAME --runtime-id ID
+  doctor    [--json]
+EOF
+}
+
+require_arg() {
+  local flag="$1" value="${2:-}"
+  [ -n "$value" ] || agentctl_die "missing required argument: $flag"
+}
+
+# --- start -----------------------------------------------------------
+
+cmd_start() {
+  local name="" cwd="" backend="" policy_file="" mission_file="" mission_stdin=0 fake_command=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --cwd) cwd="$2"; shift 2 ;;
+      --backend) backend="$2"; shift 2 ;;
+      --policy-file) policy_file="$2"; shift 2 ;;
+      --mission-file) mission_file="$2"; shift 2 ;;
+      --mission-stdin) mission_stdin=1; shift ;;
+      --fake-command) fake_command="$2"; shift 2 ;; # test-only: fake backend 用の respawn 先コマンド
+      *) agentctl_die "unknown option for start: $1" ;;
+    esac
+  done
+
+  require_arg --name "$name"
+  require_arg --cwd "$cwd"
+  require_arg --backend "$backend"
+  require_arg --policy-file "$policy_file"
+
+  case "$name" in
+    *[!A-Za-z0-9_-]*|"") agentctl_die "--name must match [A-Za-z0-9_-]+" ;;
+  esac
+
+  [[ "$cwd" == /* ]] || agentctl_die "--cwd must be an absolute path"
+  [ -d "$cwd" ] || agentctl_die "--cwd does not exist: $cwd"
+
+  if [ -n "$mission_file" ] && [ "$mission_stdin" -eq 1 ]; then
+    agentctl_die "specify exactly one of --mission-file or --mission-stdin"
+  fi
+  if [ -z "$mission_file" ] && [ "$mission_stdin" -eq 0 ]; then
+    agentctl_die "mission input is required: --mission-file or --mission-stdin"
+  fi
+  if [ -n "$mission_file" ]; then
+    [ -f "$mission_file" ] || agentctl_die "--mission-file not found: $mission_file"
+  fi
+
+  case "$backend" in
+    fake|claude|claude-work|codex) : ;;
+    *) agentctl_die "unknown backend: $backend" ;;
+  esac
+
+  local policy_json
+  policy_json=$(agentctl_validate_policy_file "$policy_file")
+
+  agentctl_ensure_root
+  agentctl_with_name_lock "$name" _start_locked "$name" "$cwd" "$backend" "$policy_file" "$policy_json" "$mission_file" "$mission_stdin" "$fake_command"
+}
+
+_start_locked() {
+  local name="$1" cwd="$2" backend="$3" policy_file="$4" policy_json="$5" mission_file="$6" mission_stdin="$7" fake_command="$8"
+
+  local existing
+  existing=$(agentctl_reconcile "$name")
+  case "$existing" in
+    absent) : ;;
+    running|starting) agentctl_die "runtime '$name' is already $existing; use steer or stop first" ;;
+    *) agentctl_die "runtime '$name' is in '$existing' state; run 'agentctl cleanup --name $name --runtime-id <id>' first" ;;
+  esac
+
+  local dir
+  dir=$(agentctl_runtime_dir "$name")
+  mkdir -p "$dir"
+  chmod 0700 "$dir"
+
+  # mission 本文を argv に残さず file へ格納する。
+  local mission_path="$dir/mission.txt"
+  if [ "$mission_stdin" -eq 1 ]; then
+    cat | agentctl_atomic_write "$mission_path" 0600
+  else
+    agentctl_atomic_write "$mission_path" 0600 <"$mission_file"
+  fi
+
+  # policy snapshot: source file 変更後も effective policy が変わらないよう canonical JSON を固定する。
+  local policy_snapshot_path="$dir/policy.snapshot.json"
+  echo "$policy_json" | jq -S . | agentctl_atomic_write "$policy_snapshot_path" 0600
+  local policy_digest
+  policy_digest=$(jq -S -c . "$policy_snapshot_path" | agentctl_policy_digest)
+
+  agentctl_write_initial_manifest "$name" "$cwd"
+
+  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$fake_command" "" "start"
+}
+
+# 新規 generation を publish する (start / resume 共通)。
+# spec の runtime publication barrier (starting state -> blocked bootstrap ->
+# owner marker -> release token) をここに一本化する。stdout に runtime_id を返す。
+# prelude_path が非空なら (resume の continuation bundle、元の mission 本文を
+# 内包済み)、mission.txt の代わりにそれを 1 turn として fresh backend へ届ける。
+_publish_generation() {
+  local name="$1" cwd="$2" backend="$3" policy_snapshot_path="$4" policy_digest="$5" fake_command="$6" prelude_path="$7" operation_name="${8:-start}"
+  local dir manifest_path
+  dir=$(agentctl_runtime_dir "$name")
+  manifest_path="$dir/manifest.json"
+
+  local runtime_id started_at session
+  runtime_id=$(agentctl_gen_runtime_id)
+  started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  session=$(agentctl_tmux_session "$name")
+
+  # 1. starting state を publish 前に書く。
+  jq -n \
+    --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" \
+    --arg name "$name" --arg backend "$backend" --arg runtime_id "$runtime_id" \
+    --arg cwd "$cwd" --arg tmux_session "$session" --arg started_at "$started_at" \
+    --arg policy_snapshot_path "$policy_snapshot_path" --arg policy_digest "$policy_digest" \
+    '{schema_version:$schema_version, name:$name, backend:$backend, runtime_id:$runtime_id,
+      cwd:$cwd, tmux_session:$tmux_session, pane_id:null, pane_pid:null, pane_pid_start:null,
+      started_at:$started_at, policy_snapshot_path:$policy_snapshot_path, policy_digest:$policy_digest,
+      status:"starting"}' | agentctl_write_state_json "$name"
+
+  agentctl_maybe_fault pre_tmux
+
+  # 2. deployment global shared lock を publication 完了まで保持する。
+  agentctl_acquire_deployment_lock_shared
+
+  # tmux セッションが既に (無関係に) 存在する可能性は reconcile 確認で除外済みだが、念のため。
+  if agentctl_tmux_has_session "$session"; then
+    agentctl_die "tmux session '$session' unexpectedly exists"
+  fi
+
+  # 3. blocked bootstrap: 実 backend ではなく一時保持プロセスを起動する。
+  # release token (respawn-pane) が届かない launcher crash では bootstrap 自身が
+  # bounded timeout で終了し、未所有 live process を無期限に残さない。
+  local bootstrap_timeout="${AGENTCTL_TEST_BOOTSTRAP_TIMEOUT_SECONDS:-300}"
+  agentctl_tmux new-session -d -s "$session" -c "$cwd" -- \
+    bash -c "trap '' TERM INT; sleep $bootstrap_timeout"
+  agentctl_tmux set-option -t "$session" remain-on-exit on >/dev/null
+
+  agentctl_maybe_fault pre_marker
+
+  # 実 pane_id (%N) を解決し、以降はこれを canonical な target として使う
+  # (session:0 決め打ちは base-index が 0 以外の tmux.conf で壊れるため避ける)。
+  local pane
+  pane=$(agentctl_tmux_pane_id "$session")
+  [ -n "$pane" ] || agentctl_die "failed to resolve pane_id after tmux new-session"
+  local pane_pid pane_pid_start
+  pane_pid=$(agentctl_tmux_pane_pid "$pane")
+  pane_pid_start=$(agentctl_pid_start_token "$pane_pid")
+
+  # 4. owner/runtime marker を publish する。
+  agentctl_tmux_set_marker "$pane" owner "agentctl"
+  agentctl_tmux_set_marker "$pane" name "$name"
+  agentctl_tmux_set_marker "$pane" backend "$backend"
+  agentctl_tmux_set_marker "$pane" runtime_id "$runtime_id"
+  agentctl_tmux_set_marker "$pane" schema_version "$AGENTCTL_SCHEMA_VERSION"
+
+  agentctl_maybe_fault post_marker_pre_release
+
+  # 5. state/pane evidence 相互照合 (marker を読み直して一致を確認する)。
+  local check_owner check_runtime_id
+  check_owner=$(agentctl_tmux_get_marker "$pane" owner)
+  check_runtime_id=$(agentctl_tmux_get_marker "$pane" runtime_id)
+  if [ "$check_owner" != "agentctl" ] || [ "$check_runtime_id" != "$runtime_id" ]; then
+    agentctl_die "marker cross-check failed after publication"
+  fi
+
+  # 6. guard/backend preflight (fake backend は no-op preflight)。
+  local backend_cmd
+  if [ "$backend" = "fake" ]; then
+    # local_write=false は機械的な read-only mode で強制する必要がある
+    # (spec: "その機械的 read-only mode を構成できない backend は start を拒否する")。
+    # fake backend にはその仕組みが無いため、local_write=false なら start 自体を拒否する。
+    local local_write
+    local_write=$(jq -r '.permissions.local_write' "$policy_snapshot_path")
+    if [ "$local_write" != "true" ]; then
+      agentctl_die "fake backend cannot enforce local_write=false (no mechanical read-only mode); refusing start"
+    fi
+    # 既定コマンドは stty raw で pty の canonical line-buffering を外す。
+    # 実インタラクティブ backend (Claude/Codex TUI) はいずれも raw mode で
+    # 端末を読むため、最終行が改行なしでも即時読み取れる挙動に合わせる。
+    # sink は O_APPEND ではなく単一の長命 fd で開く (O_APPEND だと pty 上の
+    # 2 回目以降の paste-buffer 由来データが実測で失われるため使わない)。
+    # cat ではなく tee を使い、受信内容を sink file に加えて自身の stdout
+    # (= pane 画面) にも複製する。これにより `agentctl logs` が pane capture
+    # 経由で実際の受信内容を観測できる (cat のみだと画面には何も描画されない)。
+    backend_cmd="${fake_command:-stty raw -echo; tee \"$dir/fake-sink.txt\"}"
+  elif [ "$backend" = "claude" ] || [ "$backend" = "claude-work" ]; then
+    backend_cmd=$(agentctl_backend_claude_command "$backend" "$policy_snapshot_path" "$dir") \
+      || agentctl_die "claude backend guard preflight failed"
+  elif [ "$backend" = "codex" ]; then
+    backend_cmd=$(agentctl_backend_codex_command "$policy_snapshot_path" "$dir") \
+      || agentctl_die "codex backend guard preflight failed"
+  fi
+
+  # 7. release token: pane を respawn し、bootstrap holder を実 backend command に置き換える。
+  #    これが一度きりの publication 完了アクションである。runtime_id/policy snapshot は
+  #    backend guard (Codex dispatcher 等) が読む env として渡す。
+  agentctl_tmux respawn-pane -k -t "$pane" -c "$cwd" -- env \
+    "AGENTCTL_RUNTIME_ID=$runtime_id" \
+    "AGENTCTL_POLICY_SNAPSHOT=$policy_snapshot_path" \
+    "AGENTCTL_POLICY_DIGEST=$policy_digest" \
+    "AGENTCTL_MISSION_MANIFEST=$manifest_path" \
+    bash -c "$backend_cmd"
+
+  # 7a. 実 backend の readline が armed になるまで待つ (fake は即 return)。
+  #     起動直後に paste+Enter すると Enter だけ失われ、後続 steer の paste+
+  #     Enter が未 submit の initial mission と連結されて誤実行される race が
+  #     実測で確認されたため、mission delivery の前に必ずこの barrier を通す。
+  agentctl_wait_backend_ready "$backend" "$pane" "$dir"
+
+  # 7b. mission (task-specific + common contract) を backend へ渡す。ChatGPT 等の
+  #     外部仲介なしに自律開始させる v8 の目的上、start/resume は必ずここで初期
+  #     mission を pty へ届ける。argv/env に本文を残さないため、steer (行 340
+  #     付近) と同じ tmux buffer 経由の転送を使う (-r で \n->\r 変換を無効化し
+  #     2000 字超/multiline/日本語を byte-safe に届ける)。
+  #     paste 直後に submit (実 backend のみ) して、TUI 入力欄に滞留させず
+  #     ChatGPT 等の手動操作なしで実行を開始させる。
+  # prelude_path (resume の continuation bundle) が渡された場合は、元の
+  # mission 本文をその中に埋め込んだ 1 ファイルとして届けるため、mission.txt
+  # を別 turn として重ねて送らない (paste+screen-settle には turn 完了を
+  # 確認する barrier が無く、2 回に分けると実 backend 上で 1 turn 目実行中の
+  # steer と区別できず衝突し得るため)。
+  if [ -n "$prelude_path" ]; then
+    agentctl_deliver_body "$backend" "$pane" "$dir" "$prelude_path" "$runtime_id" "$operation_name"
+  else
+    local mission_path="$dir/mission.txt"
+    if [ -f "$mission_path" ]; then
+      agentctl_deliver_body "$backend" "$pane" "$dir" "$mission_path" "$runtime_id" "$operation_name"
+    fi
+  fi
+
+  agentctl_maybe_fault post_release
+
+  # respawn-pane はプロセスを差し替えるため、記録する pane_pid/start token は
+  # respawn 後に取り直す (bootstrap holder の PID を記録すると PID 再利用
+  # フェンシングが機能しない)。
+  pane_pid=$(agentctl_tmux_pane_pid "$pane")
+  pane_pid_start=$(agentctl_pid_start_token "$pane_pid")
+
+  jq -n \
+    --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" \
+    --arg name "$name" --arg backend "$backend" --arg runtime_id "$runtime_id" \
+    --arg cwd "$cwd" --arg tmux_session "$session" --arg pane_id "$pane" \
+    --argjson pane_pid "$pane_pid" --arg pane_pid_start "$pane_pid_start" \
+    --arg started_at "$started_at" \
+    --arg policy_snapshot_path "$policy_snapshot_path" --arg policy_digest "$policy_digest" \
+    '{schema_version:$schema_version, name:$name, backend:$backend, runtime_id:$runtime_id,
+      cwd:$cwd, tmux_session:$tmux_session, pane_id:$pane_id, pane_pid:$pane_pid, pane_pid_start:$pane_pid_start,
+      started_at:$started_at, policy_snapshot_path:$policy_snapshot_path, policy_digest:$policy_digest,
+      status:"running"}' | agentctl_write_state_json "$name"
+
+  agentctl_release_deployment_lock
+
+  echo "$runtime_id"
+}
+
+# --- status -----------------------------------------------------------
+
+cmd_status() {
+  local name="" json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      *) agentctl_die "unknown option for status: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+
+  local reconcile state_json
+  reconcile=$(agentctl_reconcile "$name")
+  if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
+    :
+  else
+    state_json='null'
+  fi
+
+  local out
+  out=$(jq -n --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" --arg reconcile "$reconcile" \
+    --argjson state "$state_json" \
+    '{schema_version:$schema_version, reconcile:$reconcile,
+      runtime_id: ($state.runtime_id // null), name: ($state.name // null),
+      backend: ($state.backend // null), started_at: ($state.started_at // null)}')
+
+  if [ "$json" -eq 1 ]; then
+    echo "$out"
+  else
+    echo "$out" | jq -r '"name=\(.name // "-") reconcile=\(.reconcile) runtime_id=\(.runtime_id // "-") backend=\(.backend // "-")"'
+  fi
+}
+
+# --- steer -----------------------------------------------------------
+
+cmd_steer() {
+  local name="" runtime_id="" file="" use_stdin=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --file) file="$2"; shift 2 ;;
+      --stdin) use_stdin=1; shift ;;
+      *) agentctl_die "unknown option for steer: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+  if [ -n "$file" ] && [ "$use_stdin" -eq 1 ]; then
+    agentctl_die "specify exactly one of --file or --stdin"
+  fi
+  if [ -z "$file" ] && [ "$use_stdin" -eq 0 ]; then
+    agentctl_die "steer body is required: --file or --stdin"
+  fi
+
+  local tmpfile=""
+  if [ "$use_stdin" -eq 1 ]; then
+    tmpfile=$(mktemp)
+    # set -e 下では失敗した bare statement でスクリプトが即終了し、後続の rm が
+    # 実行されない (steer body を含む temp file が残る)。trap で経路によらず消す。
+    # trap は関数の local scope 外 (script 終了時) に実行されるため、$tmpfile は
+    # ここで即時展開する (シングルクォートの遅延展開だと unbound variable になる)。
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmpfile'" EXIT
+    cat >"$tmpfile"
+    file="$tmpfile"
+  fi
+
+  agentctl_with_name_lock "$name" _steer_locked "$name" "$runtime_id" "$file"
+}
+
+_steer_locked() {
+  local name="$1" runtime_id="$2" file="$3"
+  local reconcile state_json current_id
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    running) : ;;
+    *) agentctl_die "runtime '$name' is not running (reconcile=$reconcile)" ;;
+  esac
+  state_json=$(agentctl_read_state "$name") || agentctl_die "no state for '$name'"
+  current_id=$(echo "$state_json" | jq -r '.runtime_id')
+  [ "$runtime_id" = "$current_id" ] || agentctl_die "stale --runtime-id (expected current generation $current_id)"
+
+  local session pane backend dir
+  session=$(echo "$state_json" | jq -r '.tmux_session')
+  backend=$(echo "$state_json" | jq -r '.backend')
+  pane="${session}"
+  dir=$(agentctl_runtime_dir "$name")
+  # 本文をバッファ名/argv に残さず tmux buffer 経由で投入する (codex は本文
+  # そのものを paste せず operation-specific secure copy の bootstrap を送る)。
+  agentctl_deliver_body "$backend" "$pane" "$dir" "$file" "$runtime_id" "steer"
+  # ここで確認できるのは paste+submit が screen 上で完了したことだけであり、
+  # backend 側が本文を実際に受理・実行したことまでは確認できない。
+  echo "submitted"
+}
+
+# --- logs -----------------------------------------------------------
+
+cmd_logs() {
+  local name="" lines=200 follow=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --lines) lines="$2"; shift 2 ;;
+      --follow) follow=1; shift ;;
+      *) agentctl_die "unknown option for logs: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  case "$lines" in
+    ''|*[!0-9]*) agentctl_die "--lines must be a positive integer" ;;
+  esac
+
+  # logs は読み取り専用のため per-name lock は取らない (status/doctor と同じ)。
+  # ownership は reconcile state で判定する: 所有 tmux generation が無い
+  # (stale/absent)、または evidence が矛盾する (conflict) 場合は拒否する。
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    running|starting|exited|orphan) : ;;
+    conflict) agentctl_die "runtime '$name' is in conflict state; refusing to read logs (manual inspection required)" ;;
+    stale|absent) agentctl_die "no runtime log available for '$name' (reconcile=$reconcile)" ;;
+    *) agentctl_die "runtime '$name' is in unrecognized state '$reconcile'; refusing logs" ;;
+  esac
+
+  local pane
+  pane=$(agentctl_tmux_session "$name")
+  if [ "$follow" -eq 1 ]; then
+    _logs_follow "$pane"
+  else
+    agentctl_tmux capture-pane -p -J -t "$pane" -S "-$lines"
+  fi
+}
+
+# pane 全体を毎回再取得し前回との差分だけ出力する素朴な poll loop。
+# follow client を kill/detach しても読み取り専用のため runtime へは一切
+# 影響しない (spec: "logs --follow 切断で agent に EOF/signal を送らない")。
+# ponytail: tmux pipe-pane の方が効率的だが、pane に恒久的な hook を残し
+# 他操作 (respawn-pane 等) と干渉し得るため、この規模の log 量では素朴な
+# 差分 poll で十分とする。
+_logs_follow() {
+  local pane="$1" prev=""
+  while agentctl_tmux_has_session "$pane"; do
+    local cur
+    cur=$(agentctl_tmux capture-pane -p -J -t "$pane" -S - 2>/dev/null) || break
+    if [ "$cur" != "$prev" ]; then
+      if [ -n "$prev" ] && [ "${cur:0:${#prev}}" = "$prev" ]; then
+        printf '%s' "${cur:${#prev}}"
+      else
+        printf '%s' "$cur"
+      fi
+      prev="$cur"
+    fi
+    sleep "${AGENTCTL_TEST_LOGS_FOLLOW_INTERVAL_SECONDS:-1}"
+  done
+}
+
+# --- attach -----------------------------------------------------------
+
+cmd_attach() {
+  local name="" runtime_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      *) agentctl_die "unknown option for attach: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+
+  # fencing の確認だけ per-name lock 内で行い、lock はすぐ解放する。attach
+  # 本体 (対話的に detach されるまで block する) を lock 保持中に実行すると、
+  # 同一 runtime への他 client の status/logs/steer が attach 中ずっと
+  # ブロックされてしまう (spec: 複数 client からの同時 status/logs/steer/attach
+  # を許容する)。
+  local session
+  session=$(agentctl_with_name_lock "$name" _attach_check "$name" "$runtime_id")
+  agentctl_tmux attach-session -t "$session"
+}
+
+_attach_check() {
+  local name="$1" runtime_id="$2"
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    running|starting) : ;;
+    *) agentctl_die "runtime '$name' is not running (reconcile=$reconcile)" ;;
+  esac
+  local state_json current_id
+  state_json=$(agentctl_read_state "$name") || agentctl_die "no state for '$name'"
+  current_id=$(echo "$state_json" | jq -r '.runtime_id')
+  [ "$runtime_id" = "$current_id" ] || agentctl_die "stale --runtime-id (expected current generation $current_id)"
+  agentctl_tmux_session "$name"
+}
+
+# --- interrupt -----------------------------------------------------------
+
+cmd_interrupt() {
+  local name="" runtime_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      *) agentctl_die "unknown option for interrupt: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+  agentctl_with_name_lock "$name" _interrupt_locked "$name" "$runtime_id"
+}
+
+_interrupt_locked() {
+  local name="$1" runtime_id="$2"
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    running) : ;;
+    *) agentctl_die "runtime '$name' is not running (reconcile=$reconcile)" ;;
+  esac
+  local state_json current_id
+  state_json=$(agentctl_read_state "$name") || agentctl_die "no state for '$name'"
+  current_id=$(echo "$state_json" | jq -r '.runtime_id')
+  [ "$runtime_id" = "$current_id" ] || agentctl_die "stale --runtime-id (expected current generation $current_id)"
+
+  local pane
+  pane=$(echo "$state_json" | jq -r '.tmux_session')
+  # OS kill signal ではなく tty keystroke (Ctrl-C) として送る。backend
+  # (raw mode TUI) 自身が turn interrupt として解釈するのに任せ、
+  # process/pane を強制終了しない (状態を破壊しない安全な interrupt)。
+  agentctl_tmux send-keys -t "$pane" C-c
+  echo "interrupted"
+}
+
+# --- stop -----------------------------------------------------------
+
+cmd_stop() {
+  local name="" runtime_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      *) agentctl_die "unknown option for stop: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+  agentctl_with_name_lock "$name" _stop_locked "$name" "$runtime_id"
+}
+
+_stop_locked() {
+  local name="$1" runtime_id="$2"
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    absent|stale|exited) echo "already stopped (reconcile=$reconcile)"; return 0 ;;
+    running|starting) : ;;
+    *) agentctl_die "cannot stop runtime '$name' in state '$reconcile'" ;;
+  esac
+  local state_json current_id session
+  state_json=$(agentctl_read_state "$name") || agentctl_die "no state for '$name'"
+  current_id=$(echo "$state_json" | jq -r '.runtime_id')
+  [ "$runtime_id" = "$current_id" ] || agentctl_die "stale --runtime-id (expected current generation $current_id)"
+  session=$(echo "$state_json" | jq -r '.tmux_session')
+  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  echo "stopped"
+}
+
+# --- cleanup -----------------------------------------------------------
+
+cmd_cleanup() {
+  local name="" runtime_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      *) agentctl_die "unknown option for cleanup: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+  agentctl_with_name_lock "$name" _cleanup_locked "$name" "$runtime_id"
+}
+
+_cleanup_locked() {
+  local name="$1" runtime_id="$2"
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    absent) echo "already clean"; return 0 ;;
+    running|starting) agentctl_die "runtime '$name' is $reconcile; stop it first" ;;
+    conflict) agentctl_die "runtime '$name' is in conflict state; refusing to auto-remediate (manual inspection required)" ;;
+    stale|orphan|exited) : ;;
+    *) agentctl_die "runtime '$name' is in unrecognized state '$reconcile'; refusing cleanup" ;;
+  esac
+
+  local expected_id session
+  session=$(agentctl_tmux_session "$name")
+  if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
+    expected_id=$(echo "$state_json" | jq -r '.runtime_id')
+  else
+    # orphan: state が無いので tmux marker の runtime_id と照合する。
+    expected_id=$(agentctl_tmux_get_marker "${session}" runtime_id)
+  fi
+  [ -n "$expected_id" ] || agentctl_die "cannot determine expected runtime_id for cleanup"
+  [ "$runtime_id" = "$expected_id" ] || agentctl_die "stale --runtime-id (expected $expected_id)"
+
+  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  rm -rf "$(agentctl_runtime_dir "$name")"
+  echo "cleaned"
+}
+
+# --- resume -----------------------------------------------------------
+
+cmd_resume() {
+  local name="" cwd="" backend="" policy_file="" from_runtime_id="" fake_command=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --cwd) cwd="$2"; shift 2 ;;
+      --backend) backend="$2"; shift 2 ;;
+      --policy-file) policy_file="$2"; shift 2 ;;
+      --from-runtime-id) from_runtime_id="$2"; shift 2 ;;
+      --fake-command) fake_command="$2"; shift 2 ;; # test-only: fake backend 用の respawn 先コマンド
+      *) agentctl_die "unknown option for resume: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --cwd "$cwd"
+  require_arg --backend "$backend"
+  require_arg --from-runtime-id "$from_runtime_id"
+
+  [[ "$cwd" == /* ]] || agentctl_die "--cwd must be an absolute path"
+  [ -d "$cwd" ] || agentctl_die "--cwd does not exist: $cwd"
+
+  case "$backend" in
+    fake|claude|claude-work|codex) : ;;
+    *) agentctl_die "unknown backend: $backend" ;;
+  esac
+
+  local policy_json=""
+  if [ -n "$policy_file" ]; then
+    policy_json=$(agentctl_validate_policy_file "$policy_file")
+  fi
+
+  agentctl_ensure_root
+  agentctl_with_name_lock "$name" _resume_locked "$name" "$cwd" "$backend" "$policy_json" "$from_runtime_id" "$fake_command"
+}
+
+_resume_locked() {
+  local name="$1" cwd="$2" backend="$3" policy_json_in="$4" from_runtime_id="$5" fake_command="$6"
+
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    exited|stale) : ;;
+    *) agentctl_die "runtime '$name' must be exited/stale to resume (reconcile=$reconcile)" ;;
+  esac
+
+  local state_json predecessor_id
+  state_json=$(agentctl_read_state "$name") || agentctl_die "no predecessor state for '$name'"
+  predecessor_id=$(echo "$state_json" | jq -r '.runtime_id')
+  [ "$from_runtime_id" = "$predecessor_id" ] || agentctl_die "stale --from-runtime-id (expected predecessor generation $predecessor_id)"
+
+  local manifest_json mission_status
+  manifest_json=$(agentctl_read_manifest "$name") || agentctl_die "no continuation manifest for '$name'; refusing resume"
+  mission_status=$(echo "$manifest_json" | jq -r '.mission_status')
+  [ "$mission_status" = "running" ] || agentctl_die "cannot resume: manifest mission_status='$mission_status' (expected running; use complete for done/blocked/failed)"
+
+  # continuation bundle 用の log tail は前世代 session が生きている間にしか
+  # 取れないため、kill する前に採取する。
+  local session log_tail
+  session=$(agentctl_tmux_session "$name")
+  log_tail=$(agentctl_capture_pane_tail "$session" "${AGENTCTL_RESUME_LOG_TAIL_LINES:-500}")
+
+  # 前世代の leftover tmux session を消す (exited/stale どちらでも publish 前に必ず不在にする必要がある)。
+  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+
+  local dir policy_snapshot_path policy_digest
+  dir=$(agentctl_runtime_dir "$name")
+  if [ -n "$policy_json_in" ]; then
+    policy_snapshot_path="$dir/policy.snapshot.json"
+    echo "$policy_json_in" | jq -S . | agentctl_atomic_write "$policy_snapshot_path" 0600
+    policy_digest=$(jq -S -c . "$policy_snapshot_path" | agentctl_policy_digest)
+  else
+    policy_snapshot_path=$(echo "$state_json" | jq -r '.policy_snapshot_path')
+    policy_digest=$(echo "$state_json" | jq -r '.policy_digest')
+    [ -f "$policy_snapshot_path" ] || agentctl_die "predecessor policy snapshot missing: $policy_snapshot_path"
+  fi
+
+  # mission.txt は前世代のまま再利用する (resume で上書きしない = 継続 context を保つ)。
+  # continuation bundle にはその内容をそのまま埋め込み、1 本のファイル/1 turn
+  # として届ける (2 turn に分けると screen-settle だけでは実 backend 上の
+  # 衝突を防げないため)。
+  local mission_path continuation_path
+  mission_path="$dir/mission.txt"
+  continuation_path="$dir/continuation.txt"
+  agentctl_build_continuation_bundle "$manifest_json" "$log_tail" "$policy_snapshot_path" "$mission_path" \
+    | agentctl_atomic_write "$continuation_path" 0600
+
+  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$fake_command" "$continuation_path" "resume"
+}
+
+# --- complete -----------------------------------------------------------
+
+cmd_complete() {
+  local name="" runtime_id=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --runtime-id) runtime_id="$2"; shift 2 ;;
+      *) agentctl_die "unknown option for complete: $1" ;;
+    esac
+  done
+  require_arg --name "$name"
+  require_arg --runtime-id "$runtime_id"
+  agentctl_with_name_lock "$name" _complete_locked "$name" "$runtime_id"
+}
+
+_complete_locked() {
+  local name="$1" runtime_id="$2"
+
+  local manifest_json mission_status
+  manifest_json=$(agentctl_read_manifest "$name") || agentctl_die "no continuation manifest for '$name'; refusing complete"
+  mission_status=$(echo "$manifest_json" | jq -r '.mission_status')
+  case "$mission_status" in
+    done|blocked|failed) : ;;
+    *) agentctl_die "cannot complete: manifest mission_status='$mission_status' (expected done/blocked/failed)" ;;
+  esac
+
+  local reconcile
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    absent) echo "already completed (reconcile=$reconcile)"; return 0 ;;
+    conflict) agentctl_die "runtime '$name' is in conflict state; refusing to auto-remediate (manual inspection required)" ;;
+    running|starting|exited|stale|orphan) : ;;
+    *) agentctl_die "runtime '$name' is in unrecognized state '$reconcile'; refusing complete" ;;
+  esac
+
+  local session
+  session=$(agentctl_tmux_session "$name")
+
+  # state が無い (orphan) 場合も tmux marker の runtime_id と照合し、
+  # caller の runtime_id を素通りさせない (cleanup と同じ fencing pattern)。
+  local state_json expected_id
+  if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
+    expected_id=$(echo "$state_json" | jq -r '.runtime_id')
+  else
+    expected_id=$(agentctl_tmux_get_marker "$session" runtime_id)
+  fi
+  [ -n "$expected_id" ] || agentctl_die "cannot determine expected runtime_id for complete"
+  [ "$runtime_id" = "$expected_id" ] || agentctl_die "stale --runtime-id (expected $expected_id)"
+
+  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  echo "completed"
+}
+
+# --- doctor -----------------------------------------------------------
+
+cmd_doctor() {
+  local json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json=1; shift ;;
+      *) agentctl_die "unknown option for doctor: $1" ;;
+    esac
+  done
+
+  local names=() entries="[]"
+  if [ -d "$(agentctl_runtimes_dir)" ]; then
+    while IFS= read -r -d '' d; do
+      names+=("$(basename "$d")")
+    done < <(find "$(agentctl_runtimes_dir)" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+  fi
+  # tmux 側に agentctl marker があるが state ディレクトリが無い (orphan) セッションも拾う。
+  while IFS= read -r sess; do
+    case "$sess" in
+      agentctl-*)
+        local n="${sess#agentctl-}"
+        local already=0
+        for existing in "${names[@]:-}"; do [ "$existing" = "$n" ] && already=1; done
+        [ "$already" -eq 1 ] || names+=("$n")
+        ;;
+    esac
+  done < <(agentctl_tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+
+  for n in "${names[@]:-}"; do
+    local r
+    r=$(agentctl_reconcile "$n")
+    entries=$(echo "$entries" | jq --arg name "$n" --arg reconcile "$r" '. + [{name:$name, reconcile:$reconcile}]')
+  done
+
+  if [ "$json" -eq 1 ]; then
+    jq -n --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" --argjson runtimes "$entries" \
+      '{schema_version:$schema_version, runtimes:$runtimes}'
+  else
+    echo "$entries" | jq -r '.[] | "\(.name)\t\(.reconcile)"'
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  [ -n "$cmd" ] || { usage; exit 1; }
+  shift || true
+  case "$cmd" in
+    start) cmd_start "$@" ;;
+    status) cmd_status "$@" ;;
+    logs) cmd_logs "$@" ;;
+    steer) cmd_steer "$@" ;;
+    attach) cmd_attach "$@" ;;
+    interrupt) cmd_interrupt "$@" ;;
+    stop) cmd_stop "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    resume) cmd_resume "$@" ;;
+    complete) cmd_complete "$@" ;;
+    -h|--help|help) usage ;;
+    *) echo "agentctl: unknown command: $cmd" >&2; usage; exit 1 ;;
+  esac
+}
+
+main "$@"

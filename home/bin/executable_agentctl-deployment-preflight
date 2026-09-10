@@ -1,0 +1,45 @@
+#!/bin/bash
+# agentctl deployment/rollback interlock: policy guard (dispatcher/classify/
+# hooks.json) を再デプロイ・ロールバックする前に、既に稼働中の agentctl
+# runtime が存在しないことを検証する read-only ツール。
+#
+# 稼働中 generation が 1 件でもあれば exit 1 で拒否する (その runtime は
+# 古い guard のまま動き続けるため、安全な入れ替えタイミングではない)。
+# _publish_generation と同じ deployment lock を exclusive で取ることで、
+# 検査中に新規 publication が割り込むのを防ぐ。runtime の stop/kill/cleanup は
+# 一切行わない (それは stop/cleanup コマンドの責務であり、この preflight の
+# 役割は「安全かどうかを判定するだけ」)。
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/agentctl-common.sh"
+
+agentctl_ensure_root
+agentctl_acquire_deployment_lock_exclusive
+
+blockers=()
+while IFS= read -r sess; do
+  case "$sess" in
+    agentctl-*) : ;;
+    *) continue ;;
+  esac
+  name="${sess#agentctl-}"
+  reconcile=$(agentctl_reconcile "$name")
+  case "$reconcile" in
+    running|starting|orphan|conflict)
+      blockers+=("$name ($reconcile)")
+      ;;
+  esac
+done < <(agentctl_tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+
+agentctl_release_deployment_lock
+
+if [ "${#blockers[@]}" -gt 0 ]; then
+  echo "agentctl-deployment-preflight: refusing rollback/redeploy, active runtimes found:" >&2
+  printf '  - %s\n' "${blockers[@]}" >&2
+  exit 1
+fi
+
+echo "agentctl-deployment-preflight: no active agentctl runtimes; safe to redeploy/rollback guard"

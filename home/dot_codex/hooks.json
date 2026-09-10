@@ -12,6 +12,17 @@
             "statusMessage": "Checking Git configuration policy"
           }
         ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/agentctl-policy-dispatcher.sh",
+            "timeout": 10,
+            "statusMessage": "Checking agentctl policy"
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -11,15 +11,61 @@
 # jq 等の dependency 欠落・不一致を deny にする (fail-open にしない)。
 
 agentctl_policy_dispatcher_main() {
-  if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
+  local input
+  input=$(cat)
+
+  # Codex interactive TUI の persistent execution path では TUI 起動時の
+  # AGENTCTL_* env が hook subprocess へ届かない。その場合でも sentinel marker
+  # + hook stdin の stable session_id から runtime context を初回 binding できる。
+  # jq が消失した場合、agentctl env / sentinel / 既存 Codex binding のいずれかが
+  # あるなら normal session と識別できないため fail closed。binding が一切無い
+  # 通常 Codex session だけは従来どおり no-op とする。
+  if ! command -v jq >/dev/null 2>&1; then
+    local sessions_dir=""
+    if declare -F agentctl_codex_hook_sessions_dir >/dev/null 2>&1; then
+      sessions_dir=$(agentctl_codex_hook_sessions_dir)
+    fi
+    if { [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; } \
+      && [[ "$input" != *"agentctl-guard-sentinel:"* ]] \
+      && { [ -z "$sessions_dir" ] || ! compgen -G "$sessions_dir/*.json" >/dev/null; }; then
+      exit 0
+    fi
+    agentctl_policy_dispatcher_emit_deny "agentctl policy dispatcher requires jq, which is not installed"
     exit 0
+  fi
+
+  local session_id hook_cwd sentinel_runtime_id context_source="env"
+  session_id=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
+  hook_cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
+  sentinel_runtime_id=$(printf '%s' "$input" | grep -oE 'agentctl-guard-sentinel:[A-Za-z0-9_-]+' | head -n1 | cut -d: -f2-)
+
+  if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
+    if [ -n "$sentinel_runtime_id" ]; then
+      if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id"; then
+        agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-failed to bind Codex sentinel session}"
+        exit 0
+      fi
+      context_source="codex_session"
+    elif [ -n "$session_id" ]; then
+      if agentctl_policy_dispatcher_resolve_codex_session "$input"; then
+        context_source="codex_session"
+      else
+        local resolve_rc=$?
+        if [ "$resolve_rc" -eq 3 ]; then
+          # binding の無い通常 Codex session は既存挙動を変えない。
+          exit 0
+        fi
+        agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-invalid Codex agentctl session binding}"
+        exit 0
+      fi
+    else
+      exit 0
+    fi
   fi
 
   local deny_reason=""
   if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] || [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
     deny_reason="agentctl runtime is missing AGENTCTL_POLICY_SNAPSHOT or AGENTCTL_RUNTIME_ID"
-  elif ! command -v jq >/dev/null 2>&1; then
-    deny_reason="agentctl policy dispatcher requires jq, which is not installed"
   elif [ ! -f "$AGENTCTL_POLICY_SNAPSHOT" ]; then
     deny_reason="agentctl policy snapshot not found: $AGENTCTL_POLICY_SNAPSHOT"
   elif ! jq -e . "$AGENTCTL_POLICY_SNAPSHOT" >/dev/null 2>&1; then
@@ -37,6 +83,11 @@ agentctl_policy_dispatcher_main() {
     fi
   fi
 
+  AGENTCTL_POLICY_CONTEXT_SOURCE="$context_source"
+  AGENTCTL_CODEX_SESSION_ID="$session_id"
+  AGENTCTL_CODEX_HOOK_CWD="$hook_cwd"
+  [ -z "$deny_reason" ] && deny_reason=$(agentctl_policy_dispatcher_check_ownership)
+
   if [ -n "$deny_reason" ]; then
     agentctl_policy_dispatcher_emit_deny "$deny_reason"
     exit 0
@@ -45,18 +96,63 @@ agentctl_policy_dispatcher_main() {
   local policy_json
   policy_json=$(cat "$AGENTCTL_POLICY_SNAPSHOT")
 
-  local input
-  input=$(cat)
+  local sentinel_marker="agentctl-guard-sentinel:$AGENTCTL_RUNTIME_ID"
+  local tool_name
+  tool_name=$(echo "$input" | jq -r '.tool_name // empty')
+
+  # guard startup verification 用の無害な sentinel command。Codex session binding
+  # 経路ではここへ到達する時点で pending runtime/state/policy/session_id の相互照合が
+  # 完了しているため、この evidence が real PreToolUse 発火の機械的証拠になる。
+  case "$input" in
+    *"$sentinel_marker"*)
+      local dir="${AGENTCTL_POLICY_SNAPSHOT%/*}" evidence_tmp
+      evidence_tmp="$dir/guard-sentinel.json.tmp.$$"
+      (umask 077; jq -n --arg runtime_id "$AGENTCTL_RUNTIME_ID" \
+        '{runtime_id:$runtime_id, decision:"deny"}' >"$evidence_tmp") \
+        && mv -f "$evidence_tmp" "$dir/guard-sentinel.json"
+      agentctl_policy_dispatcher_emit_deny "agentctl guard sentinel probe (always denied)"
+      exit 0
+      ;;
+  esac
+
+  # "Bash" 以外の tool (code-mode の "exec" 等、実測で確認済み) は tool_input が
+  # 任意形状の値になり得 (Codex の JSON Schema 上も無型)、実行される shell command
+  # をクリーンな文字列として取り出せる保証が無い。取り出せない状態のまま
+  # 分類不能な特権操作を無条件 allow すると fail-open になるため、"Bash" 以外は
+  # 常に deny する (fail closed)。
+  if [ "$tool_name" != "Bash" ]; then
+    agentctl_policy_dispatcher_emit_deny "agentctl policy dispatcher cannot classify tool '$tool_name' calls (no reliable command text); denying by default (fail closed)"
+    exit 0
+  fi
+
   local command_string
   command_string=$(echo "$input" | jq -r '.tool_input.command // empty')
   if [ -z "$command_string" ]; then
-    # command を含まない tool call (Bash 以外) はここに来ない想定だが、
-    # 万一来た場合は分類対象が無いので pass-through する。
+    # command を含まない Bash tool call は分類対象が無いので pass-through する。
+    exit 0
+  fi
+
+  # .tool_input.command 先頭の明示的 assignment word (agentctl-classify.sh 側で検出)
+  # だけでなく、hook process 自身が backend プロセスから継承した実 GIT_DIR/
+  # GIT_WORK_TREE/GIT_CONFIG_* 環境変数も deny 判定に載せる。さもないと command
+  # string には現れない override (親プロセス環境に既に乗っている override) を
+  # 使った privileged git 操作が classifier に一切伝わらず素通りしてしまう。
+  local inherited_env_csv
+  inherited_env_csv=$(agentctl_policy_dispatcher_inherited_git_env_csv)
+
+  # Codex TUI の operation-file bootstrap は model が read-only verification を
+  # shell で行う。generic classifier は quote/backslash を意図的に fail closed に
+  # するため、そのルールを緩めず、bound Codex session が「自分の runtime dir に
+  # agentctl が生成した UUID 名 codex-op-*.txt」を読む実測 exact shape だけを許可する。
+  # prefix match はせず command 全体を byte-exact 比較するため、後置コマンドや
+  # runtime 外 path はこの例外に入らず通常 classifier で fail closed になる。
+  if [ "${AGENTCTL_POLICY_CONTEXT_SOURCE:-env}" = "codex_session" ] \
+    && agentctl_policy_dispatcher_is_codex_operation_read "$command_string"; then
     exit 0
   fi
 
   local decision
-  decision=$(agentctl_classify_shell_command_string "$policy_json" "$command_string")
+  decision=$(agentctl_classify_shell_command_string "$policy_json" --env "$inherited_env_csv" "$command_string")
   case "$decision" in
     deny|unknown_privileged)
       agentctl_policy_dispatcher_emit_deny "agentctl policy denied this operation (classification: $decision)"
@@ -64,6 +160,290 @@ agentctl_policy_dispatcher_main() {
     *) : ;; # allow / not_privileged は no-op (既定 allow を尊重する)
   esac
   exit 0
+}
+
+# Codex sentinel marker に含まれる runtime_id を HOME 固定 registry の pending
+# entry と照合し、hook stdin の stable session_id に atomic bind する。
+# 成功時は AGENTCTL_* をこの shell 内だけに設定し 0、失敗時は
+# AGENTCTL_POLICY_DISPATCHER_ERROR を設定して非 0 を返す。
+agentctl_policy_dispatcher_bind_codex_sentinel() {
+  local input="$1" runtime_id="$2"
+  local session_id hook_cwd pending pending_json
+  AGENTCTL_POLICY_DISPATCHER_ERROR=""
+  session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+  hook_cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
+  if [ -z "$session_id" ] || [ -z "$hook_cwd" ]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex sentinel hook input is missing session_id or cwd"
+    return 1
+  fi
+  pending=$(agentctl_codex_hook_pending_file "$runtime_id")
+  if [ ! -f "$pending" ]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex sentinel has no pending agentctl runtime binding for runtime_id $runtime_id"
+    return 1
+  fi
+  if ! pending_json=$(jq -c . "$pending" 2>/dev/null); then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending runtime binding is invalid JSON"
+    return 1
+  fi
+
+  local stored_schema stored_runtime_id stored_name stored_backend runtime_dir policy_snapshot policy_digest stored_cwd
+  stored_schema=$(echo "$pending_json" | jq -r '.schema_version // empty')
+  stored_runtime_id=$(echo "$pending_json" | jq -r '.runtime_id // empty')
+  stored_name=$(echo "$pending_json" | jq -r '.name // empty')
+  stored_backend=$(echo "$pending_json" | jq -r '.backend // empty')
+  runtime_dir=$(echo "$pending_json" | jq -r '.runtime_dir // empty')
+  policy_snapshot=$(echo "$pending_json" | jq -r '.policy_snapshot // empty')
+  policy_digest=$(echo "$pending_json" | jq -r '.policy_digest // empty')
+  stored_cwd=$(echo "$pending_json" | jq -r '.cwd // empty')
+  if [ "$stored_schema" != "$AGENTCTL_SCHEMA_VERSION" ] || [ "$stored_runtime_id" != "$runtime_id" ] \
+    || [ "$stored_backend" != "codex" ] || [ -z "$stored_name" ] || [ "$stored_cwd" != "$hook_cwd" ] \
+    || [[ "$runtime_dir" != /* ]] || [[ "$policy_snapshot" != /* ]]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending runtime binding does not match sentinel hook identity"
+    return 1
+  fi
+
+  local state_file="$runtime_dir/state.json" state_json
+  if ! state_json=$(jq -c . "$state_file" 2>/dev/null); then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending runtime state is missing or invalid"
+    return 1
+  fi
+  if ! echo "$state_json" | jq -e \
+    --arg rid "$runtime_id" --arg name "$stored_name" --arg cwd "$hook_cwd" --argjson schema "$AGENTCTL_SCHEMA_VERSION" \
+    '.schema_version == $schema and .runtime_id == $rid and .name == $name and .backend == "codex" and .cwd == $cwd and (.status == "starting" or .status == "running")' \
+    >/dev/null 2>&1; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending runtime state does not match this generation/session"
+    return 1
+  fi
+  if [ ! -f "$policy_snapshot" ]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending policy snapshot not found: $policy_snapshot"
+    return 1
+  fi
+  local actual_digest
+  actual_digest=$(jq -S -c . "$policy_snapshot" | sha256sum | awk '{print "sha256:" $1}')
+  if [ "$actual_digest" != "$policy_digest" ]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending policy snapshot digest mismatch"
+    return 1
+  fi
+
+  agentctl_codex_hook_registry_ensure
+  local session_file existing
+  session_file=$(agentctl_codex_hook_session_file "$session_id")
+  if [ -f "$session_file" ]; then
+    if ! existing=$(jq -c . "$session_file" 2>/dev/null) \
+      || ! echo "$existing" | jq -e --arg sid "$session_id" --arg rid "$runtime_id" --arg dir "$runtime_dir" \
+        '.session_id == $sid and .runtime_id == $rid and .runtime_dir == $dir' >/dev/null 2>&1; then
+      AGENTCTL_POLICY_DISPATCHER_ERROR="Codex session_id is already bound to a different agentctl runtime generation"
+      return 1
+    fi
+  else
+    jq -n \
+      --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" \
+      --arg session_id "$session_id" --arg runtime_id "$runtime_id" --arg name "$stored_name" \
+      --arg runtime_dir "$runtime_dir" --arg policy_snapshot "$policy_snapshot" \
+      --arg policy_digest "$policy_digest" --arg cwd "$hook_cwd" \
+      '{schema_version:$schema_version,session_id:$session_id,runtime_id:$runtime_id,name:$name,backend:"codex",runtime_dir:$runtime_dir,policy_snapshot:$policy_snapshot,policy_digest:$policy_digest,cwd:$cwd}' \
+      | agentctl_atomic_write "$session_file" 0600
+  fi
+  rm -f "$pending"
+
+  AGENTCTL_RUNTIME_ID="$runtime_id"
+  AGENTCTL_POLICY_SNAPSHOT="$policy_snapshot"
+  AGENTCTL_POLICY_DIGEST="$policy_digest"
+  AGENTCTL_CODEX_BINDING_FILE="$session_file"
+  return 0
+}
+
+# 既に sentinel で bind 済みの Codex session_id から context を復元する。
+# binding 自体が無い場合だけ return 3 (通常 Codex session の no-op 判定用)。
+agentctl_policy_dispatcher_resolve_codex_session() {
+  local input="$1" session_id hook_cwd session_file binding
+  AGENTCTL_POLICY_DISPATCHER_ERROR=""
+  session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
+  hook_cwd=$(printf '%s' "$input" | jq -r '.cwd // empty')
+  [ -n "$session_id" ] || return 3
+  session_file=$(agentctl_codex_hook_session_file "$session_id")
+  [ -f "$session_file" ] || return 3
+  if ! binding=$(jq -c . "$session_file" 2>/dev/null); then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex session binding is invalid JSON"
+    return 1
+  fi
+
+  local stored_schema stored_session_id runtime_id backend runtime_dir policy_snapshot policy_digest stored_cwd
+  stored_schema=$(echo "$binding" | jq -r '.schema_version // empty')
+  stored_session_id=$(echo "$binding" | jq -r '.session_id // empty')
+  runtime_id=$(echo "$binding" | jq -r '.runtime_id // empty')
+  backend=$(echo "$binding" | jq -r '.backend // empty')
+  runtime_dir=$(echo "$binding" | jq -r '.runtime_dir // empty')
+  policy_snapshot=$(echo "$binding" | jq -r '.policy_snapshot // empty')
+  policy_digest=$(echo "$binding" | jq -r '.policy_digest // empty')
+  stored_cwd=$(echo "$binding" | jq -r '.cwd // empty')
+  if [ "$stored_schema" != "$AGENTCTL_SCHEMA_VERSION" ] || [ "$stored_session_id" != "$session_id" ] \
+    || [ "$backend" != "codex" ] || [ -z "$runtime_id" ] || [ "$stored_cwd" != "$hook_cwd" ] \
+    || [[ "$runtime_dir" != /* ]] || [[ "$policy_snapshot" != /* ]]; then
+    AGENTCTL_POLICY_DISPATCHER_ERROR="Codex session binding identity mismatch"
+    return 1
+  fi
+
+  AGENTCTL_RUNTIME_ID="$runtime_id"
+  AGENTCTL_POLICY_SNAPSHOT="$policy_snapshot"
+  AGENTCTL_POLICY_DIGEST="$policy_digest"
+  AGENTCTL_CODEX_BINDING_FILE="$session_file"
+  return 0
+}
+
+# Fix #8: runtime ownership/generation を state.json と突き合わせる。
+# Claude/env 経路は従来どおり live tmux pane marker を要求する。Codex interactive
+# TUI は hook subprocess に TMUX_PANE/AGENTCTL_* が継承されないため、sentinel で
+# bind した Codex session_id record + runtime state/cwd/backend/generation を毎回
+# 再照合する。どちらの経路でも stale generation は fail closed。
+agentctl_policy_dispatcher_check_ownership() {
+  local policy_version
+  policy_version=$(jq -r '.version // empty' "$AGENTCTL_POLICY_SNAPSHOT")
+  if [ "$policy_version" != "1" ]; then
+    echo "agentctl policy version is unsupported (got: $policy_version)"
+    return
+  fi
+
+  local dir="${AGENTCTL_POLICY_SNAPSHOT%/*}" state_file
+  state_file="$dir/state.json"
+  if [ ! -f "$state_file" ]; then
+    echo "agentctl runtime state not found: $state_file"
+    return
+  fi
+  local state_json
+  if ! state_json=$(jq -c . "$state_file" 2>/dev/null); then
+    echo "agentctl runtime state is not valid JSON: $state_file"
+    return
+  fi
+
+  local state_runtime_id state_name state_backend state_schema state_cwd
+  state_runtime_id=$(echo "$state_json" | jq -r '.runtime_id // empty')
+  state_name=$(echo "$state_json" | jq -r '.name // empty')
+  state_backend=$(echo "$state_json" | jq -r '.backend // empty')
+  state_schema=$(echo "$state_json" | jq -r '.schema_version // empty')
+  state_cwd=$(echo "$state_json" | jq -r '.cwd // empty')
+  if [ "$state_runtime_id" != "$AGENTCTL_RUNTIME_ID" ]; then
+    echo "agentctl runtime state runtime_id does not match this generation (possibly superseded)"
+    return
+  fi
+
+  if [ "${AGENTCTL_POLICY_CONTEXT_SOURCE:-env}" = "codex_session" ]; then
+    local binding_file="${AGENTCTL_CODEX_BINDING_FILE:-}" binding_json
+    if [ "$state_backend" != "codex" ] || [ "$state_schema" != "$AGENTCTL_SCHEMA_VERSION" ] \
+      || [ -z "$state_name" ] || [ -z "$state_cwd" ] || [ "$state_cwd" != "${AGENTCTL_CODEX_HOOK_CWD:-}" ]; then
+      echo "Codex session binding does not match runtime state identity"
+      return
+    fi
+    if [ -z "$binding_file" ] || ! binding_json=$(jq -c . "$binding_file" 2>/dev/null); then
+      echo "Codex session binding file is missing or invalid"
+      return
+    fi
+    if ! echo "$binding_json" | jq -e \
+      --arg sid "${AGENTCTL_CODEX_SESSION_ID:-}" \
+      --arg rid "$AGENTCTL_RUNTIME_ID" \
+      --arg name "$state_name" \
+      --arg dir "$dir" \
+      --arg policy "$AGENTCTL_POLICY_SNAPSHOT" \
+      --arg digest "$AGENTCTL_POLICY_DIGEST" \
+      --arg cwd "$state_cwd" \
+      --argjson schema "$AGENTCTL_SCHEMA_VERSION" \
+      '.schema_version == $schema and .session_id == $sid and .runtime_id == $rid and .name == $name and .backend == "codex" and .runtime_dir == $dir and .policy_snapshot == $policy and .policy_digest == $digest and .cwd == $cwd' \
+      >/dev/null 2>&1; then
+      echo "Codex session binding was changed or does not match runtime generation"
+      return
+    fi
+    return 0
+  fi
+
+  if [ -z "${TMUX_PANE:-}" ]; then
+    echo "agentctl runtime tmux pane ownership evidence missing (TMUX_PANE not set)"
+    return
+  fi
+  local marker_owner marker_runtime_id marker_name marker_backend marker_schema
+  marker_owner=$(command tmux show-options -p -t "$TMUX_PANE" -v "@agentctl_owner" 2>/dev/null)
+  marker_runtime_id=$(command tmux show-options -p -t "$TMUX_PANE" -v "@agentctl_runtime_id" 2>/dev/null)
+  marker_name=$(command tmux show-options -p -t "$TMUX_PANE" -v "@agentctl_name" 2>/dev/null)
+  marker_backend=$(command tmux show-options -p -t "$TMUX_PANE" -v "@agentctl_backend" 2>/dev/null)
+  marker_schema=$(command tmux show-options -p -t "$TMUX_PANE" -v "@agentctl_schema_version" 2>/dev/null)
+  if [ "$marker_owner" != "agentctl" ] || [ "$marker_runtime_id" != "$state_runtime_id" ] \
+    || [ "$marker_name" != "$state_name" ] || [ "$marker_backend" != "$state_backend" ] \
+    || [ "$marker_schema" != "$state_schema" ]; then
+    echo "agentctl runtime tmux pane ownership marker missing or mismatched"
+    return
+  fi
+}
+
+# usage: agentctl_policy_dispatcher_is_codex_operation_read <command_string>
+# 成功(0): current runtime dir 内の agentctl-generated operation file に対する
+# exact read-only bootstrap command。失敗(1): それ以外。
+agentctl_policy_dispatcher_matches_codex_operation_read_operand() {
+  local command_string="$1" operand="$2" prefix suffix range
+
+  # Codex may split verification and content read into separate read-only calls.
+  # Every accepted shape is constrained to the same known operation-file operand.
+  [ "$command_string" = "sha256sum $operand && wc -c $operand" ] && return 0
+
+  prefix="sed -n '"
+  suffix="p' $operand"
+  if [[ "$command_string" == "$prefix"*"$suffix" ]]; then
+    range=${command_string#"$prefix"}
+    range=${range%"$suffix"}
+    [[ "$range" =~ ^[1-9][0-9]*,([1-9][0-9]*|\$)$ ]] && return 0
+  fi
+
+  prefix="sha256sum $operand && wc -c $operand && sed -n '"
+  suffix="p' $operand"
+  if [[ "$command_string" == "$prefix"*"$suffix" ]]; then
+    range=${command_string#"$prefix"}
+    range=${range%"$suffix"}
+    [[ "$range" =~ ^[1-9][0-9]*,([1-9][0-9]*|\$)$ ]] && return 0
+  fi
+
+  return 1
+}
+
+agentctl_policy_dispatcher_is_codex_operation_read() {
+  local command_string="$1" dir file base operand escaped
+  dir="${AGENTCTL_POLICY_SNAPSHOT%/*}"
+  [ -d "$dir" ] || return 1
+
+  for file in "$dir"/codex-op-*.txt; do
+    [ -f "$file" ] || continue
+    base=${file##*/}
+    [[ "$base" =~ ^codex-op-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.txt$ ]] || continue
+
+    # Codex 0.154.0 で実測した read-only shape。sed の上限行数は file/context
+    # に応じて 240/260 等へ変化するため正の整数だけ許容し、それ以外の command
+    # token と同一 operation-file operand の3回使用は完全一致を要求する。
+    # runtime path に空白等がある場合を壊さないよう Bash %q variant と、
+    # single-quote を含まない path の通常 single-quoted variant も同じ条件で許可する。
+    operand="$file"
+    agentctl_policy_dispatcher_matches_codex_operation_read_operand "$command_string" "$operand" && return 0
+
+    printf -v escaped '%q' "$file"
+    agentctl_policy_dispatcher_matches_codex_operation_read_operand "$command_string" "$escaped" && return 0
+
+    if [[ "$file" != *"'"* ]]; then
+      operand="'$file'"
+      agentctl_policy_dispatcher_matches_codex_operation_read_operand "$command_string" "$operand" && return 0
+    fi
+  done
+  return 1
+}
+
+# dispatcher プロセス自身の実環境から GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_*
+# (GIT_CONFIG_COUNT/GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> を含む) を集め、
+# agentctl_classify_shell_command_string の --env と同じ "K=V,K=V" 形式で返す。
+agentctl_policy_dispatcher_inherited_git_env_csv() {
+  local var csv=""
+  while IFS= read -r var; do
+    case "$var" in
+      GIT_DIR|GIT_WORK_TREE|GIT_CONFIG_*)
+        csv="${csv}${var}=${!var},"
+        ;;
+    esac
+  done < <(compgen -v)
+  echo "$csv"
 }
 
 agentctl_policy_dispatcher_emit_deny() {
@@ -81,6 +461,8 @@ agentctl_policy_dispatcher_emit_deny() {
 # source された場合 (テストから関数だけ使う場合) は実行しない。
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/agentctl-common.sh"
   # shellcheck disable=SC1091
   source "$SCRIPT_DIR/agentctl-classify.sh"
   agentctl_policy_dispatcher_main

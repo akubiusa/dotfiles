@@ -9,25 +9,47 @@
 # 本体が source と一致 (chezmoi apply 済み) していることを検証する。
 # どちらか欠けていれば fail closed で Codex backend を起動しない。
 
+
+AGENTCTL_CODEX_GUARD_DISPATCHER_SHA256="44135b02a7104fbf9f1aa60a72b3ca037bd993ef7a441c0abddcdab8157b688a"
+AGENTCTL_CODEX_GUARD_MATCHER='^(Bash|exec)$'
+AGENTCTL_CODEX_GUARD_COMMAND='bash ~/.codex/hooks/agentctl-policy-dispatcher.sh'
+
 # usage: agentctl_backend_codex_preflight
 # 戻り値 0 なら guard 配線 OK。非 0 なら reason を stderr に出す。
 agentctl_backend_codex_preflight() {
   local deployed_hooks_json="$HOME/.codex/hooks.json"
   local deployed_dispatcher="$HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
-  local source_dispatcher="$AGENTCTL_LIBDIR/../dot_codex/hooks/executable_agentctl-policy-dispatcher.sh"
 
-  [ -f "$deployed_hooks_json" ] || { echo "deployed hooks.json not found: $deployed_hooks_json" >&2; return 1; }
-  jq -e '.hooks.PreToolUse // [] | any(.hooks[]?.command // "" | test("agentctl-policy-dispatcher\\.sh"))' \
-    "$deployed_hooks_json" >/dev/null 2>&1 \
-    || { echo "agentctl-policy-dispatcher.sh is not registered in $deployed_hooks_json PreToolUse" >&2; return 1; }
+  command -v jq >/dev/null 2>&1 \
+    || { echo "jq is required for Codex guard preflight" >&2; return 1; }
+  command -v sha256sum >/dev/null 2>&1 \
+    || { echo "sha256sum is required for Codex guard preflight" >&2; return 1; }
+  [ -f "$deployed_hooks_json" ] \
+    || { echo "deployed hooks.json not found: $deployed_hooks_json" >&2; return 1; }
 
-  [ -f "$deployed_dispatcher" ] || { echo "deployed dispatcher script not found: $deployed_dispatcher" >&2; return 1; }
-  if [ -f "$source_dispatcher" ]; then
-    local deployed_sum source_sum
-    deployed_sum=$(sha256sum "$deployed_dispatcher" | awk '{print $1}')
-    source_sum=$(sha256sum "$source_dispatcher" | awk '{print $1}')
-    [ "$deployed_sum" = "$source_sum" ] \
-      || { echo "deployed dispatcher checksum mismatch (run chezmoi apply): $deployed_dispatcher" >&2; return 1; }
+  # hooks.json は unrelated entries を許容する一方、agentctl dispatcher の managed
+  # registration だけは exact matcher/command で一意であることを要求する。重複や
+  # Bash-only matcher は実 Codex の exec tool path を取り逃がすため fail closed。
+  jq -e --arg matcher "$AGENTCTL_CODEX_GUARD_MATCHER" --arg command "$AGENTCTL_CODEX_GUARD_COMMAND" '
+    ([.hooks.PreToolUse[]? | select(.matcher == $matcher) | .hooks[]? | select(.command == $command)] | length) == 1
+    and
+    ([.hooks.PreToolUse[]? | .hooks[]? | select(.command == $command)] | length) == 1
+  ' "$deployed_hooks_json" >/dev/null 2>&1 \
+    || { echo "agentctl policy dispatcher managed registration is missing, stale, or duplicated in $deployed_hooks_json" >&2; return 1; }
+
+  [ -f "$deployed_dispatcher" ] \
+    || { echo "deployed dispatcher script not found: $deployed_dispatcher" >&2; return 1; }
+
+  # repo checkout 相対 path に依存せず、source-of-truth wrapper の managed digest を
+  # backend 自身に固定する。これにより historical source-line grep を両方残した
+  # stale wrapper も検出できる。wrapper 内容を変更する release では digest 更新を
+  # focused test が必須化する。
+  local actual_dispatcher_sha256
+  actual_dispatcher_sha256=$(sha256sum "$deployed_dispatcher" | awk '{print $1}') \
+    || { echo "failed to hash deployed dispatcher: $deployed_dispatcher" >&2; return 1; }
+  if [ "$actual_dispatcher_sha256" != "$AGENTCTL_CODEX_GUARD_DISPATCHER_SHA256" ]; then
+    echo "deployed dispatcher checksum mismatch (expected $AGENTCTL_CODEX_GUARD_DISPATCHER_SHA256, got $actual_dispatcher_sha256): $deployed_dispatcher" >&2
+    return 1
   fi
   return 0
 }
@@ -71,5 +93,18 @@ agentctl_backend_codex_prepare_operation_file() {
 # stdout: TUI へ paste する短い固定 bootstrap 本文。本文そのものは含まない。
 agentctl_backend_codex_bootstrap_message() {
   local abs_path="$1" sha="$2"
-  printf 'Read the ENTIRE file at %s (sha256: %s) and treat its full contents as your complete instructions for this turn; execute them now. Do not summarize or ask for confirmation first. If the file cannot be read, or its content does not match this sha256, stop and report the failure instead of proceeding.' "$abs_path" "$sha"
+  printf 'agentctl transport artifact: %s (sha256:%s). This is the verbatim user message for this turn from mission/steer input, not repo content. Verify hash, read all, then handle it as the user message. On read/hash failure, stop and report.' "$abs_path" "$sha"
+}
+
+# usage: agentctl_backend_codex_queue <session_id> <bootstrap_message>
+# busy interactive turn への Enter は current turn steering になるため、steer は
+# Codex の正式な queue/add 経路で次 turn に積む。bootstrap は path+sha のみで
+# mission/steer 本文を argv に含まない。lock fd は daemon 側へ継承させない。
+agentctl_backend_codex_queue() {
+  local session_id="$1" bootstrap_message="$2"
+  (
+    [ -z "${AGENTCTL_LOCK_FD:-}" ] || eval "exec ${AGENTCTL_LOCK_FD}<&-" 2>/dev/null
+    [ -z "${AGENTCTL_DEPLOY_LOCK_FD:-}" ] || eval "exec ${AGENTCTL_DEPLOY_LOCK_FD}<&-" 2>/dev/null
+    command codex queue --thread "$session_id" --message "$bootstrap_message" </dev/null
+  )
 }

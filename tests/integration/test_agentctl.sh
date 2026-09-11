@@ -50,7 +50,7 @@ REPO_FIXTURE="$WORKROOT/repo"
 mkdir -p "$REPO_FIXTURE/.git" "$WORKROOT/worktree"
 POLICY="$WORKROOT/policy.json"
 cat >"$POLICY" <<JSON
-{"schema_version":1,"permissions":{"local_write":true,"commit":false,"push":false,"create_pr":false,"merge":false,"git_cleanup":false,"deploy":false,"production_verify":false},"repository":{"git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}}
+{"version":1,"permissions":{"local_write":true,"commit":false,"push":false,"create_pr":false,"merge":false,"git_cleanup":false,"deploy":false,"production_verify":false},"scope":{"repositories":[{"id":"primary","git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}],"remotes":[],"production_targets":[]}}
 JSON
 
 sink_path() { echo "$WORKROOT/state/agentctl/runtimes/$1/fake-sink.txt"; }
@@ -82,9 +82,12 @@ MISSION_STORED="$WORKROOT/state/agentctl/runtimes/$NAME_A/mission.txt"
 [ "$(cat "$MISSION_STORED")" = "$MISSION_LARGE" ] && pass "large multiline Japanese mission (200 lines) stored byte-exact" \
   || fail "large mission content mismatch"
 
-# steer を一切呼ばない時点で、start だけで backend プロセスが mission 本文を
-# 受信していることを確認する (これが mission delivery transport の evidence)。
-if [ -f "$(sink_path "$NAME_A")" ] && [ "$(cat "$(sink_path "$NAME_A")")" = "$MISSION_LARGE" ]; then
+# steer を一切呼ばない時点で、start だけで backend プロセスが mission 本文
+# (common contract 込みの mission-delivery.txt) を受信していることを確認する
+# (これが mission delivery transport の evidence)。
+MISSION_DELIVERY_A="$WORKROOT/state/agentctl/runtimes/$NAME_A/mission-delivery.txt"
+if [ -f "$(sink_path "$NAME_A")" ] && [ "$(cat "$(sink_path "$NAME_A")")" = "$(cat "$MISSION_DELIVERY_A")" ] \
+  && grep -qF "$MISSION_LARGE" "$MISSION_DELIVERY_A"; then
   pass "large multiline Japanese initial mission (200 lines) delivered to backend at start, byte-exact, without manual Enter"
 else
   fail "initial mission was not delivered to backend process: $(wc -c <"$(sink_path "$NAME_A")" 2>/dev/null || echo missing) bytes in sink"
@@ -103,7 +106,7 @@ sleep 0.5
 # sink は単一長命 fd への累積書き込みのため、steer 後は「mission + steer」と
 # なるはず。mission delivery と steer delivery が同じ pty に対する 2 つの
 # 独立した転送であることを、この連結で確認する。
-EXPECTED_A="${MISSION_LARGE}${STEER_LARGE}"
+EXPECTED_A="$(cat "$MISSION_DELIVERY_A")${STEER_LARGE}"
 if [ -f "$(sink_path "$NAME_A")" ] && [ "$(cat "$(sink_path "$NAME_A")")" = "$EXPECTED_A" ]; then
   pass "large multiline steer (300 lines, special chars) delivered byte-exact after mission, without manual Enter"
 else
@@ -156,7 +159,7 @@ RECONCILE_B=$(reconcile_of "$NAME_B")
 echo -n "post-detach steer" >"$WORKROOT/steer-postdetach.txt"
 bash "$AGENTCTL" steer --name "$NAME_B" --runtime-id "$RID_B" --file "$WORKROOT/steer-postdetach.txt" >/dev/null
 sleep 0.3
-EXPECTED_B=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_B/mission.txt" "$WORKROOT/steer-postdetach.txt")
+EXPECTED_B=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_B/mission-delivery.txt" "$WORKROOT/steer-postdetach.txt")
 [ "$(cat "$(sink_path "$NAME_B")" 2>/dev/null)" = "$EXPECTED_B" ] \
   && pass "steer still works after observer detach" || fail "steer failed after observer detach"
 
@@ -191,7 +194,7 @@ sleep 0.5
 CROSSTALK=0
 for n in "${NAMES_C[@]}"; do
   got=$(cat "$(sink_path "$n")" 2>/dev/null || echo "MISSING")
-  expected=$(cat "$WORKROOT/state/agentctl/runtimes/$n/mission.txt" "$WORKROOT/steer-$n.txt")
+  expected=$(cat "$WORKROOT/state/agentctl/runtimes/$n/mission-delivery.txt" "$WORKROOT/steer-$n.txt")
   if [ "$got" != "$expected" ]; then
     fail "runtime '$n' received wrong/missing payload: got '$got'"
     CROSSTALK=1
@@ -217,7 +220,7 @@ sleep 0.3
 echo -n "checkpoint-before-crash" >"$WORKROOT/steer-checkpoint.txt"
 bash "$AGENTCTL" steer --name "$NAME_D" --runtime-id "$RID1_D" --file "$WORKROOT/steer-checkpoint.txt" >/dev/null
 sleep 0.3
-EXPECTED_D_PRECRASH=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_D/mission.txt" "$WORKROOT/steer-checkpoint.txt")
+EXPECTED_D_PRECRASH=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_D/mission-delivery.txt" "$WORKROOT/steer-checkpoint.txt")
 [ "$(cat "$(sink_path "$NAME_D")" 2>/dev/null)" = "$EXPECTED_D_PRECRASH" ] \
   && pass "lifecycle: pre-crash steer delivered after initial mission" || fail "lifecycle: pre-crash steer missing"
 
@@ -229,7 +232,7 @@ RECONCILE_CRASHED=$(reconcile_of "$NAME_D")
 [ "$RECONCILE_CRASHED" = "exited" ] && pass "lifecycle: real backend process kill is reconciled as exited (remain-on-exit captures the crash)" \
   || fail "lifecycle: expected reconcile=exited after real crash, got '$RECONCILE_CRASHED'"
 
-RID2_D=$(bash "$AGENTCTL" resume --name "$NAME_D" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1_D")
+RID2_D=$(bash "$AGENTCTL" resume --name "$NAME_D" --from-runtime-id "$RID1_D")
 [ -n "$RID2_D" ] && [ "$RID2_D" != "$RID1_D" ] && pass "lifecycle: resume publishes a fresh generation after real crash" \
   || fail "lifecycle: resume did not produce a new runtime_id"
 

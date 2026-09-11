@@ -1,7 +1,7 @@
 #!/bin/bash
 # agentctl のユニットテスト。isolated XDG_STATE_HOME と fake backend/tmux server を使う。
 # 実 Claude/Codex backend (Task 4/5) や remote/production E2E (Task 13/14) は対象外。
-# shellcheck disable=SC2015,SC2329,SC2016
+# shellcheck disable=SC2015,SC2329,SC2016,SC2181
 # SC2015: `check && pass "..." || fail "..."` は本テストの意図通り (pass 失敗時のみ fail に落ちる想定)。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 # SC2016: stub 用の single-quoted `bash -c '...'` 内の `$i` は、外側シェルではなく
@@ -35,6 +35,9 @@ mkdir -p "$WORKROOT/bin"
 REAL_TMUX=$(command -v tmux)
 cat >"$WORKROOT/bin/tmux" <<WRAP
 #!/bin/bash
+if [ "\${AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER:-0}" = "1" ] && [ "\${1:-}" = "load-buffer" ]; then
+  exit 97
+fi
 exec "$REAL_TMUX" -L agentctl-test "\$@"
 WRAP
 chmod +x "$WORKROOT/bin/tmux"
@@ -53,7 +56,7 @@ POLICY_PERMISSIONS_ALL_FALSE='"permissions":{"local_write":true,"commit":false,"
 
 valid_policy() {
   cat <<JSON
-{"schema_version":1,$POLICY_PERMISSIONS_ALL_FALSE,"repository":{"git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}}
+{"version":1,$POLICY_PERMISSIONS_ALL_FALSE,"scope":{"repositories":[{"id":"primary","git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}],"remotes":[],"production_targets":[]}}
 JSON
 }
 
@@ -72,12 +75,15 @@ POLICY_OK="$WORKROOT/policy-ok.json"
 valid_policy >"$POLICY_OK"
 
 POLICY_BAD="$WORKROOT/policy-bad.json"
-echo "{\"schema_version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"repository\":{\"git_common_dir\":\"relative/path\",\"github_repo\":\"acme/widgets\",\"allowed_worktree_roots\":[]}}" >"$POLICY_BAD"
+echo "{\"version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"scope\":{\"repositories\":[{\"id\":\"primary\",\"git_common_dir\":\"relative/path\",\"github_repo\":\"acme/widgets\",\"allowed_worktree_roots\":[]}],\"remotes\":[],\"production_targets\":[]}}" >"$POLICY_BAD"
 
 if bash "$AGENTCTL" start --name t1 --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_BAD" --mission-stdin <<<"mission" 2>/tmp/agentctl-t1-err; then
   fail "start with invalid policy (relative path) should fail closed"
 else
+  BAD_POLICY_RC=$?
   grep -q "policy validation failed" /tmp/agentctl-t1-err && pass "invalid policy is rejected fail-closed" || fail "invalid policy error message missing"
+  [ "$BAD_POLICY_RC" -eq 2 ] && pass "invalid/malformed policy schema exits 2 (usage/schema error, design.md:187)" \
+    || fail "invalid policy schema exited $BAD_POLICY_RC, expected 2"
 fi
 
 for missing in cwd backend policy-file; do
@@ -102,13 +108,69 @@ fi
 
 POLICY_RO="$WORKROOT/policy-readonly.json"
 POLICY_PERMISSIONS_LOCAL_WRITE_FALSE="${POLICY_PERMISSIONS_ALL_FALSE//\"local_write\":true/\"local_write\":false}"
-echo "{\"schema_version\":1,$POLICY_PERMISSIONS_LOCAL_WRITE_FALSE,\"repository\":{\"git_common_dir\":\"$REPO_FIXTURE/.git\",\"github_repo\":\"acme/widgets\",\"allowed_worktree_roots\":[\"$WORKROOT/worktree\"]}}" >"$POLICY_RO"
+echo "{\"version\":1,$POLICY_PERMISSIONS_LOCAL_WRITE_FALSE,\"scope\":{\"repositories\":[{\"id\":\"primary\",\"git_common_dir\":\"$REPO_FIXTURE/.git\",\"github_repo\":\"acme/widgets\",\"allowed_worktree_roots\":[\"$WORKROOT/worktree\"]}],\"remotes\":[],\"production_targets\":[]}}" >"$POLICY_RO"
 if bash "$AGENTCTL" start --name t4 --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_RO" --mission-stdin <<<"m" 2>/tmp/agentctl-t4-err; then
   fail "fake backend must refuse start when local_write=false (no mechanical read-only mode)"
 else
   grep -q "local_write=false" /tmp/agentctl-t4-err && pass "fake backend refuses local_write=false (no mechanical enforcement)" \
     || fail "fake backend local_write=false rejection message missing: $(cat /tmp/agentctl-t4-err)"
 fi
+
+# --- --name path traversal validation -----------------------------------------------------------
+# --name はそのままディレクトリ名/tmux session 名/lock ファイル名に連結される。
+# 資源化される前に allowlist ([A-Za-z0-9_-]+) 一致のみを受理し、
+# traversal-like な値をすべて構造的に拒否することを、全ての public command
+# (--name を取るもの) 横断で検証する。
+
+RUNTIMES_DIR_BEFORE_TRAVERSAL=$(find "$WORKROOT/state/agentctl/runtimes" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)
+
+if bash "$AGENTCTL" cleanup --name "" --runtime-id "00000000-0000-0000-0000-000000000000" 2>/tmp/agentctl-traversal-err; then
+  fail "cleanup --name '' should be rejected"
+else
+  grep -q "missing required argument: --name" /tmp/agentctl-traversal-err \
+    && pass "cleanup --name '' is rejected (missing required argument)" \
+    || fail "cleanup --name '' rejected for the wrong reason: $(cat /tmp/agentctl-traversal-err)"
+fi
+
+for bad_name in "../victim" "/tmp/x" "a/b" "." ".." "a\\b" "$(printf 'a\tb')" "$(printf 'a\nb')" " leading-space" "trailing-space "; do
+  if bash "$AGENTCTL" cleanup --name "$bad_name" --runtime-id "00000000-0000-0000-0000-000000000000" 2>/tmp/agentctl-traversal-err; then
+    fail "cleanup --name '$bad_name' should be rejected (traversal-like)"
+  else
+    grep -q "must match \[A-Za-z0-9_-\]" /tmp/agentctl-traversal-err \
+      && pass "cleanup --name '$bad_name' is rejected before path/tmux/lock construction" \
+      || fail "cleanup --name '$bad_name' rejected for the wrong reason: $(cat /tmp/agentctl-traversal-err)"
+  fi
+done
+
+for cmd in status logs steer attach interrupt stop resume complete; do
+  extra_args=()
+  case "$cmd" in
+    steer) extra_args=(--runtime-id "00000000-0000-0000-0000-000000000000" --stdin) ;;
+    attach|interrupt|stop|complete) extra_args=(--runtime-id "00000000-0000-0000-0000-000000000000") ;;
+    resume) extra_args=(--from-runtime-id "00000000-0000-0000-0000-000000000000") ;;
+  esac
+  if bash "$AGENTCTL" "$cmd" --name "../escape-attempt" "${extra_args[@]}" 2>/tmp/agentctl-traversal-err <<<"" ; then
+    fail "$cmd --name '../escape-attempt' should be rejected (traversal-like)"
+  else
+    grep -q "must match \[A-Za-z0-9_-\]" /tmp/agentctl-traversal-err \
+      && pass "$cmd --name '../escape-attempt' is rejected before path/tmux/lock construction" \
+      || fail "$cmd --name '../escape-attempt' rejected for the wrong reason: $(cat /tmp/agentctl-traversal-err)"
+  fi
+done
+
+VICTIM_DIR="$WORKROOT/state/agentctl/runtimes/victim"
+mkdir -p "$VICTIM_DIR"
+echo -n marker >"$VICTIM_DIR/marker.txt"
+bash "$AGENTCTL" cleanup --name "../victim" --runtime-id "00000000-0000-0000-0000-000000000000" >/dev/null 2>&1 || true
+[ -f "$VICTIM_DIR/marker.txt" ] \
+  && pass "cleanup --name '../victim' cannot escape the runtimes dir to remove an unrelated sibling" \
+  || fail "cleanup --name '../victim' escaped the runtimes dir and removed an unrelated sibling"
+rm -rf "$VICTIM_DIR"
+
+RUNTIMES_DIR_AFTER_TRAVERSAL=$(find "$WORKROOT/state/agentctl/runtimes" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort)
+[ "$RUNTIMES_DIR_BEFORE_TRAVERSAL" = "$RUNTIMES_DIR_AFTER_TRAVERSAL" ] \
+  && pass "traversal-like --name attempts left the runtimes dir contents unchanged" \
+  || fail "runtimes dir contents changed after traversal-like --name attempts (before='$RUNTIMES_DIR_BEFORE_TRAVERSAL' after='$RUNTIMES_DIR_AFTER_TRAVERSAL')"
 
 # --- Task 2: runtime identity / locking / fencing -----------------------------------------------------------
 
@@ -122,6 +184,30 @@ else
 fi
 
 sleep 0.3
+
+# --- common mission contract (design.md:145-163) delivered with the task mission -----------------------------------------------------------
+
+MISSION_DELIVERY="$WORKROOT/state/agentctl/runtimes/$NAME/mission-delivery.txt"
+grep -q "AGENTCTL COMMON MISSION CONTRACT" "$MISSION_DELIVERY" \
+  && pass "start delivers the common mission contract to the fake backend" \
+  || fail "common mission contract missing from mission delivery bundle"
+grep -q "agentctl complete" "$MISSION_DELIVERY" \
+  && pass "common mission contract includes the terminal 'agentctl complete' requirement" \
+  || fail "common mission contract missing the agentctl complete requirement"
+if [ -f "$SINK" ]; then
+  grep -q "AGENTCTL COMMON MISSION CONTRACT" "$SINK" \
+    && pass "fake backend actually received the common mission contract bytes" \
+    || fail "fake backend sink missing common mission contract"
+fi
+EXPECTED_MISSION_TAIL=$(printf '=== TASK MISSION ===\nhello mission')
+ACTUAL_MISSION_TAIL=$(tail -n 2 "$MISSION_DELIVERY")
+[ "$EXPECTED_MISSION_TAIL" = "$ACTUAL_MISSION_TAIL" ] \
+  && pass "task mission remains byte-exact and delimited after the common contract" \
+  || fail "task mission delimiter/bytes mismatch: $ACTUAL_MISSION_TAIL"
+[ "$(cat "$WORKROOT/state/agentctl/runtimes/$NAME/mission.txt")" = "hello mission" ] \
+  && pass "stored mission.txt stays the raw task mission (not mutated by contract composition)" \
+  || fail "mission.txt was mutated by contract composition"
+
 STATUS_JSON=$(bash "$AGENTCTL" status --name "$NAME" --json)
 echo "$STATUS_JSON" | jq -e '.schema_version == 1' >/dev/null && pass "status --json has schema_version" || fail "status --json missing schema_version"
 echo "$STATUS_JSON" | jq -e --arg rid "$RID" '.runtime_id == $rid' >/dev/null && pass "status --json runtime_id matches" || fail "status --json runtime_id mismatch: $STATUS_JSON"
@@ -268,7 +354,7 @@ for b in fake claude claude-work codex; do
     source '$REPO_ROOT/home/bin/agentctl-common.sh'
     agentctl_tmux load-buffer -b submit-check -- '$WORKROOT/submit-payload.txt'
     agentctl_tmux paste-buffer -r -b submit-check -d -t '$sess'
-    agentctl_submit_paste '$b' '$sess'
+    agentctl_submit_paste '$b' '$sess' 'P'
   "
   sleep 0.2
   tmux kill-session -t "$sess" >/dev/null 2>&1 || true
@@ -281,6 +367,41 @@ for b in fake claude claude-work codex; do
 done
 [ "$SUBMIT_ALL_OK" -eq 1 ] \
   && pass "agentctl_submit_paste sends Enter only for real backends after post-paste settle (fake: 0 bytes buffered/unsubmitted, claude/claude-work/codex: 2 bytes each ('P\\n'))"
+
+# Codex の steer は initial mission 実行中にも queue できる必要がある。pane 全体は
+# reasoning/status 描画で変化し続けるため whole-screen quiet を待ってはいけない。
+# 短い bootstrap に含まれる一意 marker が capture-pane に描画されたことだけを
+# paste 完了の mechanical evidence とし、その時点で Enter を送る。
+CODEX_BUSY_SESSION="agentctl-submit-codex-busy"
+CODEX_BUSY_OUT="$WORKROOT/submit-codex-busy-out.txt"
+CODEX_BUSY_MARKER="codex-op-11111111-2222-3333-4444-555555555555.txt"
+printf '%s' "$CODEX_BUSY_MARKER" >"$WORKROOT/submit-codex-busy-payload.txt"
+tmux new-session -d -s "$CODEX_BUSY_SESSION" -x 100 -y 20 -- bash -c '
+  (i=0; while true; do i=$((i+1)); printf "busy-%d\n" "$i"; sleep 0.05; done) &
+  noise_pid=$!
+  IFS= read -r line
+  printf "%s\n" "$line" >"'"$CODEX_BUSY_OUT"'"
+  kill "$noise_pid" 2>/dev/null || true
+  sleep 60
+'
+sleep 0.2
+if AGENTCTL_SUBMIT_SETTLE_TIMEOUT_SECONDS=2 AGENTCTL_READY_POLL_SECONDS=0.05 bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  agentctl_tmux load-buffer -b codex-busy-submit -- '$WORKROOT/submit-codex-busy-payload.txt'
+  agentctl_tmux paste-buffer -r -b codex-busy-submit -d -t '$CODEX_BUSY_SESSION'
+  agentctl_submit_paste codex '$CODEX_BUSY_SESSION' '$CODEX_BUSY_MARKER'
+" 2>/tmp/agentctl-codex-busy-submit-err; then
+  for _ in $(seq 1 20); do
+    [ -f "$CODEX_BUSY_OUT" ] && break
+    sleep 0.05
+  done
+  [ "$(cat "$CODEX_BUSY_OUT" 2>/dev/null)" = "$CODEX_BUSY_MARKER" ] \
+    && pass "Codex submit uses pasted bootstrap marker evidence and sends Enter even while the rest of the pane is changing" \
+    || fail "Codex busy submit returned success but the queued line was not submitted"
+else
+  fail "Codex busy submit should not require whole-screen quiet: $(cat /tmp/agentctl-codex-busy-submit-err)"
+fi
+tmux kill-session -t "$CODEX_BUSY_SESSION" >/dev/null 2>&1 || true
 
 # --- backend readiness barrier: bracketed-paste + screen quiescence, fail-closed timeout -----------------------------------------------------------
 # 実 CLI 文字列には依存させず、bracketed paste 有効化シーケンス (\e[?2004h)
@@ -395,6 +516,87 @@ else
 fi
 tmux kill-session -t "$DELIVER_TIMEOUT_SESS" >/dev/null 2>&1 || true
 
+# --- A2: known pre-delivery transport failure must be typed exit 5 -------------------------------
+# load-buffer failure happens before paste-buffer is invoked, so no bytes can have reached the
+# backend. This is a definite transport failure, not the post-delivery acceptance=unknown case.
+PREFAIL_DIR="$WORKROOT/deliver-prefail"
+mkdir -p "$PREFAIL_DIR"
+PREFAIL_BODY="$WORKROOT/deliver-prefail-body.txt"
+printf 'prefail-body' >"$PREFAIL_BODY"
+bash -c '
+  source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
+  agentctl_tmux() {
+    if [ "${1:-}" = "load-buffer" ]; then
+      return 1
+    fi
+    return 0
+  }
+  agentctl_deliver_body fake fake-pane "'"$PREFAIL_DIR"'" "'"$PREFAIL_BODY"'" pre-runtime pre-operation
+' >/tmp/agentctl-deliver-prefail-out 2>/tmp/agentctl-deliver-prefail-err
+PREFAIL_RC=$?
+[ "$PREFAIL_RC" -eq 5 ] \
+  && pass "agentctl_deliver_body returns 5 for a definite pre-delivery transport failure" \
+  || fail "pre-delivery transport failure returned $PREFAIL_RC, expected 5"
+
+# --- steer --json machine-readable result contract -----------------------------------------------------------
+# result は accepted|submitted|unknown のいずれかで、本文/payload を一切含まない。
+# 成功 (paste+Enter 送信確認済み) は "submitted"、screen-settle timeout で
+# acceptance が不確定な場合は generic な失敗ではなく明示的に "unknown" とする。
+
+NAME_JSON="rtSteerJson"
+RID_JSON=$(bash "$AGENTCTL" start --name "$NAME_JSON" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"mjson")
+sleep 0.3
+STEER_JSON=$(bash "$AGENTCTL" steer --name "$NAME_JSON" --runtime-id "$RID_JSON" --json --stdin <<<"steer json contract check")
+echo "$STEER_JSON" | jq -e --arg rid "$RID_JSON" \
+  '.result == "submitted" and .runtime_id == $rid and .transport == "fake-sink" and (.operation_id | length) > 0 and (keys | length) == 4' \
+  >/dev/null 2>&1 \
+  && pass "steer --json returns machine-readable result contract (result/operation_id/runtime_id/transport, no payload)" \
+  || fail "steer --json contract mismatch: $STEER_JSON"
+
+AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER=1 \
+  bash "$AGENTCTL" steer --name "$NAME_JSON" --runtime-id "$RID_JSON" --json --stdin <<<"known pre-delivery failure" \
+  >/tmp/agentctl-steer-prefail-out 2>/tmp/agentctl-steer-prefail-err
+STEER_PREFAIL_RC=$?
+[ "$STEER_PREFAIL_RC" -eq 5 ] \
+  && pass "steer exits 5 on a definite pre-delivery transport failure" \
+  || fail "steer pre-delivery failure exited $STEER_PREFAIL_RC, expected 5"
+tmux kill-session -t "agentctl-$NAME_JSON" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_JSON"
+
+# backend=fake で起動した実 runtime の pane を、markers/state はそのままに
+# 「一切静止しない画面」の loop へ respawn し、state.backend だけ claude に
+# 差し替える (agentctl_submit_paste は backend=fake のみ即 return するため)。
+NAME4_JSON="rtSteerJsonTimeout"
+RID4_JSON=$(bash "$AGENTCTL" start --name "$NAME4_JSON" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m4json")
+sleep 0.3
+SESSION4_JSON="agentctl-$NAME4_JSON"
+tmux respawn-pane -k -t "$SESSION4_JSON" -- bash -c '
+  i=0
+  while true; do i=$((i+1)); printf "line-%d\n" "$i"; sleep 0.05; done
+'
+sleep 0.2
+STATE4_JSON="$WORKROOT/state/agentctl/runtimes/$NAME4_JSON/state.json"
+NEW_PANE_PID=$(tmux display-message -p -t "$SESSION4_JSON" '#{pane_pid}')
+NEW_PANE_ID=$(tmux display-message -p -t "$SESSION4_JSON" '#{pane_id}')
+NEW_PANE_START=$(bash -c "source '$REPO_ROOT/home/bin/agentctl-common.sh'; agentctl_pid_start_token '$NEW_PANE_PID'")
+jq --arg backend claude --arg pane_id "$NEW_PANE_ID" --argjson pane_pid "$NEW_PANE_PID" --arg pane_pid_start "$NEW_PANE_START" \
+  '.backend = $backend | .pane_id = $pane_id | .pane_pid = $pane_pid | .pane_pid_start = $pane_pid_start' \
+  "$STATE4_JSON" >"$STATE4_JSON.tmp" && mv "$STATE4_JSON.tmp" "$STATE4_JSON"
+
+# design.md:187,189: delivery 後の unknown は再送を誘発しない non-destructive
+# success として exit 0 のまま扱う (delivery 前の確定 failure だけ non-zero)。
+if AGENTCTL_SUBMIT_SETTLE_TIMEOUT_SECONDS=1 AGENTCTL_SUBMIT_SETTLE_QUIET_SECONDS=2 AGENTCTL_READY_POLL_SECONDS=0.1 \
+  bash "$AGENTCTL" steer --name "$NAME4_JSON" --runtime-id "$RID4_JSON" --json --stdin <<<"steer during timeout" \
+  >/tmp/agentctl-steer-json-unknown-out 2>/tmp/agentctl-steer-json-unknown-err; then
+  jq -e '.result == "unknown" and (.operation_id | length) > 0' /tmp/agentctl-steer-json-unknown-out >/dev/null 2>&1 \
+    && pass "steer --json represents a screen-settle timeout as result=unknown/exit 0 (non-destructive success, not a generic failure)" \
+    || fail "steer --json timeout output unexpected: $(cat /tmp/agentctl-steer-json-unknown-out), stderr: $(cat /tmp/agentctl-steer-json-unknown-err)"
+else
+  fail "steer --json should exit 0 on a post-delivery screen-settle timeout (acceptance=unknown is non-destructive success per design.md:189)"
+fi
+tmux kill-session -t "$SESSION4_JSON" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME4_JSON"
+
 EVENTS_TIMEOUT_FILE="$DELIVER_TIMEOUT_DIR/events.jsonl"
 if [ -f "$EVENTS_TIMEOUT_FILE" ]; then
   LINE_COUNT=$(wc -l <"$EVENTS_TIMEOUT_FILE")
@@ -420,9 +622,10 @@ bash "$AGENTCTL" steer --name "$NAME" --runtime-id "$RID" --file "$WORKROOT/payl
 sleep 0.5
 
 if [ -f "$SINK" ]; then
-  # sink は累積書き込みのため、start 時に届く initial mission に続けて steer
-  # payload が並ぶ (先頭に mission.txt を cat して期待値を合わせる)。
-  EXPECTED=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME/mission.txt" "$WORKROOT/payload-ja.txt" "$WORKROOT/payload-special.txt")
+  # sink は累積書き込みのため、start 時に届く initial mission delivery bundle
+  # (common contract + task mission) に続けて steer payload が並ぶ
+  # (先頭に mission-delivery.txt を cat して期待値を合わせる)。
+  EXPECTED=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME/mission-delivery.txt" "$WORKROOT/payload-ja.txt" "$WORKROOT/payload-special.txt")
   ACTUAL=$(cat "$SINK")
   [ "$EXPECTED" = "$ACTUAL" ] && pass "steer delivers arbitrary text (Japanese/multiline/special chars) byte-exact" \
     || fail "steer payload mismatch"
@@ -455,7 +658,7 @@ sleep 0.5
 
 if [ -f "$SINK2" ]; then
   CONTENT=$(cat "$SINK2")
-  MISSION2="$WORKROOT/state/agentctl/runtimes/$NAME2/mission.txt"
+  MISSION2="$WORKROOT/state/agentctl/runtimes/$NAME2/mission-delivery.txt"
   AB=$(cat "$MISSION2" "$WORKROOT/payload-A.txt" "$WORKROOT/payload-B.txt")
   BA=$(cat "$MISSION2" "$WORKROOT/payload-B.txt" "$WORKROOT/payload-A.txt")
   if [ "$CONTENT" = "$AB" ] || [ "$CONTENT" = "$BA" ]; then
@@ -481,6 +684,25 @@ RECONCILE3=$(bash "$AGENTCTL" status --name "$NAME3" --json | jq -r '.reconcile'
 [ "$RECONCILE3" = "conflict" ] && pass "PID-start mismatch is classified as conflict" || fail "expected conflict, got $RECONCILE3"
 tmux kill-session -t "agentctl-$NAME3" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME3"
+
+# --- respawned/replaced pane process -> conflict, steer refused (stale runtime_id cannot steer replacement) --------
+
+NAME4="rtRespawn"
+RID4=$(bash "$AGENTCTL" start --name "$NAME4" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m4")
+sleep 0.3
+SESSION4="agentctl-$NAME4"
+tmux respawn-pane -k -t "$SESSION4" >/dev/null 2>&1
+sleep 0.3
+RECONCILE4=$(bash "$AGENTCTL" status --name "$NAME4" --json | jq -r '.reconcile')
+[ "$RECONCILE4" = "conflict" ] && pass "respawned pane (markers retained, PID replaced) is classified as conflict, not running" || fail "expected conflict, got $RECONCILE4"
+
+if bash "$AGENTCTL" steer --name "$NAME4" --runtime-id "$RID4" <<<"steer after respawn" >/dev/null 2>&1; then
+  fail "steer with stale runtime_id succeeded against a respawned/replaced pane"
+else
+  pass "steer with stale runtime_id is refused against a respawned/replaced pane"
+fi
+tmux kill-session -t "$SESSION4" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME4"
 
 # --- cleanup must refuse conflict (no auto-remediation) -----------------------------------------------------------
 
@@ -576,9 +798,10 @@ echo "$DOCTOR_JSON" | jq -e --arg n "$NAME" '.runtimes | any(.name == $n)' >/dev
 
 # --- policy snapshot immutability -----------------------------------------------------------
 
-SNAPSHOT_BEFORE=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME/policy.snapshot.json")
-echo "{\"schema_version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"repository\":{\"git_common_dir\":\"/tmp/other/.git\",\"github_repo\":\"other/other\",\"allowed_worktree_roots\":[]}}" >"$POLICY_OK"
-SNAPSHOT_AFTER=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME/policy.snapshot.json")
+SNAPSHOT_PATH=$(find "$WORKROOT/state/agentctl/runtimes/$NAME" -maxdepth 1 -name 'policy.snapshot.*.json')
+SNAPSHOT_BEFORE=$(cat "$SNAPSHOT_PATH")
+echo "{\"version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"scope\":{\"repositories\":[{\"id\":\"primary\",\"git_common_dir\":\"/tmp/other/.git\",\"github_repo\":\"other/other\",\"allowed_worktree_roots\":[]}],\"remotes\":[],\"production_targets\":[]}}" >"$POLICY_OK"
+SNAPSHOT_AFTER=$(cat "$SNAPSHOT_PATH")
 [ "$SNAPSHOT_BEFORE" = "$SNAPSHOT_AFTER" ] && pass "policy snapshot immutable after source file edit" || fail "policy snapshot changed after source edit"
 
 bash "$AGENTCTL" stop --name "$NAME" --runtime-id "$RID" >/dev/null
@@ -589,7 +812,7 @@ bash "$AGENTCTL" cleanup --name "$NAME" --runtime-id "$RID" >/dev/null
 NAME_RS="resume-t1"
 RID1=$(bash "$AGENTCTL" start --name "$NAME_RS" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m1")
 
-if bash "$AGENTCTL" resume --name "$NAME_RS" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1" 2>/tmp/agentctl-resume-err; then
+if bash "$AGENTCTL" resume --name "$NAME_RS" --from-runtime-id "$RID1" 2>/tmp/agentctl-resume-err; then
   fail "resume while runtime is still running should be rejected"
 else
   pass "resume while still running is rejected (reconcile must be exited/stale)"
@@ -597,7 +820,7 @@ fi
 
 tmux kill-session -t "agentctl-$NAME_RS" >/dev/null 2>&1 || true
 
-RID2=$(bash "$AGENTCTL" resume --name "$NAME_RS" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1")
+RID2=$(bash "$AGENTCTL" resume --name "$NAME_RS" --from-runtime-id "$RID1")
 [ -n "$RID2" ] && [ "$RID2" != "$RID1" ] && pass "resume publishes a new generation with a fresh runtime_id" \
   || fail "resume did not produce a new runtime_id (got '$RID2')"
 
@@ -629,6 +852,60 @@ MISSION_POS=$(grep -n "^m1$" "$SINK_RS" | head -1 | cut -d: -f1)
 [ -n "$CONT_POS" ] && [ -n "$MISSION_POS" ] && [ "$CONT_POS" -lt "$MISSION_POS" ] \
   && pass "continuation context is ordered before the embedded original mission within the bundle" \
   || fail "continuation bundle does not order context before the embedded mission"
+
+CONTRACT_COUNT=$(grep -c "AGENTCTL COMMON MISSION CONTRACT" "$CONT_FILE")
+[ "$CONTRACT_COUNT" -eq 1 ] \
+  && pass "resume continuation bundle includes the common mission contract exactly once" \
+  || fail "resume continuation bundle contract count wrong (got $CONTRACT_COUNT, expected 1)"
+CONTRACT_POS=$(grep -n "AGENTCTL COMMON MISSION CONTRACT" "$SINK_RS" | head -1 | cut -d: -f1)
+[ -n "$CONTRACT_POS" ] && [ "$CONT_POS" -lt "$CONTRACT_POS" ] && [ "$CONTRACT_POS" -lt "$MISSION_POS" ] \
+  && pass "common mission contract is ordered between continuation context and the embedded original mission" \
+  || fail "common mission contract is not ordered between context and mission"
+
+# --- Fix #6: resume re-policy immutability + digest linkage -----------------------------------------------------------
+# resume が明示 --policy-file を渡さない場合は前世代の snapshot path/digest を
+# そのまま継承し、continuation bundle には "unchanged" を記録する。
+STATE_RS1=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_RS/state.json")
+DIGEST_G1=$(echo "$STATE_RS1" | jq -r '.policy_digest')
+grep -qF "unchanged (inherited predecessor snapshot/digest: $DIGEST_G1)" "$CONT_FILE" \
+  && pass "resume without --policy-file inherits predecessor policy snapshot/digest unchanged" \
+  || fail "resume without --policy-file did not record an unchanged digest linkage note"
+
+# 別 runtime で、明示 --policy-file を渡した resume が前世代の snapshot ファイル
+# を上書きせず新しい content-addressed path を得ること、および continuation
+# bundle に old_digest -> new_digest の監査記録が残ることを検証する。
+NAME_REPOLICY="resume-repolicy"
+RIDR1=$(bash "$AGENTCTL" start --name "$NAME_REPOLICY" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"mr1")
+STATE_RP1=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_REPOLICY/state.json")
+SNAPSHOT_PATH_RP1=$(echo "$STATE_RP1" | jq -r '.policy_snapshot_path')
+DIGEST_RP1=$(echo "$STATE_RP1" | jq -r '.policy_digest')
+SNAPSHOT_CONTENT_RP1=$(cat "$SNAPSHOT_PATH_RP1")
+tmux kill-session -t "agentctl-$NAME_REPOLICY" >/dev/null 2>&1 || true
+
+POLICY_REPOLICY="$WORKROOT/policy-repolicy.json"
+echo "{\"version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"scope\":{\"repositories\":[{\"id\":\"primary\",\"git_common_dir\":\"/tmp/repolicy/.git\",\"github_repo\":\"repolicy/repolicy\",\"allowed_worktree_roots\":[]}],\"remotes\":[],\"production_targets\":[]}}" >"$POLICY_REPOLICY"
+RIDR2=$(bash "$AGENTCTL" resume --name "$NAME_REPOLICY" --from-runtime-id "$RIDR1" --policy-file "$POLICY_REPOLICY")
+STATE_RP2=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_REPOLICY/state.json")
+SNAPSHOT_PATH_RP2=$(echo "$STATE_RP2" | jq -r '.policy_snapshot_path')
+DIGEST_RP2=$(echo "$STATE_RP2" | jq -r '.policy_digest')
+
+[ -f "$SNAPSHOT_PATH_RP1" ] && [ "$(cat "$SNAPSHOT_PATH_RP1")" = "$SNAPSHOT_CONTENT_RP1" ] \
+  && pass "resume with an explicit --policy-file leaves the predecessor's policy snapshot file byte-unchanged" \
+  || fail "resume with --policy-file mutated/removed the predecessor's policy snapshot file"
+
+[ "$SNAPSHOT_PATH_RP2" != "$SNAPSHOT_PATH_RP1" ] \
+  && pass "resume with an explicit --policy-file gets a new, distinct snapshot path (not overwritten in place)" \
+  || fail "resume with --policy-file reused the predecessor's snapshot path: $SNAPSHOT_PATH_RP2"
+
+CONT_FILE_RP="$WORKROOT/state/agentctl/runtimes/$NAME_REPOLICY/continuation.txt"
+grep -qF "explicit policy change: predecessor digest $DIGEST_RP1 -> this generation digest $DIGEST_RP2" "$CONT_FILE_RP" \
+  && pass "resume with an explicit --policy-file records old_digest -> new_digest linkage in the continuation bundle" \
+  || fail "resume with --policy-file did not record the digest change linkage"
+
+bash "$AGENTCTL" stop --name "$NAME_REPOLICY" --runtime-id "$RIDR2" >/dev/null 2>/dev/null || true
+bash "$AGENTCTL" cleanup --name "$NAME_REPOLICY" --runtime-id "$RIDR2" >/dev/null 2>/dev/null || true
+tmux kill-session -t "agentctl-$NAME_REPOLICY" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_REPOLICY"
 
 # --- operation event log: unique operation_id / runtime fencing / no-payload-leak (tui-paste transport) -----------------------------------------------------------
 EVENTS_RS="$WORKROOT/state/agentctl/runtimes/$NAME_RS/events.jsonl"
@@ -667,7 +944,7 @@ MISSION_RB_FILE="$WORKROOT/mission-rb.txt"
 printf 'line one\nspecial: $x \\ "quo'"'"'tes'"'"' `backtick` 日本語\nline two\n\n\n' >"$MISSION_RB_FILE"
 RID1_RB=$(bash "$AGENTCTL" start --name "$NAME_RB" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-file "$MISSION_RB_FILE")
 tmux kill-session -t "agentctl-$NAME_RB" >/dev/null 2>&1 || true
-RID2_RB=$(bash "$AGENTCTL" resume --name "$NAME_RB" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1_RB")
+RID2_RB=$(bash "$AGENTCTL" resume --name "$NAME_RB" --from-runtime-id "$RID1_RB")
 [ -n "$RID2_RB" ] || fail "resume (byte-exact test) did not produce a new runtime_id"
 
 CONT_FILE_RB="$WORKROOT/state/agentctl/runtimes/$NAME_RB/continuation.txt"
@@ -680,7 +957,7 @@ fi
 bash "$AGENTCTL" stop --name "$NAME_RB" --runtime-id "$RID2_RB" >/dev/null
 bash "$AGENTCTL" cleanup --name "$NAME_RB" --runtime-id "$RID2_RB" >/dev/null
 
-if bash "$AGENTCTL" resume --name "$NAME_RS" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1" 2>/tmp/agentctl-resume-err2; then
+if bash "$AGENTCTL" resume --name "$NAME_RS" --from-runtime-id "$RID1" 2>/tmp/agentctl-resume-err2; then
   fail "resume with stale --from-runtime-id should be rejected"
 else
   grep -q "stale --from-runtime-id" /tmp/agentctl-resume-err2 && pass "resume with stale --from-runtime-id is rejected" \
@@ -811,6 +1088,262 @@ else
     fi
   fi
 fi
+
+
+# Codex steer は busy TUI への Enter が active turn steering にならないよう、
+# sentinel で確立した session_id に `codex queue` で別 follow-up を積む。
+# 本文は argv に載せず operation file に保持し、queue argv は path+sha bootstrap のみ。
+QUEUE_HOME="$WORKROOT/codex-queue-home"
+QUEUE_DIR="$WORKROOT/deliver-codex-queue"
+QUEUE_BODY="$WORKROOT/deliver-codex-queue-body.txt"
+QUEUE_ARGS="$WORKROOT/codex-queue-args.txt"
+QUEUE_SID="01a00000-1111-2222-3333-444444444444"
+QUEUE_RID="queue-runtime-id"
+QUEUE_NAME="queue-runtime"
+QUEUE_CWD="$WORKROOT/queue-cwd"
+QUEUE_POLICY="$QUEUE_DIR/policy.snapshot.queue.json"
+mkdir -p "$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions" "$QUEUE_DIR" "$QUEUE_CWD"
+printf 'queue 日本語 payload\nsecond line\n' >"$QUEUE_BODY"
+valid_policy >"$QUEUE_POLICY"
+QUEUE_POLICY_DIGEST="sha256:$(jq -S -c . "$QUEUE_POLICY" | sha256sum | awk '{print $1}')"
+jq -n --arg name "$QUEUE_NAME" --arg rid "$QUEUE_RID" --arg cwd "$QUEUE_CWD" \
+  --arg policy "$QUEUE_POLICY" --arg digest "$QUEUE_POLICY_DIGEST" \
+  '{schema_version:1,name:$name,backend:"codex",runtime_id:$rid,cwd:$cwd,tmux_session:"unused-for-queue",
+    pane_id:"%queue",pane_pid:1,pane_pid_start:"1",started_at:"2026-09-11T00:00:00Z",
+    policy_snapshot_path:$policy,policy_digest:$digest,status:"running"}' >"$QUEUE_DIR/state.json"
+QUEUE_KEY=$(printf '%s' "$QUEUE_SID" | sha256sum | awk '{print $1}')
+jq -n --arg sid "$QUEUE_SID" --arg rid "$QUEUE_RID" --arg name "$QUEUE_NAME" --arg dir "$QUEUE_DIR" \
+  --arg cwd "$QUEUE_CWD" --arg policy "$QUEUE_POLICY" --arg digest "$QUEUE_POLICY_DIGEST" \
+  '{schema_version:1,session_id:$sid,runtime_id:$rid,name:$name,backend:"codex",runtime_dir:$dir,
+    policy_snapshot:$policy,policy_digest:$digest,cwd:$cwd}' \
+  >"$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions/$QUEUE_KEY.json"
+cat >"$WORKROOT/bin/codex" <<'STUBCODEX'
+#!/bin/bash
+printf '%s\n' "$@" >"$AGENTCTL_TEST_CODEX_QUEUE_ARGS"
+printf 'call\n' >>"${AGENTCTL_TEST_CODEX_QUEUE_CALLS:-/dev/null}"
+[ "${AGENTCTL_TEST_CODEX_QUEUE_FAIL:-0}" = "1" ] && exit 93
+exit 0
+STUBCODEX
+chmod +x "$WORKROOT/bin/codex"
+if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
+"; then
+  if grep -qx -- '--thread' "$QUEUE_ARGS" \
+    && grep -qx -- "$QUEUE_SID" "$QUEUE_ARGS" \
+    && grep -qx -- '--message' "$QUEUE_ARGS" \
+    && ! grep -qF 'queue 日本語 payload' "$QUEUE_ARGS"; then
+    pass "Codex steer uses codex queue for the bound session and keeps the steer body out of argv"
+  else
+    fail "Codex steer queue argv contract mismatch: $(tr '\n' ' ' <"$QUEUE_ARGS" 2>/dev/null)"
+  fi
+else
+  fail "Codex steer should use codex queue instead of TUI paste for a bound session"
+fi
+
+# queue transport は validated session binding が欠落した状態では delivery 前に
+# fail closed (5) し、別 session へ推測配送しない。
+QUEUE_BINDING="$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions/$QUEUE_KEY.json"
+mv "$QUEUE_BINDING" "$QUEUE_BINDING.saved"
+if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
+" >/dev/null 2>&1; then
+  fail "Codex steer without a validated session binding should fail before delivery"
+else
+  rc=$?
+  [ "$rc" -eq 5 ]     && pass "Codex steer without a validated session binding fails closed before delivery (exit 5)"     || fail "Codex steer without a validated session binding exited $rc, expected 5"
+fi
+mv "$QUEUE_BINDING.saved" "$QUEUE_BINDING"
+
+# codex queue 自体が non-zero の場合、server 側受理の有無は断定できない。
+# 1 回だけ試行し result=unknown 相当 (return 1) にして自動再送しない。
+QUEUE_CALLS="$WORKROOT/codex-queue-calls.txt"
+: >"$QUEUE_CALLS"
+if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" AGENTCTL_TEST_CODEX_QUEUE_CALLS="$QUEUE_CALLS" \
+  AGENTCTL_TEST_CODEX_QUEUE_FAIL=1 bash -c "
+    source '$REPO_ROOT/home/bin/agentctl-common.sh'
+    source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+    agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
+  " >/dev/null 2>&1; then
+  queue_fail_rc=0
+else
+  queue_fail_rc=$?
+fi
+queue_calls=$(wc -l <"$QUEUE_CALLS")
+if [ "$queue_fail_rc" -eq 1 ] && [ "$queue_calls" -eq 1 ]; then
+  pass "Codex queue failure remains acceptance=unknown and is not auto-retried"
+else
+  fail "Codex queue failure contract mismatch (rc=$queue_fail_rc calls=$queue_calls; expected rc=1 calls=1)"
+fi
+
+# --- state dir path にスペースを含む場合の policy snapshot path/digest 受け渡し -----------
+
+SPACED_ROOT=$(mktemp -d)"/state dir"
+mkdir -p "$SPACED_ROOT"
+SPACED_WORKTREE="$SPACED_ROOT/worktree"
+mkdir -p "$SPACED_WORKTREE"
+SPACED_POLICY="$SPACED_ROOT/policy.json"
+cat >"$SPACED_POLICY" <<JSON
+{"version":1,$POLICY_PERMISSIONS_ALL_FALSE,"scope":{"repositories":[{"id":"primary","git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$SPACED_WORKTREE"]}],"remotes":[],"production_targets":[]}}
+JSON
+
+RID_SPACED=$(XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" start --name spacedstate --cwd "$SPACED_WORKTREE" --backend fake --policy-file "$SPACED_POLICY" --mission-stdin <<<"m-spaced" 2>/tmp/agentctl-spaced-err)
+if [ -n "$RID_SPACED" ]; then
+  STATUS_SPACED=$(XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" status --name spacedstate --json 2>/dev/null | jq -r '.reconcile')
+  [ "$STATUS_SPACED" = "running" ] && pass "start succeeds when the state dir path contains a space (policy snapshot path/digest survive the read)" \
+    || fail "start with a spaced state dir did not reach reconcile=running: $STATUS_SPACED"
+else
+  fail "start with a spaced state dir path failed: $(cat /tmp/agentctl-spaced-err 2>/dev/null)"
+fi
+XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" stop --name spacedstate --runtime-id "$RID_SPACED" >/dev/null 2>&1 || true
+XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" cleanup --name spacedstate --runtime-id "$RID_SPACED" >/dev/null 2>&1 || true
+
+# --- canonical CLI contract (design.md:168-178): positional <name> + --agent, --name/--backend compat aliases -----------------------------------------------------------
+
+NAME_CANON="rtcanon"
+RID_CANON=$(bash "$AGENTCTL" start "$NAME_CANON" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY_OK" --mission-stdin <<<"canon mission")
+[[ "$RID_CANON" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+  && pass "start accepts canonical positional <name> + --agent form" \
+  || fail "start with positional name + --agent did not publish a runtime: $RID_CANON"
+[ "$(bash "$AGENTCTL" status "$NAME_CANON" --json | jq -r '.reconcile')" = "running" ] \
+  && pass "status accepts canonical positional <name> form" \
+  || fail "status with positional name did not report running"
+bash "$AGENTCTL" steer "$NAME_CANON" --runtime-id "$RID_CANON" --stdin <<<"canon steer" >/dev/null \
+  && pass "steer accepts canonical positional <name> form" \
+  || fail "steer with positional name failed"
+bash "$AGENTCTL" interrupt "$NAME_CANON" --runtime-id "$RID_CANON" >/dev/null \
+  && pass "interrupt accepts canonical positional <name> form" \
+  || fail "interrupt with positional name failed"
+bash "$AGENTCTL" stop "$NAME_CANON" --runtime-id "$RID_CANON" >/dev/null \
+  && pass "stop accepts canonical positional <name> form" \
+  || fail "stop with positional name failed"
+bash "$AGENTCTL" cleanup "$NAME_CANON" --runtime-id "$RID_CANON" >/dev/null \
+  && pass "cleanup accepts canonical positional <name> form" \
+  || fail "cleanup with positional name failed"
+
+# resume: caller omits --cwd/--agent entirely and it must inherit from the predecessor generation's state.
+NAME_RESUME_CANON="rtresumecanon"
+RID_RC1=$(bash "$AGENTCTL" start "$NAME_RESUME_CANON" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY_OK" --mission-stdin <<<"resume canon mission")
+bash "$AGENTCTL" stop "$NAME_RESUME_CANON" --runtime-id "$RID_RC1" >/dev/null
+RID_RC2=$(bash "$AGENTCTL" resume "$NAME_RESUME_CANON" --from-runtime-id "$RID_RC1")
+if [ -n "$RID_RC2" ] && [ "$RID_RC2" != "$RID_RC1" ]; then
+  pass "resume with canonical positional <name> and no --cwd/--agent inherits the predecessor's cwd/backend"
+else
+  fail "resume without --cwd/--agent did not publish a fresh generation: $RID_RC2"
+fi
+[ "$(bash "$AGENTCTL" status "$NAME_RESUME_CANON" --json | jq -r '.backend')" = "fake" ] \
+  && pass "resumed generation kept the inherited backend" \
+  || fail "resumed generation lost the inherited backend"
+bash "$AGENTCTL" stop "$NAME_RESUME_CANON" --runtime-id "$RID_RC2" >/dev/null
+bash "$AGENTCTL" cleanup "$NAME_RESUME_CANON" --runtime-id "$RID_RC2" >/dev/null
+
+# v8 正典構文: resume は cwd/backend を predecessor state から厳密に継承する。
+# --cwd/--agent/--backend override は継続 identity を変えてしまうため usage
+# error (exit 2) として拒否しなければならない (cwd/backend の再指定を許可しない)。
+NAME_RESUME_STRICT="rtresumestrict"
+RID_RSTRICT1=$(bash "$AGENTCTL" start "$NAME_RESUME_STRICT" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY_OK" --mission-stdin <<<"resume strict mission")
+bash "$AGENTCTL" stop "$NAME_RESUME_STRICT" --runtime-id "$RID_RSTRICT1" >/dev/null
+
+bash "$AGENTCTL" resume "$NAME_RESUME_STRICT" --cwd "$WORKROOT/worktree" --from-runtime-id "$RID_RSTRICT1" >/dev/null 2>/tmp/agentctl-resume-cwd-override-err
+[ "$?" -eq 2 ] && pass "resume with an explicit --cwd override is rejected as a usage error (exit 2)" \
+  || fail "resume --cwd override did not exit 2: $(cat /tmp/agentctl-resume-cwd-override-err)"
+
+bash "$AGENTCTL" resume "$NAME_RESUME_STRICT" --agent fake --from-runtime-id "$RID_RSTRICT1" >/dev/null 2>/tmp/agentctl-resume-agent-override-err
+[ "$?" -eq 2 ] && pass "resume with an explicit --agent override is rejected as a usage error (exit 2)" \
+  || fail "resume --agent override did not exit 2: $(cat /tmp/agentctl-resume-agent-override-err)"
+
+bash "$AGENTCTL" resume "$NAME_RESUME_STRICT" --backend fake --from-runtime-id "$RID_RSTRICT1" >/dev/null 2>/tmp/agentctl-resume-backend-override-err
+[ "$?" -eq 2 ] && pass "resume with an explicit --backend override is rejected as a usage error (exit 2)" \
+  || fail "resume --backend override did not exit 2: $(cat /tmp/agentctl-resume-backend-override-err)"
+
+RID_RSTRICT2=$(bash "$AGENTCTL" resume "$NAME_RESUME_STRICT" --from-runtime-id "$RID_RSTRICT1")
+bash "$AGENTCTL" stop "$NAME_RESUME_STRICT" --runtime-id "$RID_RSTRICT2" >/dev/null
+bash "$AGENTCTL" cleanup "$NAME_RESUME_STRICT" --runtime-id "$RID_RSTRICT2" >/dev/null
+
+# --- typed exit code contract (design.md:187): 0=postcondition met, 2=usage/schema error,
+# 3=target/subject absent, 4=ownership/conflict/refused, 5=transport failure -----------------------------------------------------------
+
+NAME_EXIT="rtexit"
+STALE_RID="00000000-0000-0000-0000-000000000000"
+RID_EXIT=$(bash "$AGENTCTL" start --name "$NAME_EXIT" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"exit contract mission")
+
+bash "$AGENTCTL" start --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m" >/dev/null 2>/tmp/agentctl-exit-usage-err
+[ "$?" -eq 2 ] && pass "start without --name exits 2 (usage/schema error)" \
+  || fail "start without --name did not exit 2: $(cat /tmp/agentctl-exit-usage-err)"
+
+bash "$AGENTCTL" >/dev/null 2>/tmp/agentctl-exit-nocommand-err
+[ "$?" -eq 2 ] && pass "invoking agentctl with no command exits 2 (usage/schema error)" \
+  || fail "no command did not exit 2: $(cat /tmp/agentctl-exit-nocommand-err)"
+bash "$AGENTCTL" no-such-command >/dev/null 2>/tmp/agentctl-exit-unknowncommand-err
+[ "$?" -eq 2 ] && pass "invoking agentctl with an unknown command exits 2 (usage/schema error)" \
+  || fail "unknown command did not exit 2: $(cat /tmp/agentctl-exit-unknowncommand-err)"
+
+bash "$AGENTCTL" status --name "no-such-$NAME_EXIT" --json >/dev/null 2>/tmp/agentctl-exit-status-absent-err
+[ "$?" -eq 0 ] && pass "status for an absent runtime exits 0 (reconcile=absent is a valid, non-error postcondition)" \
+  || fail "status for an absent runtime did not exit 0: $(cat /tmp/agentctl-exit-status-absent-err)"
+
+bash "$AGENTCTL" steer --name "$NAME_EXIT" --runtime-id "$STALE_RID" --stdin <<<"x" >/dev/null 2>/tmp/agentctl-exit-steer-stale-err
+[ "$?" -eq 4 ] && pass "steer with a stale --runtime-id exits 4 (ownership/conflict/refused)" \
+  || fail "steer with stale --runtime-id did not exit 4: $(cat /tmp/agentctl-exit-steer-stale-err)"
+bash "$AGENTCTL" steer --name "no-such-$NAME_EXIT" --runtime-id "$STALE_RID" --stdin <<<"x" >/dev/null 2>/tmp/agentctl-exit-steer-absent-err
+[ "$?" -eq 3 ] && pass "steer against a nonexistent name exits 3 (target absent)" \
+  || fail "steer against a nonexistent name did not exit 3: $(cat /tmp/agentctl-exit-steer-absent-err)"
+
+bash "$AGENTCTL" attach --name "$NAME_EXIT" --runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-attach-stale-err
+[ "$?" -eq 4 ] && pass "attach with a stale --runtime-id exits 4" \
+  || fail "attach with stale --runtime-id did not exit 4: $(cat /tmp/agentctl-exit-attach-stale-err)"
+bash "$AGENTCTL" attach --name "no-such-$NAME_EXIT" --runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-attach-absent-err
+[ "$?" -eq 3 ] && pass "attach against a nonexistent name exits 3" \
+  || fail "attach against a nonexistent name did not exit 3: $(cat /tmp/agentctl-exit-attach-absent-err)"
+
+bash "$AGENTCTL" interrupt --name "$NAME_EXIT" --runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-interrupt-stale-err
+[ "$?" -eq 4 ] && pass "interrupt with a stale --runtime-id exits 4" \
+  || fail "interrupt with stale --runtime-id did not exit 4: $(cat /tmp/agentctl-exit-interrupt-stale-err)"
+
+bash "$AGENTCTL" stop --name "$NAME_EXIT" --runtime-id "$RID_EXIT" >/dev/null 2>/tmp/agentctl-exit-stop-err
+[ "$?" -eq 0 ] && pass "stop on a running runtime exits 0" || fail "stop did not exit 0: $(cat /tmp/agentctl-exit-stop-err)"
+bash "$AGENTCTL" stop --name "$NAME_EXIT" --runtime-id "$RID_EXIT" >/dev/null 2>/tmp/agentctl-exit-stop-idem-err
+[ "$?" -eq 0 ] && pass "idempotent re-stop of an already-stopped runtime still exits 0" \
+  || fail "idempotent re-stop did not exit 0: $(cat /tmp/agentctl-exit-stop-idem-err)"
+
+bash "$AGENTCTL" cleanup --name "$NAME_EXIT" --runtime-id "$RID_EXIT" >/dev/null 2>/tmp/agentctl-exit-cleanup-err
+[ "$?" -eq 0 ] && pass "cleanup after stop exits 0" || fail "cleanup did not exit 0: $(cat /tmp/agentctl-exit-cleanup-err)"
+bash "$AGENTCTL" cleanup --name "$NAME_EXIT" --runtime-id "$RID_EXIT" >/dev/null 2>/tmp/agentctl-exit-cleanup-idem-err
+[ "$?" -eq 0 ] && pass "idempotent re-cleanup of an already-removed runtime still exits 0" \
+  || fail "idempotent re-cleanup did not exit 0: $(cat /tmp/agentctl-exit-cleanup-idem-err)"
+
+bash "$AGENTCTL" resume --name "no-such-$NAME_EXIT" --from-runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-resume-absent-err
+[ "$?" -eq 3 ] && pass "resume against a nonexistent name exits 3" \
+  || fail "resume against a nonexistent name did not exit 3: $(cat /tmp/agentctl-exit-resume-absent-err)"
+bash "$AGENTCTL" complete --name "no-such-$NAME_EXIT" --runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-complete-absent-err
+[ "$?" -eq 3 ] && pass "complete against a nonexistent name exits 3" \
+  || fail "complete against a nonexistent name did not exit 3: $(cat /tmp/agentctl-exit-complete-absent-err)"
+
+NAME_EXIT_RC="rtexitrc"
+RID_EXIT_RC1=$(bash "$AGENTCTL" start --name "$NAME_EXIT_RC" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"exit rc mission")
+bash "$AGENTCTL" resume --name "$NAME_EXIT_RC" --from-runtime-id "$RID_EXIT_RC1" >/dev/null 2>/tmp/agentctl-exit-resume-running-err
+[ "$?" -eq 4 ] && pass "resume of a still-running predecessor exits 4 (reconcile must be exited/stale)" \
+  || fail "resume of a still-running predecessor did not exit 4: $(cat /tmp/agentctl-exit-resume-running-err)"
+bash "$AGENTCTL" stop --name "$NAME_EXIT_RC" --runtime-id "$RID_EXIT_RC1" >/dev/null
+bash "$AGENTCTL" resume --name "$NAME_EXIT_RC" --from-runtime-id "$STALE_RID" >/dev/null 2>/tmp/agentctl-exit-resume-stale-err
+[ "$?" -eq 4 ] && pass "resume with a stale --from-runtime-id exits 4" \
+  || fail "resume with stale --from-runtime-id did not exit 4: $(cat /tmp/agentctl-exit-resume-stale-err)"
+
+RID_EXIT_RC2=$(bash "$AGENTCTL" resume --name "$NAME_EXIT_RC" --from-runtime-id "$RID_EXIT_RC1")
+bash "$AGENTCTL" complete --name "$NAME_EXIT_RC" --runtime-id "$RID_EXIT_RC2" >/dev/null 2>/tmp/agentctl-exit-complete-running-err
+[ "$?" -eq 4 ] && pass "complete against a manifest whose mission_status is still 'running' exits 4" \
+  || fail "complete against a still-running manifest did not exit 4: $(cat /tmp/agentctl-exit-complete-running-err)"
+
+MANIFEST_EXIT_RC="$WORKROOT/state/agentctl/runtimes/$NAME_EXIT_RC/manifest.json"
+jq '.mission_status = "done"' "$MANIFEST_EXIT_RC" >"$MANIFEST_EXIT_RC.tmp" && mv "$MANIFEST_EXIT_RC.tmp" "$MANIFEST_EXIT_RC"
+bash "$AGENTCTL" stop --name "$NAME_EXIT_RC" --runtime-id "$RID_EXIT_RC2" >/dev/null
+bash "$AGENTCTL" complete --name "$NAME_EXIT_RC" --runtime-id "$RID_EXIT_RC2" >/dev/null 2>/tmp/agentctl-exit-complete-done-err
+[ "$?" -eq 0 ] && pass "complete succeeds (exits 0) once manifest mission_status is done" \
+  || fail "complete with mission_status=done did not exit 0: $(cat /tmp/agentctl-exit-complete-done-err)"
+bash "$AGENTCTL" cleanup --name "$NAME_EXIT_RC" --runtime-id "$RID_EXIT_RC2" >/dev/null
 
 echo
 if [ "$FAILED" -eq 0 ]; then

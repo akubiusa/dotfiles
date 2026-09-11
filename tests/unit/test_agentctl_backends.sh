@@ -66,6 +66,19 @@ echo "$CMD_RO" | grep -q -- '--permission-mode plan' \
   && pass "local_write=false forces claude Plan mode (mechanical read-only)" \
   || fail "expected --permission-mode plan for local_write=false: $CMD_RO"
 
+# --- codex transport bootstrap provenance -----------------------------------------------------------
+
+BOOTSTRAP=$(agentctl_backend_codex_bootstrap_message "/tmp/agentctl-runtime/codex-op-11111111-2222-3333-4444-555555555555.txt" "0123456789abcdef")
+if echo "$BOOTSTRAP" | grep -qF "verbatim user message for this turn" \
+  && echo "$BOOTSTRAP" | grep -qF "agentctl transport artifact" \
+  && [[ "$BOOTSTRAP" == "agentctl transport artifact: /tmp/agentctl-runtime/codex-op-11111111-2222-3333-4444-555555555555.txt"* ]] \
+  && echo "$BOOTSTRAP" | grep -qF "0123456789abcdef" \
+  && [ "${#BOOTSTRAP}" -le 320 ]; then
+  pass "Codex bootstrap identifies the operation file as an agentctl-owned verbatim user-message transport artifact"
+else
+  fail "Codex bootstrap does not clearly identify trusted transport provenance: $BOOTSTRAP"
+fi
+
 # --- codex backend: preflight fail-closed -----------------------------------------------------------
 
 MISSING_HOME="$WORKROOT/no-codex-home"
@@ -92,7 +105,7 @@ RC=$?
 [ "$RC" -ne 0 ] && pass "codex backend fails closed when dispatcher not registered in hooks.json" \
   || fail "expected non-zero exit when dispatcher unregistered, got rc=$RC out=$OUT"
 
-jq '.hooks.PreToolUse += [{matcher:"^Bash$",hooks:[{type:"command",command:"bash ~/.codex/hooks/agentctl-policy-dispatcher.sh"}]}]' \
+jq '.hooks.PreToolUse += [{matcher:"^(Bash|exec)$",hooks:[{type:"command",command:"bash ~/.codex/hooks/agentctl-policy-dispatcher.sh"}]}]' \
   "$CODEX_HOME/.codex/hooks.json" >"$CODEX_HOME/.codex/hooks.json.tmp" && mv "$CODEX_HOME/.codex/hooks.json.tmp" "$CODEX_HOME/.codex/hooks.json"
 OUT=$(HOME="$CODEX_HOME" bash -c '
   source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
@@ -113,6 +126,34 @@ RC=$?
 [ "$RC" -eq 0 ] && [ "$OUT" = "exec codex" ] \
   && pass "codex backend succeeds when hooks.json + matching deployed dispatcher present" \
   || fail "expected 'exec codex' when preflight satisfied, got rc=$RC out=$OUT"
+
+# managed registration must include the exact matcher used by the real Codex shell tool path.
+cp "$CODEX_HOME/.codex/hooks.json" "$CODEX_HOME/.codex/hooks.json.good"
+jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; .command == "bash ~/.codex/hooks/agentctl-policy-dispatcher.sh")) | .matcher) = "^Bash$"' \
+  "$CODEX_HOME/.codex/hooks.json.good" >"$CODEX_HOME/.codex/hooks.json"
+OUT=$(HOME="$CODEX_HOME" bash -c '
+  source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
+  source "'"$REPO_ROOT"'/home/bin/agentctl-backend-codex.sh"
+  agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
+' 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] && pass "codex backend fails closed when the managed dispatcher matcher is stale" \
+  || fail "expected non-zero exit for stale dispatcher matcher, got rc=$RC out=$OUT"
+mv "$CODEX_HOME/.codex/hooks.json.good" "$CODEX_HOME/.codex/hooks.json"
+
+# A stale wrapper that still contains the two historical grep lines must also fail. This is the
+# regression that requires a managed content hash rather than source-line presence checks.
+cp "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh" "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh.good"
+printf '\n# stale-but-grep-compatible\n' >>"$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
+OUT=$(HOME="$CODEX_HOME" bash -c '
+  source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
+  source "'"$REPO_ROOT"'/home/bin/agentctl-backend-codex.sh"
+  agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
+' 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] && pass "codex backend fails closed on grep-compatible dispatcher content drift (managed checksum)" \
+  || fail "grep-compatible dispatcher drift was not detected: rc=$RC out=$OUT"
+mv "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh.good" "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
 
 OUT_RO=$(HOME="$CODEX_HOME" bash -c '
   source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
@@ -135,6 +176,40 @@ OUT=$(HOME="$STALE_HOME" bash -c '
 RC=$?
 [ "$RC" -ne 0 ] && pass "codex backend fails closed on deployed dispatcher checksum mismatch (stale chezmoi apply)" \
   || fail "expected non-zero exit on checksum mismatch, got rc=$RC out=$OUT"
+
+# preflight は AGENTCTL_LIBDIR からの相対パスで repo checkout の source を
+# 逆算しない (deployed 環境では AGENTCTL_LIBDIR=$HOME/bin であり chezmoi が
+# dot_codex を .codex にリネームするため、その相対パスは存在し得ない)。
+# ここでは agentctl-common.sh/agentctl-backend-codex.sh 自体を $HOME/bin へ
+# コピーした simulated production layout で検証し、repo checkout の
+# home/dot_codex/... へ到達できない状態でも staleness が正しく検出されることを
+# 確認する。
+PROD_HOME="$WORKROOT/codex-home-prod-layout"
+mkdir -p "$PROD_HOME/bin" "$PROD_HOME/.codex/hooks"
+cp "$REPO_ROOT/home/bin/agentctl-common.sh" "$REPO_ROOT/home/bin/agentctl-backend-codex.sh" \
+  "$REPO_ROOT/home/bin/agentctl-classify.sh" "$REPO_ROOT/home/bin/agentctl-policy-dispatcher.sh" "$PROD_HOME/bin/"
+cp "$REPO_ROOT/home/dot_codex/hooks/executable_agentctl-policy-dispatcher.sh" "$PROD_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
+jq -n '{hooks:{PreToolUse:[{matcher:"^(Bash|exec)$",hooks:[{type:"command",command:"bash ~/.codex/hooks/agentctl-policy-dispatcher.sh"}]}]}}' \
+  >"$PROD_HOME/.codex/hooks.json"
+OUT=$(HOME="$PROD_HOME" bash -c '
+  source "'"$PROD_HOME"'/bin/agentctl-common.sh"
+  source "'"$PROD_HOME"'/bin/agentctl-backend-codex.sh"
+  agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
+')
+RC=$?
+[ "$RC" -eq 0 ] && [ "$OUT" = "exec codex" ] \
+  && pass "codex backend succeeds with a correctly deployed dispatcher in a simulated production layout (AGENTCTL_LIBDIR=\$HOME/bin, no repo checkout reachable)" \
+  || fail "expected 'exec codex' in simulated production layout, got rc=$RC out=$OUT"
+
+echo "# stale" >"$PROD_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
+OUT=$(HOME="$PROD_HOME" bash -c '
+  source "'"$PROD_HOME"'/bin/agentctl-common.sh"
+  source "'"$PROD_HOME"'/bin/agentctl-backend-codex.sh"
+  agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
+' 2>&1)
+RC=$?
+[ "$RC" -ne 0 ] && pass "codex backend fails closed on a stale deployed dispatcher in a simulated production layout (previously silently passed because the repo-relative source path was unreachable)" \
+  || fail "expected non-zero exit on stale dispatcher in simulated production layout, got rc=$RC out=$OUT"
 
 echo
 if [ "$FAILED" -eq 0 ]; then

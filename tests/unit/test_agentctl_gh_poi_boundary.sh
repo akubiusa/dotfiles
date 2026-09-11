@@ -53,7 +53,7 @@ REPO_FIXTURE="$WORKROOT/repo"
 mkdir -p "$REPO_FIXTURE/.git" "$WORKROOT/worktree"
 POLICY="$WORKROOT/policy.json"
 cat >"$POLICY" <<JSON
-{"schema_version":1,"permissions":{"local_write":true,"commit":false,"push":false,"create_pr":false,"merge":false,"git_cleanup":false,"deploy":false,"production_verify":false},"repository":{"git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}}
+{"version":1,"permissions":{"local_write":true,"commit":false,"push":false,"create_pr":false,"merge":false,"git_cleanup":false,"deploy":false,"production_verify":false},"scope":{"repositories":[{"id":"primary","git_common_dir":"$REPO_FIXTURE/.git","github_repo":"acme/widgets","allowed_worktree_roots":["$WORKROOT/worktree"]}],"remotes":[],"production_targets":[]}}
 JSON
 
 NAME="ghpoi1"
@@ -66,7 +66,7 @@ bash "$AGENTCTL" doctor --json >/dev/null
 bash "$AGENTCTL" stop --name "$NAME" --runtime-id "$RID1" >/dev/null
 
 MANIFEST_PATH="$WORKROOT/state/agentctl/runtimes/$NAME/manifest.json"
-RID2=$(bash "$AGENTCTL" resume --name "$NAME" --cwd "$WORKROOT/worktree" --backend fake --from-runtime-id "$RID1")
+RID2=$(bash "$AGENTCTL" resume --name "$NAME" --from-runtime-id "$RID1")
 bash "$AGENTCTL" stop --name "$NAME" --runtime-id "$RID2" >/dev/null
 jq '.mission_status = "done"' "$MANIFEST_PATH" >"$MANIFEST_PATH.tmp" && mv "$MANIFEST_PATH.tmp" "$MANIFEST_PATH"
 bash "$AGENTCTL" complete --name "$NAME" --runtime-id "$RID2" >/dev/null

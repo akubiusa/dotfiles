@@ -31,17 +31,18 @@ agentctl_classify_git_subcommand_permission() {
   case "$1" in
     commit) echo "commit" ;;
     push) echo "push" ;;
-    worktree) echo "worktree" ;; # add/remove で個別判定
+    worktree) echo "worktree" ;; # add/remove/prune で個別判定
     branch) echo "git_cleanup" ;; # -d/-D のみ privileged (呼び出し元で絞る)
     clean) echo "git_cleanup" ;;
     reset|checkout|restore) echo "git_cleanup" ;;
-    *) echo "" ;;
+    status|diff|log|show|fetch|rev-parse) echo "" ;; # 既知 read-only、not_privileged
+    *) echo "__unknown__" ;; # 未知 subcommand は alias/外部実行ファイルを解決し得るため fail closed
   esac
 }
 
-# usage: agentctl_classify_git <policy_json> <env_csv> <git-subargs...>
+# usage: agentctl_classify_git <policy_json> <env_csv> <had_env_prefix:0|1> <git-subargs...>
 agentctl_classify_git() {
-  local policy_json="$1" env_csv="$2"; shift 2
+  local policy_json="$1" env_csv="$2" had_env_prefix="$3"; shift 3
   local args=("$@")
 
   if [ "${#args[@]}" -eq 0 ]; then
@@ -78,11 +79,11 @@ agentctl_classify_git() {
         c_count=$((c_count + 1))
         c_path="${a#-C}"
         ;;
-      --git-dir|--work-tree|--namespace)
+      --git-dir|--work-tree|--namespace|--config-env)
         bad_override=1
         i=$((i + 1))
         ;;
-      --git-dir=*|--work-tree=*|--namespace=*)
+      --git-dir=*|--work-tree=*|--namespace=*|--config-env=*)
         bad_override=1
         ;;
       -c)
@@ -113,10 +114,22 @@ agentctl_classify_git() {
 
   local perm
   perm=$(agentctl_classify_git_subcommand_permission "$subcommand")
+  if [ "$perm" = "__unknown__" ]; then
+    # 未知の subcommand は alias/外部 git-foo 実行ファイルを解決し得るため
+    # (既知 read-only allowlist に無い限り) fail closed する。
+    echo "unknown_privileged"; return 0
+  fi
   if [ -z "$perm" ]; then
     [ "$bad_override" -eq 0 ] && [ "$c_count" -le 1 ] && { echo "not_privileged"; return 0; }
     # override/多重 -C を伴う非privileged 分類の command は静的に安全側判定できない。
     echo "unknown_privileged"; return 0
+  fi
+
+  # ここから privileged。先頭の env-assignment word / env wrapper は identity
+  # を隠蔽し得るため無条件 deny する (v8 design.md:112ff)。read-only/
+  # not_privileged な分類 (上の分岐) には適用しない。
+  if [ "$had_env_prefix" = "1" ]; then
+    echo "deny"; return 0
   fi
 
   # ここから privileged。-C を単独で1個だけ持つことを要求する。
@@ -139,9 +152,14 @@ agentctl_classify_git() {
   local repo_common_dir
   repo_common_dir=$(git -C "$c_path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || repo_common_dir=""
 
-  local policy_common_dir policy_worktree_roots
-  policy_common_dir=$(echo "$policy_json" | jq -r '.repository.git_common_dir // empty')
-  policy_worktree_roots=$(echo "$policy_json" | jq -c '.repository.allowed_worktree_roots // []')
+  # multi-repository identity model: 解決した git_common_dir と一致する
+  # scope.repositories[] entry を1件だけ探す (見つからなければ identity 不明として deny)。
+  local matched_repo repo_id policy_common_dir policy_worktree_roots
+  matched_repo=$(echo "$policy_json" | jq -c --arg gcd "$repo_common_dir" \
+    '.scope.repositories // [] | map(select(.git_common_dir == $gcd)) | .[0] // empty')
+  repo_id=$(echo "$matched_repo" | jq -r '.id // empty')
+  policy_common_dir=$(echo "$matched_repo" | jq -r '.git_common_dir // empty')
+  policy_worktree_roots=$(echo "$matched_repo" | jq -c '.allowed_worktree_roots // []')
 
   case "$subcommand" in
     worktree)
@@ -150,7 +168,14 @@ agentctl_classify_git() {
         add)
           [ -n "$wt_target" ] && agentctl_classify_is_abs_path "$wt_target" || { echo "deny"; return 0; }
           if [ "$repo_common_dir" != "$policy_common_dir" ]; then echo "deny"; return 0; fi
-          if echo "$policy_worktree_roots" | jq -e --arg t "$wt_target" 'any(.[]; . as $root | ($t | startswith($root + "/")) or ($t == $root))' >/dev/null 2>&1; then
+          # destination はまだ存在しない前提なので、既存の親 directory だけを
+          # realpath -e で正規化し、basename と結合した「実際に作成される
+          # canonical path」で allowlist 判定する (".."/symlink 越しの
+          # allowed_worktree_roots 脱出を防ぐ)。
+          local wt_parent wt_canonical
+          wt_parent=$(realpath -e -- "$(dirname -- "$wt_target")" 2>/dev/null) || { echo "deny"; return 0; }
+          wt_canonical="$wt_parent/$(basename -- "$wt_target")"
+          if echo "$policy_worktree_roots" | jq -e --arg t "$wt_canonical" 'any(.[]; . as $root | ($t | startswith($root + "/")) or ($t == $root))' >/dev/null 2>&1; then
             echo "allow"; return 0
           fi
           echo "deny"; return 0
@@ -160,10 +185,18 @@ agentctl_classify_git() {
           local gc
           gc=$(echo "$policy_json" | jq -r '.permissions.git_cleanup // false')
           if [ "$repo_common_dir" != "$policy_common_dir" ] || [ "$gc" != "true" ]; then echo "deny"; return 0; fi
-          if echo "$policy_worktree_roots" | jq -e --arg t "$wt_target" 'any(.[]; . as $root | ($t | startswith($root + "/")) or ($t == $root))' >/dev/null 2>&1; then
+          local wt_canonical
+          wt_canonical=$(realpath -e -- "$wt_target" 2>/dev/null) || { echo "deny"; return 0; }
+          if echo "$policy_worktree_roots" | jq -e --arg t "$wt_canonical" 'any(.[]; . as $root | ($t | startswith($root + "/")) or ($t == $root))' >/dev/null 2>&1; then
             echo "allow"; return 0
           fi
           echo "deny"; return 0
+          ;;
+        prune)
+          local gc
+          gc=$(echo "$policy_json" | jq -r '.permissions.git_cleanup // false')
+          if [ "$repo_common_dir" = "$policy_common_dir" ] && [ "$gc" = "true" ]; then echo "allow"; else echo "deny"; fi
+          return 0
           ;;
         *) echo "unknown_privileged"; return 0 ;;
       esac
@@ -177,8 +210,8 @@ agentctl_classify_git() {
       local remote_name="" saw_delete_flag=0 positional_count=0 a
       for a in "${rest[@]}"; do
         case "$a" in
-          --force|-f|--force-with-lease*|+*) echo "deny"; return 0 ;;
-          --delete|-d) saw_delete_flag=1 ;;
+          --force|-f|--force-with-lease*|+*|--mirror) echo "deny"; return 0 ;; # --mirror は force-update/削除を伴い得るため force-push 同様に無条件 deny
+          --delete|-d|--prune) saw_delete_flag=1 ;; # --prune はリモート ref を削除し得るため remote-delete と同じ git_cleanup 判定に載せる
           -*) : ;;
           *://*|*@*:*) echo "deny"; return 0 ;; # URL 直指定
           *)
@@ -196,7 +229,8 @@ agentctl_classify_git() {
       fi
       local resolved_push_url policy_push_url
       resolved_push_url=$(git -C "$c_path" remote get-url --push "$remote_name" 2>/dev/null) || resolved_push_url=""
-      policy_push_url=$(echo "$policy_json" | jq -r --arg name "$remote_name" '.remotes // [] | map(select(.name == $name)) | .[0].push_url // empty')
+      policy_push_url=$(echo "$policy_json" | jq -r --arg name "$remote_name" --arg rid "$repo_id" \
+        '.scope.remotes // [] | map(select(.repository_id == $rid and .name == $name)) | .[0].push_url // empty')
       if [ -n "$resolved_push_url" ] && [ "$resolved_push_url" = "$policy_push_url" ]; then
         echo "allow"; return 0
       fi
@@ -231,24 +265,64 @@ agentctl_classify_git() {
 
 # --- gh -----------------------------------------------------------
 
+# gh の既知 read-only (not_privileged) subcommand/second-arg allowlist。
+# ここに無い gh <sub> <sub2> の組み合わせは (pr create/merge を除き)
+# unknown_privileged とする (fail closed; gh api 等の任意 mutation や
+# issue close 等の未分類 mutation を暗黙 allow しない)。
+agentctl_classify_gh_is_known_read_only() {
+  local sub="$1" sub2="$2"
+  case "$sub" in
+    repo) case "$sub2" in view|list) return 0 ;; *) return 1 ;; esac ;;
+    pr) case "$sub2" in view|list|diff|status|checks) return 0 ;; *) return 1 ;; esac ;;
+    issue) case "$sub2" in view|list) return 0 ;; *) return 1 ;; esac ;;
+    run) case "$sub2" in view|list) return 0 ;; *) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+}
+
 # usage: agentctl_classify_gh <policy_json> <gh-subargs...>
 agentctl_classify_gh() {
   local policy_json="$1"; shift
   local args=("$@")
-  local sub="${args[0]:-}" sub2="${args[1]:-}"
 
-  if [ "$sub" != "pr" ] || { [ "$sub2" != "create" ] && [ "$sub2" != "merge" ]; }; then
-    echo "not_privileged"; return 0
-  fi
-
-  local repo="" i a
-  for ((i = 2; i < ${#args[@]}; i++)); do
+  # -R/--repo (と --hostname) は subcommand の前後どちらにも出現し得る
+  # global option なので、まず取り除いた「subcommand 列」を作ってから
+  # sub/sub2 を判定する (`gh -R owner/repo pr merge` のような並び替えで
+  # sub が "-R" になり判定をすり抜けるのを防ぐ)。
+  local repo="" filtered=() i=0 a
+  while [ "$i" -lt "${#args[@]}" ]; do
     a="${args[$i]}"
     case "$a" in
-      --repo|-R) repo="${args[$((i+1))]:-}" ;;
-      --repo=*) repo="${a#--repo=}" ;;
+      -R|--repo)
+        repo="${args[$((i + 1))]:-}"
+        i=$((i + 2))
+        ;;
+      --repo=*)
+        repo="${a#--repo=}"
+        i=$((i + 1))
+        ;;
+      --hostname)
+        i=$((i + 2))
+        ;;
+      --hostname=*)
+        i=$((i + 1))
+        ;;
+      *)
+        filtered+=("$a")
+        i=$((i + 1))
+        ;;
     esac
   done
+
+  local sub="${filtered[0]:-}" sub2="${filtered[1]:-}"
+  if [ "$sub" = "pr" ] && { [ "$sub2" = "create" ] || [ "$sub2" = "merge" ]; }; then
+    : # 下の privileged 経路へ進む
+  elif agentctl_classify_gh_is_known_read_only "$sub" "$sub2"; then
+    echo "not_privileged"; return 0
+  else
+    echo "unknown_privileged"; return 0
+  fi
+
   [ -n "$repo" ] || { echo "deny"; return 0; }
 
   local perm_key
@@ -257,7 +331,7 @@ agentctl_classify_gh() {
   perm_val=$(echo "$policy_json" | jq -r --arg k "$perm_key" '.permissions[$k] // false')
   [ "$perm_val" = "true" ] || { echo "deny"; return 0; }
 
-  if echo "$policy_json" | jq -e --arg r "$repo" '.repository.github_repo == $r' >/dev/null 2>&1; then
+  if echo "$policy_json" | jq -e --arg r "$repo" '.scope.repositories // [] | any(.[]; .github_repo == $r)' >/dev/null 2>&1; then
     echo "allow"; return 0
   fi
   echo "deny"; return 0
@@ -265,26 +339,78 @@ agentctl_classify_gh() {
 
 # --- production deploy/verify -----------------------------------------------------------
 
+# executable path を realpath -e で正規化する。実在しない path (テスト
+# fixture 由来の placeholder のような) はそのまま literal 比較にフォール
+# バックする (実在しない path は同一 identity を複数名で指せないため
+# canonicalize なしでも安全)。
+agentctl_classify_canonicalize_path() {
+  realpath -e -- "$1" 2>/dev/null || echo "$1"
+}
+
 # usage: agentctl_classify_production <policy_json> <argv...>
 agentctl_classify_production() {
   local policy_json="$1"; shift
   local args=("$@")
-  local joined
-  joined=$(printf '%s\x1f' "${args[@]}")
+  local exec0="${args[0]:-}"
+  local exec0_canonical=""
+  [ -n "$exec0" ] && exec0_canonical=$(agentctl_classify_canonicalize_path "$exec0")
 
+  # deploy_argv/verify_argv は exact な argv 全体一致だけを allow 対象にする
+  # (startswith prefix match だと承認済み argv の後ろに任意の追加引数
+  # (--force 等) を足しても allow され続ける)。argv[0] (実行ファイル
+  # identity) は realpath -e で正規化して比較し (相対パスの .. や symlink
+  # 越しの同一 identity への迂回を防ぐ)、残りの引数は literal 一致を要求
+  # する。permission が enable かどうかに関わらず先に exact match を探し、
+  # 見つかれば permission に応じて allow/deny を確定する (not_privileged
+  # にはしない)。
   local match_key
   for match_key in deploy verify; do
     local perm_key="deploy" arr_key="deploy_argv"
     [ "$match_key" = "verify" ] && { perm_key="production_verify"; arr_key="verify_argv"; }
-    local perm_val
-    perm_val=$(echo "$policy_json" | jq -r --arg k "$perm_key" '.permissions[$k] // false')
-    [ "$perm_val" = "true" ] || continue
-    if echo "$policy_json" | jq -e --arg joined "$joined" --arg key "$arr_key" \
-      '.production_targets // [] | any(.[]; (.[$key] // []) | any(.[]; (map(tostring) | join("\u001f") + "\u001f") as $pfx | ($joined | startswith($pfx))))' \
-      >/dev/null 2>&1; then
-      echo "allow"; return 0
-    fi
+    local candidates cand
+    candidates=$(echo "$policy_json" | jq -c --arg key "$arr_key" \
+      '(.scope.production_targets // [])[] | (.[$key] // [])[]' 2>/dev/null)
+    while IFS= read -r cand; do
+      [ -n "$cand" ] || continue
+      local cand_len
+      cand_len=$(echo "$cand" | jq 'length')
+      [ "$cand_len" -eq "${#args[@]}" ] || continue
+      local cand0 cand0_canonical
+      cand0=$(echo "$cand" | jq -r '.[0]')
+      cand0_canonical=$(agentctl_classify_canonicalize_path "$cand0")
+      [ "$cand0_canonical" = "$exec0_canonical" ] || continue
+      local rest_match=1 idx cand_arg
+      for ((idx = 1; idx < cand_len; idx++)); do
+        cand_arg=$(echo "$cand" | jq -r --argjson i "$idx" '.[$i]')
+        [ "$cand_arg" = "${args[$idx]:-}" ] || { rest_match=0; break; }
+      done
+      [ "$rest_match" -eq 1 ] || continue
+      local perm_val
+      perm_val=$(echo "$policy_json" | jq -r --arg k "$perm_key" '.permissions[$k] // false')
+      [ "$perm_val" = "true" ] && echo "allow" || echo "deny"
+      return 0
+    done <<<"$candidates"
   done
+
+  # exact match が無くても、argv[0] の canonical identity が policy 上の
+  # 既知 production executable (deploy_argv/verify_argv いずれかの先頭要素)
+  # と一致するなら (相対パス/symlink 越しの同一 identity への迂回を含む)、
+  # 未承認の args/target を伴う既知 privileged executable の呼び出しとみなし
+  # deny する。not_privileged (暗黙 allow) への fallback は、真に未登録の
+  # executable にのみ許す。
+  if [ -n "$exec0" ]; then
+    local known_exec0s known known_canonical
+    known_exec0s=$(echo "$policy_json" | jq -r \
+      '[(.scope.production_targets // [])[] | ((.deploy_argv // []) + (.verify_argv // []))[] | .[0]?] | unique | .[]?')
+    while IFS= read -r known; do
+      [ -n "$known" ] || continue
+      known_canonical=$(agentctl_classify_canonicalize_path "$known")
+      if [ "$known_canonical" = "$exec0_canonical" ]; then
+        echo "deny"; return 0
+      fi
+    done <<<"$known_exec0s"
+  fi
+
   echo "not_privileged"
 }
 
@@ -294,25 +420,106 @@ agentctl_classify_production() {
 # stdout: allow | deny | not_privileged | unknown_privileged
 agentctl_classify_command() {
   local policy_json="$1"; shift
-  local env_csv=""
-  if [ "${1:-}" = "--env" ]; then
-    env_csv="$2"; shift 2
-  fi
-  [ "${1:-}" = "--" ] && shift
+  local env_csv="" force_env_prefix=0
+  while true; do
+    case "${1:-}" in
+      --env) env_csv="$2"; shift 2 ;;
+      --force-env-prefix) force_env_prefix=1; shift ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
   local argv=("$@")
+
+  # 先頭の POSIX assignment word (`NAME=value`) は shell 上は env prefix であり
+  # 実行対象コマンドの identity には含まれない。剥がさず argv[0] として扱うと
+  # `FOO=bar git ...`/`GIT_DIR=x git -C ... push`/`X=1 gh pr merge ...` が
+  # git/gh 判定に一切乗らず not_privileged (暗黙 allow) にすり抜ける。剥がした
+  # assignment は `--env` と同じ env metadata 経路にマージし (eval は使わない)、
+  # 既存の GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_* deny 判定に自然に乗せる。
+  local prefix_assignments=()
+  while [ "${#argv[@]}" -gt 0 ] && [[ "${argv[0]}" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; do
+    prefix_assignments+=("${argv[0]}")
+    argv=("${argv[@]:1}")
+  done
+  if [ "${#prefix_assignments[@]}" -gt 0 ]; then
+    local joined_prefix
+    joined_prefix=$(printf '%s,' "${prefix_assignments[@]}")
+    env_csv="${joined_prefix}${env_csv}"
+  fi
 
   if [ "${#argv[@]}" -eq 0 ]; then
     echo "not_privileged"; return 0
   fi
 
-  case "${argv[0]}" in
-    git) agentctl_classify_git "$policy_json" "$env_csv" "${argv[@]:1}"; return 0 ;;
-    gh) agentctl_classify_gh "$policy_json" "${argv[@]:1}"; return 0 ;;
-    sh|bash|zsh|env|eval)
+  # 実際の assignment の有無に関わらず env wrapper 経由 (had_env_prefix=1) を
+  # force-env-prefix で再帰的に伝播する (v8 design.md:112ff: `env git ...` は
+  # assignment 0 件でも deny)。
+  local had_env_prefix=0
+  { [ "${#prefix_assignments[@]}" -gt 0 ] || [ "$force_env_prefix" -eq 1 ]; } && had_env_prefix=1
+
+  # 実行ラッパー/alternate path 越しでも git/gh/env/command/exec の identity を
+  # basename で一意解決する (`/usr/bin/gh`、`./bin/../bin/git` 等が bare 名前と
+  # 異なる分類に落ちないようにする)。
+  local cmd0_base
+  cmd0_base=$(basename -- "${argv[0]}")
+
+  case "$cmd0_base" in
+    git) agentctl_classify_git "$policy_json" "$env_csv" "$had_env_prefix" "${argv[@]:1}"; return 0 ;;
+    gh)
+      # gh には git の GIT_DIR 等のような既知の危険 key allowlist が無いため、
+      # 先頭に何らかの env prefix (`X=1 gh ...` 等) が付いた時点で static に
+      # 安全と判定できるものはなく fail closed する。
+      if [ "$had_env_prefix" -eq 1 ]; then
+        echo "unknown_privileged"; return 0
+      fi
+      agentctl_classify_gh "$policy_json" "${argv[@]:1}"; return 0 ;;
+    command|exec)
+      # 実行 wrapper はラップ先コマンドの identity をそのまま引き継ぐ (かつ
+      # 隠蔽もしない) ため、wrapper token (と `command` の場合のみ leading
+      # option) を剥がして再帰する。
+      local rest=("${argv[@]:1}")
+      if [ "$cmd0_base" = "command" ]; then
+        while [ "${#rest[@]}" -gt 0 ] && [[ "${rest[0]}" == -* ]]; do
+          rest=("${rest[@]:1}")
+        done
+      fi
+      local fwd=(--env "$env_csv")
+      [ "$had_env_prefix" -eq 1 ] && fwd+=(--force-env-prefix)
+      agentctl_classify_command "$policy_json" "${fwd[@]}" -- "${rest[@]}"
+      return 0
+      ;;
+    env)
+      # `env ARGS... [NAME=VALUE...] COMMAND...` は assignment が 0 件でも
+      # privileged な git 呼び出しの identity を隠蔽し得るため
+      # (v8 design.md:112ff)、force-env-prefix を立てて再帰する。
+      local rest=("${argv[@]:1}")
+      while [ "${#rest[@]}" -gt 0 ] && [[ "${rest[0]}" == -* ]]; do
+        rest=("${rest[@]:1}")
+      done
+      while [ "${#rest[@]}" -gt 0 ] && [[ "${rest[0]}" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; do
+        rest=("${rest[@]:1}")
+      done
+      agentctl_classify_command "$policy_json" --env "$env_csv" --force-env-prefix -- "${rest[@]}"
+      return 0
+      ;;
+    sh|bash|zsh|eval)
       # 静的に privileged operation の identity を一意解決できないラッパー形式。
-      # git/gh らしき token を含むなら fail closed、そうでなければ通す。
+      # git/gh らしき token、または policy の production_targets 実行ファイルを
+      # 含むなら fail closed、そうでなければ通す (production target の
+      # deploy_argv/verify_argv は任意の executable path であり得るため、
+      # git/gh のような固定 literal では拾えない)。
       local joined="${argv[*]}"
-      if echo "$joined" | grep -qE '(^|[^a-zA-Z0-9_])(git|gh)([[:space:]]|$)'; then
+      local prod_exec found_prod_exec=""
+      while IFS= read -r prod_exec; do
+        [ -n "$prod_exec" ] || continue
+        if echo "$joined" | grep -qF -- "$prod_exec"; then
+          found_prod_exec=1
+          break
+        fi
+      done < <(echo "$policy_json" | jq -r \
+        '[(.scope.production_targets // [])[] | ((.deploy_argv // []) + (.verify_argv // []))[] | .[0]?] | unique | .[]?')
+      if echo "$joined" | grep -qE '(^|[^a-zA-Z0-9_])(git|gh)([[:space:]]|$)' || [ -n "$found_prod_exec" ]; then
         echo "unknown_privileged"
       else
         echo "not_privileged"
@@ -349,6 +556,28 @@ agentctl_classify_shell_command_string() {
     *'$('*|*'`'*|*'<('*|*'>('*)
       echo "unknown_privileged"; return 0 ;;
   esac
+
+  # `read -ra` は quote/escape を解釈しないナイーブな tokenizer であり、
+  # `X="a b" gh ...`/`"gh" pr merge ...` のような quote された identity/
+  # assignment を誤分割し得る (静的に一意解決できない)。quote 文字/
+  # backslash を含む segment は個別に安全側判定せず丸ごと fail closed する。
+  # shellcheck disable=SC1003  # case pattern で literal backslash 自体を検出する。
+  case "$command_string" in
+    *"'"*|*'"'*|*'\'*)
+      echo "unknown_privileged"; return 0 ;;
+  esac
+
+  # `&` (バックグラウンド実行) や if/while/for 等の control keyword は
+  # 意図的に小さいこの parser では正規化できないため、承認済み simple
+  # command の背後に privileged operation を隠し得る compound/control
+  # syntax として丸ごと fail closed する (`&&` は既存の segment 分割対象
+  # なのでここでは除外する)。
+  if [[ "$command_string" =~ (^|[^&])\&([^&]|$) ]]; then
+    echo "unknown_privileged"; return 0
+  fi
+  if [[ "$command_string" =~ (^|[[:space:];])(if|then|else|elif|fi|while|until|do|done|for|select|case|esac|function)([[:space:];]|$) ]]; then
+    echo "unknown_privileged"; return 0
+  fi
 
   local segments=() seen_deny=0 seen_unknown=0 seen_allow=0
   while IFS= read -r segment; do

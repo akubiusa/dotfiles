@@ -37,10 +37,13 @@ mkdir -p "$ALLOWED_ROOT"
 
 POLICY=$(jq -n --arg gcd "$GIT_COMMON_DIR" --arg gh "acme/widgets" --arg root "$ALLOWED_ROOT" '
 {
-  permissions: {commit:true, push:true, create_pr:true, merge:true, git_cleanup:true, deploy:true, production_verify:false},
-  repository: {git_common_dir:$gcd, github_repo:$gh, allowed_worktree_roots:[$root]},
-  remotes: [{name:"origin", push_url:"git@github.com:acme/widgets.git"}],
-  production_targets: [{deploy_argv:[["/abs/deploy","--target","pine"]], verify_argv:[]}]
+  version: 1,
+  permissions: {local_write:true, commit:true, push:true, create_pr:true, merge:true, git_cleanup:true, deploy:true, production_verify:false},
+  scope: {
+    repositories: [{id:"primary", git_common_dir:$gcd, github_repo:$gh, allowed_worktree_roots:[$root]}],
+    remotes: [{repository_id:"primary", name:"origin", push_url:"git@github.com:acme/widgets.git"}],
+    production_targets: [{id:"pine", deploy_argv:[["/abs/deploy","--target","pine"]], verify_argv:[]}]
+  }
 }')
 POLICY_DENY=$(echo "$POLICY" | jq '.permissions = {commit:false, push:false, create_pr:false, merge:false, git_cleanup:false, deploy:false, production_verify:false}')
 
@@ -81,6 +84,13 @@ check "not_privileged: git branch (list)" not_privileged "$POLICY" -- git -C "$R
 check "allowed: git worktree add within allowed root" allow "$POLICY" -- git -C "$REPO" worktree add "$ALLOWED_ROOT/wt1" -b wt1
 check "denied: git worktree add outside allowed root" deny "$POLICY" -- git -C "$REPO" worktree add "$WORKROOT/outside" -b wt2
 check "denied: git worktree add relative target" deny "$POLICY" -- git -C "$REPO" worktree add relative-wt -b wt3
+check "denied: git worktree add traversal escape (uncreated destination under an allowed root textually, but canonically outside)" deny "$POLICY" -- git -C "$REPO" worktree add "$ALLOWED_ROOT/../escape" -b wtx
+check "allowed: git worktree prune with git_cleanup=true" allow "$POLICY" -- git -C "$REPO" worktree prune
+check "denied: git worktree prune with git_cleanup=false" deny "$(echo "$POLICY" | jq '.permissions.git_cleanup=false')" -- git -C "$REPO" worktree prune
+
+check "denied: push --prune requires git_cleanup" deny "$(echo "$POLICY" | jq '.permissions.git_cleanup=false')" -- git -C "$REPO" push --prune origin
+check "allowed: push --prune with git_cleanup=true" allow "$POLICY" -- git -C "$REPO" push --prune origin
+check "denied: push --mirror is always denied (equivalent to force-push)" deny "$POLICY" -- git -C "$REPO" push --mirror origin
 
 # --- gh -----------------------------------------------------------
 
@@ -100,6 +110,42 @@ check "unknown_privileged: eval wrapping gh pr merge" unknown_privileged "$POLIC
 
 check "allowed: exact deploy_argv match" allow "$POLICY" -- /abs/deploy --target pine
 check "not_privileged: unknown executable" not_privileged "$POLICY" -- /abs/other --target pine
+check "unknown_privileged: bash -c wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- bash -c "/abs/deploy --target pine"
+check "unknown_privileged: eval wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- eval "/abs/deploy --target pine"
+check "denied: same production executable with an unapproved target argv" deny "$POLICY" -- /abs/deploy --target production
+check "denied: same production executable with extra trailing argv" deny "$POLICY" -- /abs/deploy --target pine --force
+check "not_privileged: unconfigured executable that merely resembles the production one" not_privileged "$POLICY" -- /abs/deploy-staging --target pine
+
+# --- production deploy: real-executable canonicalization (v8 audit finding) -----------------------------------------------------------
+
+mkdir -p "$WORKROOT/bin"
+printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/bin/deploy"
+chmod +x "$WORKROOT/bin/deploy"
+ln -s "$WORKROOT/bin/deploy" "$WORKROOT/deploy-link"
+POLICY_REALEXEC=$(echo "$POLICY" | jq --arg exe "$WORKROOT/bin/deploy" \
+  '.scope.production_targets += [{id:"real",deploy_argv:[[$exe,"--target","production"]],verify_argv:[]}]')
+
+check "allowed: canonical production executable path" allow "$POLICY_REALEXEC" -- "$WORKROOT/bin/deploy" --target production
+check "allowed: same production executable via ../ traversal resolves to the same canonical identity" allow "$POLICY_REALEXEC" -- "$WORKROOT/bin/../bin/deploy" --target production
+check "allowed: same production executable via symlink resolves to the same canonical identity" allow "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target production
+check "denied: canonical production executable with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/bin/deploy" --target staging
+check "denied: same production executable via symlink with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target staging
+
+# --- shell env-prefix (leading POSIX assignment word) -----------------------------------------------------------
+# `FOO=bar git ...` / `GIT_DIR=x git ...` / `X=1 gh ...` は argv[0] が assignment
+# word になるため、剥がさなければ git/gh 判定に一切乗らず not_privileged
+# (暗黙 allow) にすり抜ける。
+
+check "denied: any leading env-assignment word before a privileged git mutation denies (v8 design.md:112ff)" deny "$POLICY" -- FOO=bar git -C "$REPO" commit -m msg
+check "denied: ordinary FOO=bar env prefix on a policy-denied commit still denies" deny "$POLICY_DENY" -- FOO=bar git -C "$REPO" commit -m msg
+check "denied: env-wrapped privileged git mutation denies even with zero assignments" deny "$POLICY" -- env git -C "$REPO" commit -m msg
+check "not_privileged: leading env-assignment before a non-privileged git op is unaffected" not_privileged "$POLICY" -- FOO=bar git -C "$REPO" fetch
+check "denied: GIT_DIR env-prefix word before git -C push" deny "$POLICY" -- GIT_DIR=/tmp/evil git -C "$REPO" push origin
+check "denied: GIT_WORK_TREE env-prefix word before git -C push" deny "$POLICY" -- GIT_WORK_TREE=/tmp/evil git -C "$REPO" push origin
+check "denied: GIT_CONFIG_COUNT env-prefix word before git -C push" deny "$POLICY" -- GIT_CONFIG_COUNT=1 git -C "$REPO" push origin
+check "unknown_privileged: any env prefix before gh pr merge (no known-safe allowlist)" unknown_privileged "$POLICY" -- X=1 gh pr merge --repo acme/widgets --squash
+check "not_privileged: ordinary FOO=bar env prefix on a non-privileged command is unaffected" not_privileged "$POLICY" -- FOO=bar ls -la
+check "denied: multiple chained env-prefix words before git push (GIT_DIR among them)" deny "$POLICY" -- A=1 GIT_DIR=/tmp/evil git -C "$REPO" push origin
 
 # --- raw shell command string entry point (PreToolUse payload 契約) -----------------------------------------------------------
 
@@ -119,10 +165,44 @@ check_str "denied: chained segments with a denied git push" deny "$POLICY" "ls -
 check_str "allowed: chained not_privileged + allowed git commit" allow "$POLICY" "ls -la && git -C $REPO commit -m msg"
 check_str "not_privileged: chained clearly non-privileged segments" not_privileged "$POLICY" "ls -la; cat foo.txt"
 
+# --- raw shell command string: env-prefix / production near-match (実 PreToolUse 契約経由) -----------------------------------------------------------
+
+check_str "denied: raw string leading env-assignment before a privileged git commit denies" deny "$POLICY" "FOO=bar git -C $REPO commit -m msg"
+check_str "denied: raw string GIT_DIR env prefix before git push" deny "$POLICY" "GIT_DIR=/tmp/evil git -C $REPO push origin"
+check_str "unknown_privileged: raw string env prefix before gh pr merge" unknown_privileged "$POLICY" "X=1 gh pr merge --repo acme/widgets --squash"
+check_str "denied: raw string same production executable with unapproved target" deny "$POLICY" "/abs/deploy --target production"
+check_str "allowed: raw string exact production deploy_argv match" allow "$POLICY" "/abs/deploy --target pine"
+
 # --- clearly non-privileged -----------------------------------------------------------
 
 check "not_privileged: ls" not_privileged "$POLICY" -- ls -la
 check "not_privileged: cat file" not_privileged "$POLICY" -- cat somefile.txt
+
+# --- controller audit: config-override / identity / fail-open regressions -----------------------------------------------------------
+
+check "denied: git --config-env override" deny "$POLICY" -- git --config-env=remote.origin.pushurl=EVIL -C "$REPO" push origin
+check "unknown_privileged: git unrecognized subcommand (alias/external)" unknown_privileged "$POLICY" -- git -C "$REPO" dangerous-alias
+check "not_privileged: git rev-parse remains read-only" not_privileged "$POLICY" -- git -C "$REPO" rev-parse HEAD
+check "unknown_privileged: git remote is not on the read-only allowlist" unknown_privileged "$POLICY" -- git -C "$REPO" remote set-url origin http://evil
+
+check "allowed: command-wrapped gh pr merge resolves transparently to the real gh identity" allow "$POLICY" -- command gh pr merge --repo acme/widgets --squash
+check "allowed: exec-wrapped gh pr merge resolves transparently to the real gh identity" allow "$POLICY" -- exec gh pr merge --repo acme/widgets --squash
+check "denied: command-wrapped gh pr merge still denies when policy denies" deny "$POLICY_DENY" -- command gh pr merge --repo acme/widgets --squash
+check "allowed: absolute path /usr/bin/gh resolves to the same gh identity" allow "$POLICY" -- /usr/bin/gh pr create --repo acme/widgets --title t --body b
+check "allowed: absolute path git identity resolves the same as bare git" allow "$POLICY" -- /usr/bin/git -C "$REPO" commit -m msg
+
+check "unknown_privileged: gh api mutation is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh api -X DELETE repos/acme/widgets/git/refs/heads/main
+check "unknown_privileged: gh issue close is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh issue close 1 --repo acme/widgets
+check "allowed: gh -R before the subcommand (global option reordering) still resolves pr merge" allow "$POLICY" -- gh -R acme/widgets pr merge 1
+check "not_privileged: gh repo view remains read-only" not_privileged "$POLICY" -- gh repo view
+
+check_str "unknown_privileged: quoted assignment value with embedded whitespace must fail closed, not misparse" unknown_privileged "$POLICY" 'X="a b" gh pr merge 1 --repo acme/widgets'
+check_str "unknown_privileged: quoted command name must fail closed, not misparse" unknown_privileged "$POLICY" '"gh" pr merge --repo acme/widgets --squash'
+check_str "allowed: unquoted simple commands are unaffected by the quote fail-closed rule" allow "$POLICY" "git -C $REPO commit -m msg"
+
+check_str "unknown_privileged: background (&) control syntax must fail closed, not misparse as two segments" unknown_privileged "$POLICY" "ls -la & gh pr merge 1 --repo acme/widgets"
+check_str "unknown_privileged: if/then/fi control syntax must fail closed" unknown_privileged "$POLICY" "if true; then gh pr merge 1 --repo acme/widgets; fi"
+check_str "allowed: && chained segments are unaffected by the control-syntax fail-closed rule" allow "$POLICY" "git -C $REPO commit -m msg && git -C $REPO commit -m msg2"
 
 echo
 if [ "$FAILED" -eq 0 ]; then

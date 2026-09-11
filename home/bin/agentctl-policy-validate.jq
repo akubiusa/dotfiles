@@ -104,6 +104,10 @@ def remotes_errors:
           | if $unknown > 0 then
               ["scope.remotes entries reference a repository_id not present in scope.repositories"]
             else [] end)
+       + (($rs | map(select((.repository_id // null) | is_nonempty_str) | select((.name // null) | is_nonempty_str) | ((.repository_id) + "\u0000" + (.name)))) as $keys
+          | if ($keys | unique | length) != ($keys | length) then
+              ["scope.remotes must not contain duplicate (repository_id,name) identities"]
+            else [] end)
        + (($rs | map(.push_url // empty) | map(select(is_nonempty_str))) as $urls
           | if ($urls | unique | length) != ($urls | length) then
               ["scope.remotes must not contain duplicate push_url"]

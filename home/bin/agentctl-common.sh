@@ -665,6 +665,12 @@ agentctl_deliver_body() {
 
 AGENTCTL_LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+agentctl_policy_path_is_canonical() {
+  local path="$1" canonical
+  canonical=$(realpath -m -- "$path" 2>/dev/null) || return 1
+  [ "$canonical" = "$path" ]
+}
+
 # 標準出力に canonical policy JSON を返す。不正なら stderr にエラー一覧を出して exit 1 (fail closed)。
 agentctl_validate_policy_file() {
   local policy_file="$1" result ok
@@ -679,7 +685,18 @@ agentctl_validate_policy_file() {
     echo "$result" | jq -r '.errors[]' | sed 's/^/  - /' >&2
     exit 2
   fi
-  echo "$result" | jq -c '.policy'
+
+  local policy_json path
+  policy_json=$(echo "$result" | jq -c '.policy')
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! agentctl_policy_path_is_canonical "$path"; then
+      echo "agentctl: policy validation failed:" >&2
+      echo "  - repository/worktree scope path must already be canonical: $path" >&2
+      exit 2
+    fi
+  done < <(echo "$policy_json" | jq -r '.scope.repositories[] | .git_common_dir, (.allowed_worktree_roots[]?)')
+  echo "$policy_json"
 }
 
 agentctl_policy_digest() {

@@ -429,14 +429,14 @@ agentctl_policy_dispatcher_is_codex_operation_read() {
   return 1
 }
 
-# dispatcher プロセス自身の実環境から GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_*
-# (GIT_CONFIG_COUNT/GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> を含む) を集め、
-# agentctl_classify_shell_command_string の --env と同じ "K=V,K=V" 形式で返す。
+# dispatcher プロセス自身の実環境から Git/GitHub identity を変え得る override
+# (GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_* と GH_HOST) を集め、classifier の --env
+# と同じ "K=V,K=V" 形式で返す。
 agentctl_policy_dispatcher_inherited_git_env_csv() {
   local var csv=""
   while IFS= read -r var; do
     case "$var" in
-      GIT_DIR|GIT_WORK_TREE|GIT_CONFIG_*)
+      GIT_DIR|GIT_WORK_TREE|GIT_CONFIG_*|GH_HOST)
         csv="${csv}${var}=${!var},"
         ;;
     esac

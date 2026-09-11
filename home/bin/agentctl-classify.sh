@@ -24,18 +24,28 @@ agentctl_classify_is_abs_path() {
 }
 
 
+agentctl_classify_resolve_trusted_tool_path() {
+  local found
+  found=$(command -v -- "$1" 2>/dev/null) || return 1
+  [[ "$found" == /* ]] || return 1
+  realpath -e -- "$found" 2>/dev/null
+}
+
+# Capture the backend/hook process' initial tool identities once. Raw shell parsing below
+# rejects command-resolution state changes before a privileged operation, so a later PATH
+# mutation cannot silently redefine what bare `git`/`gh` means.
+AGENTCTL_CLASSIFY_TRUSTED_GIT_PATH=$(agentctl_classify_resolve_trusted_tool_path git 2>/dev/null || true)
+AGENTCTL_CLASSIFY_TRUSTED_GH_PATH=$(agentctl_classify_resolve_trusted_tool_path gh 2>/dev/null || true)
+
+
 # Resolve argv tokens that are genuinely the Git/GitHub CLI executable. Bare `git`/`gh`
 # are the canonical direct forms. Alternate paths/names are accepted only when they resolve
 # to the same executable (or a byte-identical copy); an executable merely named git/gh is
 # ambiguous and must fail closed rather than inheriting privileged-tool semantics.
 # stdout: git | gh | __ambiguous_privileged__ ; no output/rc=1 when unrelated.
 agentctl_classify_known_tool_identity() {
-  local invoked="$1" resolved="" tool trusted trusted_resolved base
+  local invoked="$1" resolved="" tool trusted_resolved base
   base=$(basename -- "$invoked")
-
-  case "$invoked" in
-    git|gh) printf '%s' "$invoked"; return 0 ;;
-  esac
 
   if [[ "$invoked" == */* ]]; then
     resolved=$(realpath -e -- "$invoked" 2>/dev/null) || {
@@ -49,9 +59,11 @@ agentctl_classify_known_tool_identity() {
   fi
 
   for tool in git gh; do
-    trusted=$(command -v -- "$tool" 2>/dev/null) || continue
-    [[ "$trusted" == /* ]] || continue
-    trusted_resolved=$(realpath -e -- "$trusted" 2>/dev/null) || continue
+    case "$tool" in
+      git) trusted_resolved="$AGENTCTL_CLASSIFY_TRUSTED_GIT_PATH" ;;
+      gh) trusted_resolved="$AGENTCTL_CLASSIFY_TRUSTED_GH_PATH" ;;
+    esac
+    [ -n "$trusted_resolved" ] || continue
     if [ "$resolved" = "$trusted_resolved" ]; then
       printf '%s' "$tool"; return 0
     fi
@@ -154,7 +166,11 @@ agentctl_classify_git() {
         break
         ;;
       -*)
-        : # 未知 global option。subcommand ではないので読み飛ばす。
+        # v1 の privileged Git は `git -C <abs> <subcommand> ...` の direct
+        # simple-command form だけを許可する。未知 global option は argv の
+        # 解釈/identity を変え得るため privileged では deny、read-only でも
+        # unknown_privileged に落とす。
+        bad_override=1
         ;;
       *)
         subcommand="$a"
@@ -264,9 +280,10 @@ agentctl_classify_git() {
       local remote_name="" saw_delete_flag=0 positional_count=0 a
       for a in "${rest[@]}"; do
         case "$a" in
-          --force|-f|--force-with-lease*|+*|--mirror) echo "deny"; return 0 ;; # --mirror は force-update/削除を伴い得るため force-push 同様に無条件 deny
-          --delete|-d|--prune) saw_delete_flag=1 ;; # --prune はリモート ref を削除し得るため remote-delete と同じ git_cleanup 判定に載せる
-          -*) : ;;
+          --force|-f|--force-with-lease*|--force-if-includes|+*|--mirror) echo "deny"; return 0 ;; # force-update/削除を伴い得る form は無条件 deny
+          --delete|-d|--prune) saw_delete_flag=1 ;; # remote ref を削除し得るため git_cleanup 判定に載せる
+          -u|--set-upstream|--dry-run|--porcelain|--atomic|--follow-tags|--tags|--all|-q|--quiet|-v|--verbose) : ;;
+          -*) echo "deny"; return 0 ;; # operand を取る option を含め、未分類 option は remote/refspec parsing を曖昧にする
           *://*|*@*:*) echo "deny"; return 0 ;; # URL 直指定
           *)
             positional_count=$((positional_count+1))
@@ -343,22 +360,26 @@ agentctl_classify_gh() {
   # global option なので、まず取り除いた「subcommand 列」を作ってから
   # sub/sub2 を判定する (`gh -R owner/repo pr merge` のような並び替えで
   # sub が "-R" になり判定をすり抜けるのを防ぐ)。
-  local repo="" filtered=() i=0 a
+  local repo="" filtered=() i=0 a repo_count=0 hostname_seen=0
   while [ "$i" -lt "${#args[@]}" ]; do
     a="${args[$i]}"
     case "$a" in
       -R|--repo)
+        repo_count=$((repo_count + 1))
         repo="${args[$((i + 1))]:-}"
         i=$((i + 2))
         ;;
       --repo=*)
+        repo_count=$((repo_count + 1))
         repo="${a#--repo=}"
         i=$((i + 1))
         ;;
       --hostname)
+        hostname_seen=1
         i=$((i + 2))
         ;;
       --hostname=*)
+        hostname_seen=1
         i=$((i + 1))
         ;;
       *)
@@ -377,7 +398,8 @@ agentctl_classify_gh() {
     echo "unknown_privileged"; return 0
   fi
 
-  [ -n "$repo" ] || { echo "deny"; return 0; }
+  [ "$hostname_seen" -eq 0 ] || { echo "deny"; return 0; }
+  [ "$repo_count" -eq 1 ] && [ -n "$repo" ] || { echo "deny"; return 0; }
 
   local perm_key
   [ "$sub2" = "create" ] && perm_key="create_pr" || perm_key="merge"
@@ -503,7 +525,12 @@ agentctl_classify_command() {
   fi
 
   if [ "${#argv[@]}" -eq 0 ]; then
-    echo "not_privileged"; return 0
+    if [ "${#prefix_assignments[@]}" -gt 0 ]; then
+      echo "unknown_privileged"
+    else
+      echo "not_privileged"
+    fi
+    return 0
   fi
 
   # 実際の assignment の有無に関わらず env wrapper 経由 (had_env_prefix=1) を
@@ -521,11 +548,14 @@ agentctl_classify_command() {
   case "$tool_identity" in
     git) agentctl_classify_git "$policy_json" "$env_csv" "$had_env_prefix" "${argv[@]:1}"; return 0 ;;
     gh)
-      # gh には git の GIT_DIR 等のような既知の危険 key allowlist が無いため、
-      # 先頭に何らかの env prefix (`X=1 gh ...` 等) が付いた時点で static に
-      # 安全と判定できるものはなく fail closed する。
+      # gh mutation の repository host は ambient GH_HOST でも変えられる。明示
+      # prefix は従来どおり unresolved、hook process から継承した GH_HOST は
+      # canonical github_repo identity を別 host へ向け得るため deny する。
       if [ "$had_env_prefix" -eq 1 ]; then
         echo "unknown_privileged"; return 0
+      fi
+      if [[ ",$env_csv," == *,GH_HOST=* ]]; then
+        echo "deny"; return 0
       fi
       agentctl_classify_gh "$policy_json" "${argv[@]:1}"; return 0 ;;
     __ambiguous_privileged__)
@@ -534,16 +564,14 @@ agentctl_classify_command() {
     "") : ;;
   esac
 
-  case "$cmd0_base" in
+  # Only literal shell builtins are transparent wrappers. An executable merely named
+  # command/exec must never inherit builtin semantics. Options alter lookup/process state,
+  # so keep the transparent form intentionally minimal: `command CMD...` / `exec CMD...`.
+  case "${argv[0]}" in
     command|exec)
-      # 実行 wrapper はラップ先コマンドの identity をそのまま引き継ぐ (かつ
-      # 隠蔽もしない) ため、wrapper token (と `command` の場合のみ leading
-      # option) を剥がして再帰する。
       local rest=("${argv[@]:1}")
-      if [ "$cmd0_base" = "command" ]; then
-        while [ "${#rest[@]}" -gt 0 ] && [[ "${rest[0]}" == -* ]]; do
-          rest=("${rest[@]:1}")
-        done
+      if [ "${#rest[@]}" -eq 0 ] || [[ "${rest[0]}" == -* ]]; then
+        echo "unknown_privileged"; return 0
       fi
       local fwd=(--env "$env_csv")
       [ "$had_env_prefix" -eq 1 ] && fwd+=(--force-env-prefix)
@@ -551,9 +579,6 @@ agentctl_classify_command() {
       return 0
       ;;
     env)
-      # `env ARGS... [NAME=VALUE...] COMMAND...` は assignment が 0 件でも
-      # privileged な git 呼び出しの identity を隠蔽し得るため
-      # (v8 design.md:112ff)、force-env-prefix を立てて再帰する。
       local rest=("${argv[@]:1}")
       while [ "${#rest[@]}" -gt 0 ] && [[ "${rest[0]}" == -* ]]; do
         rest=("${rest[@]:1}")
@@ -565,11 +590,23 @@ agentctl_classify_command() {
       return 0
       ;;
     sh|bash|zsh|eval|source|.)
-      # Shell interpreter/eval/source wrappers can execute privileged operations whose
-      # contents are not represented by this argv. Treat the wrapper itself as an
-      # unresolved privileged form; do not infer safety from visible tokens alone.
-      echo "unknown_privileged"
-      return 0
+      echo "unknown_privileged"; return 0
+      ;;
+    export|unset|alias|unalias|hash|enable|builtin|declare|typeset|local|readonly|set|shopt|trap|read|mapfile|readarray|let)
+      echo "unknown_privileged"; return 0
+      ;;
+    printf)
+      if [ "${argv[1]:-}" = "-v" ]; then
+        echo "unknown_privileged"; return 0
+      fi
+      ;;
+  esac
+
+  # Alternate paths/names with wrapper-like basenames are not shell builtins. Shell
+  # interpreters/source/env remain unresolved privileged forms even when invoked by path.
+  case "$cmd0_base" in
+    command|exec|env|sh|bash|zsh|eval|source)
+      echo "unknown_privileged"; return 0
       ;;
     *)
       # A generic wrapper whose argv explicitly contains a known/ambiguous git/gh
@@ -606,6 +643,11 @@ agentctl_classify_shell_command_string() {
     env_csv="$2"; shift 2
   fi
   local command_string="$1"
+
+  case "$command_string" in
+    *$'\n'*|*$'\r'*)
+      echo "unknown_privileged"; return 0 ;;
+  esac
 
   # shellcheck disable=SC2016
   case "$command_string" in

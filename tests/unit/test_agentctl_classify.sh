@@ -64,9 +64,12 @@ check "denied: URL direct push" deny "$POLICY" -- git -C "$REPO" push git@github
 check "denied: force push --force" deny "$POLICY" -- git -C "$REPO" push --force origin
 check "denied: force push -f" deny "$POLICY" -- git -C "$REPO" push -f origin
 check "denied: force push --force-with-lease" deny "$POLICY" -- git -C "$REPO" push --force-with-lease origin
+check "denied: push option with a separate operand cannot shift the classified remote" deny "$POLICY" -- git -C "$REPO" push --receive-pack origin evil
+check "allowed: push -u keeps an explicit allowed remote" allow "$POLICY" -- git -C "$REPO" push -u origin main
 check "denied: git --git-dir override" deny "$POLICY" -- git --git-dir="$GIT_COMMON_DIR" push origin
 check "denied: git --work-tree override" deny "$POLICY" -- git --work-tree="$REPO" -C "$REPO" push origin
 check "denied: git -c override" deny "$POLICY" -- git -c user.name=x -C "$REPO" push origin
+check "denied: unknown Git global option before -C is outside the direct simple-command contract" deny "$POLICY" -- git --exec-path=/tmp -C "$REPO" commit -m msg
 check "denied: GIT_DIR env override" deny "$POLICY" --env "GIT_DIR=$GIT_COMMON_DIR" -- git -C "$REPO" push origin
 check "denied: push permission=false" deny "$POLICY_DENY" -- git -C "$REPO" push origin
 check "denied: remote delete without git_cleanup" deny "$(echo "$POLICY" | jq '.permissions.git_cleanup=false')" -- git -C "$REPO" push origin --delete some-branch
@@ -98,6 +101,8 @@ check "allowed: gh pr create --repo OWNER/REPO" allow "$POLICY" -- gh pr create 
 check "denied: gh pr create without --repo" deny "$POLICY" -- gh pr create --title t --body b
 check "denied: gh pr merge --repo (permission=false)" deny "$POLICY_DENY" -- gh pr merge --repo acme/widgets --squash
 check "allowed: gh pr merge -R OWNER/REPO" allow "$POLICY" -- gh pr merge -R acme/widgets --squash
+check "denied: gh mutation with --hostname is outside the canonical GitHub identity" deny "$POLICY" -- gh --hostname evil.example pr merge --repo acme/widgets --squash
+check "denied: gh mutation with duplicate --repo selectors is ambiguous" deny "$POLICY" -- gh pr merge --repo other/repo --repo acme/widgets --squash
 check "not_privileged: gh repo view" not_privileged "$POLICY" -- gh repo view
 
 # --- shell wrapper / eval -----------------------------------------------------------
@@ -171,6 +176,11 @@ check_str "unknown_privileged: brace expansion fails closed" unknown_privileged 
 check_str "unknown_privileged: tilde expansion fails closed" unknown_privileged "$POLICY" '~/bin/git -C /tmp/repo push origin'
 check_str "unknown_privileged: raw source builtin fails closed" unknown_privileged "$POLICY" 'source ./script.sh'
 check_str "unknown_privileged: raw dot/source builtin fails closed" unknown_privileged "$POLICY" '. ./script.sh'
+check_str "unknown_privileged: standalone PATH assignment before Git fails closed" unknown_privileged "$POLICY" "PATH=/tmp; git -C $REPO commit -m msg"
+check_str "unknown_privileged: export PATH before Git fails closed" unknown_privileged "$POLICY" "export PATH=/tmp; git -C $REPO commit -m msg"
+check_str "unknown_privileged: hash command-resolution mutation before Git fails closed" unknown_privileged "$POLICY" "hash -p /tmp/git git; git -C $REPO commit -m msg"
+check_str "unknown_privileged: printf -v shell-state mutation before Git fails closed" unknown_privileged "$POLICY" "printf -v PATH /tmp; git -C $REPO commit -m msg"
+check_str "unknown_privileged: newline-separated shell script is not partially tokenized" unknown_privileged "$POLICY" $'ls -la\ngit -C /tmp/repo push origin'
 check_str "denied: chained segments with a denied git push" deny "$POLICY" "ls -la && git push origin"
 check_str "allowed: chained not_privileged + allowed git commit" allow "$POLICY" "ls -la && git -C $REPO commit -m msg"
 check_str "not_privileged: chained clearly non-privileged segments" not_privileged "$POLICY" "ls -la; cat foo.txt"
@@ -215,7 +225,21 @@ printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/tool-identity/git"
 chmod +x "$WORKROOT/tool-identity/git"
 check "denied: renamed byte-identical Git binary cannot bypass force-push policy" deny "$POLICY" -- "$WORKROOT/tool-identity/gcopy" -C "$REPO" push --force origin
 check "unknown_privileged: unrelated executable merely named git fails closed" unknown_privileged "$POLICY" -- "$WORKROOT/tool-identity/git" -C "$REPO" push origin
+FAKE_PATH_DIR="$WORKROOT/fake-path"
+mkdir -p "$FAKE_PATH_DIR"
+cp "$WORKROOT/tool-identity/git" "$FAKE_PATH_DIR/git"
+FAKE_PATH_RESULT=$(PATH="$FAKE_PATH_DIR:$PATH" agentctl_classify_command "$POLICY" -- git -C "$REPO" commit -m msg)
+[ "$FAKE_PATH_RESULT" = "unknown_privileged" ] \
+  && pass "bare git resolves against the captured trusted executable and rejects a later PATH replacement" \
+  || fail "bare git under a replaced PATH must fail closed (got $FAKE_PATH_RESULT)"
 check "unknown_privileged: generic wrapper containing direct git mutation is not treated as unrelated" unknown_privileged "$POLICY" -- timeout 5 git -C "$REPO" push origin
+printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/tool-identity/command"
+printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/tool-identity/exec"
+printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/tool-identity/env"
+chmod +x "$WORKROOT/tool-identity/command" "$WORKROOT/tool-identity/exec" "$WORKROOT/tool-identity/env"
+check "unknown_privileged: executable merely named command is not treated as shell builtin wrapper" unknown_privileged "$POLICY" -- "$WORKROOT/tool-identity/command" git -C "$REPO" commit -m msg
+check "unknown_privileged: executable merely named exec is not treated as shell builtin wrapper" unknown_privileged "$POLICY" -- "$WORKROOT/tool-identity/exec" git -C "$REPO" commit -m msg
+check "unknown_privileged: executable merely named env is not treated as env wrapper" unknown_privileged "$POLICY" -- "$WORKROOT/tool-identity/env" git -C "$REPO" commit -m msg
 
 check "unknown_privileged: gh api mutation is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh api -X DELETE repos/acme/widgets/git/refs/heads/main
 check "unknown_privileged: gh issue close is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh issue close 1 --repo acme/widgets

@@ -354,6 +354,14 @@ OUT=$(FOO="bar" AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1
 [ -z "$OUT" ] && pass "ordinary inherited env (non-Git-override) does not affect classification -> no-op" \
   || fail "expected no-op unaffected by ordinary inherited env, got: $OUT"
 
+GH_POLICY_FILE="$WORKROOT/gh-policy.snapshot.json"
+jq '.permissions.merge=true' "$POLICY_FILE" >"$GH_POLICY_FILE"
+GH_POLICY_DIGEST=$(jq -S -c . "$GH_POLICY_FILE" | sha256sum | awk '{print "sha256:" $1}')
+OUT=$(GH_HOST="evil.example" AGENTCTL_POLICY_SNAPSHOT="$GH_POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$GH_POLICY_DIGEST" run_dispatcher "gh pr merge --repo acme/widgets --squash")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "inherited GH_HOST env cannot redirect an otherwise-allowed GitHub mutation" \
+  || fail "expected deny for inherited GH_HOST override, got: $OUT"
+
 # --- Fix #8: schema/runtime ownership marker fail-closed hardening -----------------------------------------------------------
 
 OUT=$(TMUX_PANE="" AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$POLICY_DIGEST" run_dispatcher "ls")

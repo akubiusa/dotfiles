@@ -77,6 +77,22 @@ valid_policy >"$POLICY_OK"
 POLICY_BAD="$WORKROOT/policy-bad.json"
 echo "{\"version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"scope\":{\"repositories\":[{\"id\":\"primary\",\"git_common_dir\":\"relative/path\",\"github_repo\":\"acme/widgets\",\"allowed_worktree_roots\":[]}],\"remotes\":[],\"production_targets\":[]}}" >"$POLICY_BAD"
 
+POLICY_DUP_REMOTE="$WORKROOT/policy-dup-remote.json"
+jq --arg gcd "$REPO_FIXTURE/.git" --arg root "$WORKROOT/worktree" -n   '{version:1,permissions:{local_write:true,commit:false,push:false,create_pr:false,merge:false,git_cleanup:false,deploy:false,production_verify:false},scope:{repositories:[{id:"primary",git_common_dir:$gcd,github_repo:"acme/widgets",allowed_worktree_roots:[$root]}],remotes:[{repository_id:"primary",name:"origin",push_url:"git@example/a"},{repository_id:"primary",name:"origin",push_url:"git@example/b"}],production_targets:[]}}' >"$POLICY_DUP_REMOTE"
+if (agentctl_validate_policy_file "$POLICY_DUP_REMOTE" >/dev/null 2>&1); then
+  fail "policy validator must reject duplicate (repository_id,name) remote identities"
+else
+  pass "policy validator rejects duplicate (repository_id,name) remote identities"
+fi
+
+POLICY_NONCANON="$WORKROOT/policy-noncanonical.json"
+jq --arg gcd "$REPO_FIXTURE/../repo/.git" --arg root "$WORKROOT/worktree/../worktree" -n   '{version:1,permissions:{local_write:true,commit:false,push:false,create_pr:false,merge:false,git_cleanup:false,deploy:false,production_verify:false},scope:{repositories:[{id:"primary",git_common_dir:$gcd,github_repo:"acme/widgets",allowed_worktree_roots:[$root]}],remotes:[],production_targets:[]}}' >"$POLICY_NONCANON"
+if (agentctl_validate_policy_file "$POLICY_NONCANON" >/dev/null 2>&1); then
+  fail "policy validator must reject non-canonical repository/worktree paths"
+else
+  pass "policy validator rejects non-canonical repository/worktree paths"
+fi
+
 if bash "$AGENTCTL" start --name t1 --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_BAD" --mission-stdin <<<"mission" 2>/tmp/agentctl-t1-err; then
   fail "start with invalid policy (relative path) should fail closed"
 else

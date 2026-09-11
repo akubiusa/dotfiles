@@ -564,27 +564,11 @@ agentctl_classify_command() {
       agentctl_classify_command "$policy_json" --env "$env_csv" --force-env-prefix -- "${rest[@]}"
       return 0
       ;;
-    sh|bash|zsh|eval)
-      # 静的に privileged operation の identity を一意解決できないラッパー形式。
-      # git/gh らしき token、または policy の production_targets 実行ファイルを
-      # 含むなら fail closed、そうでなければ通す (production target の
-      # deploy_argv/verify_argv は任意の executable path であり得るため、
-      # git/gh のような固定 literal では拾えない)。
-      local joined="${argv[*]}"
-      local prod_exec found_prod_exec=""
-      while IFS= read -r prod_exec; do
-        [ -n "$prod_exec" ] || continue
-        if echo "$joined" | grep -qF -- "$prod_exec"; then
-          found_prod_exec=1
-          break
-        fi
-      done < <(echo "$policy_json" | jq -r \
-        '[(.scope.production_targets // [])[] | ((.deploy_argv // []) + (.verify_argv // []))[] | .[0]?] | unique | .[]?')
-      if echo "$joined" | grep -qE '(^|[^a-zA-Z0-9_])(git|gh)([[:space:]]|$)' || [ -n "$found_prod_exec" ]; then
-        echo "unknown_privileged"
-      else
-        echo "not_privileged"
-      fi
+    sh|bash|zsh|eval|source|.)
+      # Shell interpreter/eval/source wrappers can execute privileged operations whose
+      # contents are not represented by this argv. Treat the wrapper itself as an
+      # unresolved privileged form; do not infer safety from visible tokens alone.
+      echo "unknown_privileged"
       return 0
       ;;
     *)
@@ -626,6 +610,15 @@ agentctl_classify_shell_command_string() {
   # shellcheck disable=SC2016
   case "$command_string" in
     *'$('*|*'`'*|*'<('*|*'>('*)
+      echo "unknown_privileged"; return 0 ;;
+  esac
+
+  # Parameter/pathname/brace/tilde expansion is performed by the shell after this
+  # parser sees the raw command string. Because expansion can synthesize a privileged
+  # executable/argument that is absent from the visible tokens, reject any such syntax
+  # rather than attempting partial shell evaluation here.
+  case "$command_string" in
+    *'$'*|*'*'*|*'?'*|*'['*|*'{'*|*'}'*|*'~'*)
       echo "unknown_privileged"; return 0 ;;
   esac
 

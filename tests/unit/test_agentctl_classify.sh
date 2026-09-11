@@ -103,7 +103,9 @@ check "not_privileged: gh repo view" not_privileged "$POLICY" -- gh repo view
 # --- shell wrapper / eval -----------------------------------------------------------
 
 check "unknown_privileged: bash -c wrapping git push" unknown_privileged "$POLICY" -- bash -c "git -C $REPO push origin"
-check "not_privileged: bash -c unrelated command" not_privileged "$POLICY" -- bash -c "ls -la"
+check "unknown_privileged: shell interpreter wrapper is fail-closed even when its script text looks unrelated" unknown_privileged "$POLICY" -- bash -c "ls -la"
+check "unknown_privileged: source builtin is fail-closed because sourced file contents are not statically classified" unknown_privileged "$POLICY" -- source ./script.sh
+check "unknown_privileged: dot/source builtin is fail-closed because sourced file contents are not statically classified" unknown_privileged "$POLICY" -- . ./script.sh
 check "unknown_privileged: eval wrapping gh pr merge" unknown_privileged "$POLICY" -- eval "gh pr merge --repo acme/widgets"
 
 # --- production deploy -----------------------------------------------------------
@@ -161,6 +163,14 @@ check_str "denied: plain string form of git push (no -C)" deny "$POLICY" "git pu
 check_str "not_privileged: plain string ls -la" not_privileged "$POLICY" "ls -la"
 check_str "unknown_privileged: command substitution" unknown_privileged "$POLICY" "echo \$(git -C $REPO push origin)"
 check_str "unknown_privileged: backtick substitution" unknown_privileged "$POLICY" 'echo `whoami`'
+check_str "unknown_privileged: parameter expansion that can synthesize a command name fails closed" unknown_privileged "$POLICY" 'G=git; $G -C /tmp/repo push origin'
+check_str "unknown_privileged: braced parameter expansion fails closed" unknown_privileged "$POLICY" 'echo ${HOME}'
+check_str "unknown_privileged: pathname glob expansion fails closed" unknown_privileged "$POLICY" 'g* -C /tmp/repo push origin'
+check_str "unknown_privileged: brace expansion fails closed" unknown_privileged "$POLICY" 'g{it,h} -C /tmp/repo push origin'
+# shellcheck disable=SC2088  # literal raw shell input; expansion must be classified, not performed by this test shell.
+check_str "unknown_privileged: tilde expansion fails closed" unknown_privileged "$POLICY" '~/bin/git -C /tmp/repo push origin'
+check_str "unknown_privileged: raw source builtin fails closed" unknown_privileged "$POLICY" 'source ./script.sh'
+check_str "unknown_privileged: raw dot/source builtin fails closed" unknown_privileged "$POLICY" '. ./script.sh'
 check_str "denied: chained segments with a denied git push" deny "$POLICY" "ls -la && git push origin"
 check_str "allowed: chained not_privileged + allowed git commit" allow "$POLICY" "ls -la && git -C $REPO commit -m msg"
 check_str "not_privileged: chained clearly non-privileged segments" not_privileged "$POLICY" "ls -la; cat foo.txt"

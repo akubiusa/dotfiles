@@ -188,8 +188,24 @@ check "unknown_privileged: git remote is not on the read-only allowlist" unknown
 check "allowed: command-wrapped gh pr merge resolves transparently to the real gh identity" allow "$POLICY" -- command gh pr merge --repo acme/widgets --squash
 check "allowed: exec-wrapped gh pr merge resolves transparently to the real gh identity" allow "$POLICY" -- exec gh pr merge --repo acme/widgets --squash
 check "denied: command-wrapped gh pr merge still denies when policy denies" deny "$POLICY_DENY" -- command gh pr merge --repo acme/widgets --squash
-check "allowed: absolute path /usr/bin/gh resolves to the same gh identity" allow "$POLICY" -- /usr/bin/gh pr create --repo acme/widgets --title t --body b
+REAL_GH=$(command -v gh 2>/dev/null || true)
+if [ -n "$REAL_GH" ]; then
+  check "allowed: installed gh executable path resolves to the same gh identity" allow "$POLICY" -- "$REAL_GH" pr create --repo acme/widgets --title t --body b
+fi
 check "allowed: absolute path git identity resolves the same as bare git" allow "$POLICY" -- /usr/bin/git -C "$REPO" commit -m msg
+
+# privileged tool identity must not depend on argv[0] basename alone. A byte-identical
+# renamed copy is still the Git executable and must be classified as Git; a different
+# executable merely named `git` must fail closed rather than inherit Git privileges.
+mkdir -p "$WORKROOT/tool-identity"
+REAL_GIT=$(command -v git)
+cp "$REAL_GIT" "$WORKROOT/tool-identity/gcopy"
+chmod +x "$WORKROOT/tool-identity/gcopy"
+printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/tool-identity/git"
+chmod +x "$WORKROOT/tool-identity/git"
+check "denied: renamed byte-identical Git binary cannot bypass force-push policy" deny "$POLICY" -- "$WORKROOT/tool-identity/gcopy" -C "$REPO" push --force origin
+check "unknown_privileged: unrelated executable merely named git fails closed" unknown_privileged "$POLICY" -- "$WORKROOT/tool-identity/git" -C "$REPO" push origin
+check "unknown_privileged: generic wrapper containing direct git mutation is not treated as unrelated" unknown_privileged "$POLICY" -- timeout 5 git -C "$REPO" push origin
 
 check "unknown_privileged: gh api mutation is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh api -X DELETE repos/acme/widgets/git/refs/heads/main
 check "unknown_privileged: gh issue close is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh issue close 1 --repo acme/widgets
@@ -199,6 +215,7 @@ check "not_privileged: gh repo view remains read-only" not_privileged "$POLICY" 
 check_str "unknown_privileged: quoted assignment value with embedded whitespace must fail closed, not misparse" unknown_privileged "$POLICY" 'X="a b" gh pr merge 1 --repo acme/widgets'
 check_str "unknown_privileged: quoted command name must fail closed, not misparse" unknown_privileged "$POLICY" '"gh" pr merge --repo acme/widgets --squash'
 check_str "allowed: unquoted simple commands are unaffected by the quote fail-closed rule" allow "$POLICY" "git -C $REPO commit -m msg"
+check_str "unknown_privileged: raw generic wrapper around git mutation fails closed" unknown_privileged "$POLICY" "timeout 5 git -C $REPO push origin"
 
 check_str "unknown_privileged: background (&) control syntax must fail closed, not misparse as two segments" unknown_privileged "$POLICY" "ls -la & gh pr merge 1 --repo acme/widgets"
 check_str "unknown_privileged: if/then/fi control syntax must fail closed" unknown_privileged "$POLICY" "if true; then gh pr merge 1 --repo acme/widgets; fi"

@@ -23,6 +23,60 @@ agentctl_classify_is_abs_path() {
   case "$1" in /*) return 0 ;; *) return 1 ;; esac
 }
 
+
+# Resolve argv tokens that are genuinely the Git/GitHub CLI executable. Bare `git`/`gh`
+# are the canonical direct forms. Alternate paths/names are accepted only when they resolve
+# to the same executable (or a byte-identical copy); an executable merely named git/gh is
+# ambiguous and must fail closed rather than inheriting privileged-tool semantics.
+# stdout: git | gh | __ambiguous_privileged__ ; no output/rc=1 when unrelated.
+agentctl_classify_known_tool_identity() {
+  local invoked="$1" resolved="" tool trusted trusted_resolved base
+  base=$(basename -- "$invoked")
+
+  case "$invoked" in
+    git|gh) printf '%s' "$invoked"; return 0 ;;
+  esac
+
+  if [[ "$invoked" == */* ]]; then
+    resolved=$(realpath -e -- "$invoked" 2>/dev/null) || {
+      case "$base" in git|gh) echo "__ambiguous_privileged__"; return 0 ;; esac
+      return 1
+    }
+  else
+    resolved=$(command -v -- "$invoked" 2>/dev/null) || return 1
+    [[ "$resolved" == /* ]] || return 1
+    resolved=$(realpath -e -- "$resolved" 2>/dev/null) || return 1
+  fi
+
+  for tool in git gh; do
+    trusted=$(command -v -- "$tool" 2>/dev/null) || continue
+    [[ "$trusted" == /* ]] || continue
+    trusted_resolved=$(realpath -e -- "$trusted" 2>/dev/null) || continue
+    if [ "$resolved" = "$trusted_resolved" ]; then
+      printf '%s' "$tool"; return 0
+    fi
+    if [ -f "$resolved" ] && [ -f "$trusted_resolved" ]; then
+      if command -v cmp >/dev/null 2>&1; then
+        cmp -s -- "$resolved" "$trusted_resolved" && { printf '%s' "$tool"; return 0; }
+      elif command -v sha256sum >/dev/null 2>&1; then
+        local resolved_sha trusted_sha
+        resolved_sha=$(sha256sum -- "$resolved" 2>/dev/null | awk '{print $1}') || return 1
+        trusted_sha=$(sha256sum -- "$trusted_resolved" 2>/dev/null | awk '{print $1}') || return 1
+        [ "$resolved_sha" = "$trusted_sha" ] && { printf '%s' "$tool"; return 0; }
+      else
+        # Without a way to compare an alternate executable identity, do not silently
+        # classify an explicit alternate executable as unrelated.
+        echo "__ambiguous_privileged__"; return 0
+      fi
+    fi
+  done
+
+  case "$base" in
+    git|gh) echo "__ambiguous_privileged__"; return 0 ;;
+  esac
+  return 1
+}
+
 # --- git -----------------------------------------------------------
 
 # privileged な git subcommand の分類。permission 名を返す (commit/push/git_cleanup/worktree_add/remote_delete)。
@@ -458,13 +512,13 @@ agentctl_classify_command() {
   local had_env_prefix=0
   { [ "${#prefix_assignments[@]}" -gt 0 ] || [ "$force_env_prefix" -eq 1 ]; } && had_env_prefix=1
 
-  # 実行ラッパー/alternate path 越しでも git/gh/env/command/exec の identity を
-  # basename で一意解決する (`/usr/bin/gh`、`./bin/../bin/git` 等が bare 名前と
-  # 異なる分類に落ちないようにする)。
-  local cmd0_base
+  # git/gh は basename だけでは同一視しない。別名 copy/symlink は実 executable
+  # identity を照合し、単に git/gh という名前の別 executable は fail closed。
+  local cmd0_base tool_identity=""
   cmd0_base=$(basename -- "${argv[0]}")
+  tool_identity=$(agentctl_classify_known_tool_identity "${argv[0]}" 2>/dev/null) || tool_identity=""
 
-  case "$cmd0_base" in
+  case "$tool_identity" in
     git) agentctl_classify_git "$policy_json" "$env_csv" "$had_env_prefix" "${argv[@]:1}"; return 0 ;;
     gh)
       # gh には git の GIT_DIR 等のような既知の危険 key allowlist が無いため、
@@ -474,6 +528,13 @@ agentctl_classify_command() {
         echo "unknown_privileged"; return 0
       fi
       agentctl_classify_gh "$policy_json" "${argv[@]:1}"; return 0 ;;
+    __ambiguous_privileged__)
+      echo "unknown_privileged"; return 0
+      ;;
+    "") : ;;
+  esac
+
+  case "$cmd0_base" in
     command|exec)
       # 実行 wrapper はラップ先コマンドの identity をそのまま引き継ぐ (かつ
       # 隠蔽もしない) ため、wrapper token (と `command` の場合のみ leading
@@ -527,6 +588,17 @@ agentctl_classify_command() {
       return 0
       ;;
     *)
+      # A generic wrapper whose argv explicitly contains a known/ambiguous git/gh
+      # executable is not a direct simple-command privileged form. Do not let
+      # `timeout 5 git ...`, `nice /usr/bin/git ...`, xargs-style wrappers, etc.
+      # fall through as unrelated/nonprivileged commands.
+      local wrapped_token wrapped_identity
+      for wrapped_token in "${argv[@]:1}"; do
+        wrapped_identity=$(agentctl_classify_known_tool_identity "$wrapped_token" 2>/dev/null) || wrapped_identity=""
+        case "$wrapped_identity" in
+          git|gh|__ambiguous_privileged__) echo "unknown_privileged"; return 0 ;;
+        esac
+      done
       agentctl_classify_production "$policy_json" "${argv[@]}"
       return 0
       ;;

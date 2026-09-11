@@ -415,11 +415,9 @@ agentctl_policy_dispatcher_is_codex_operation_read() {
     # Codex 0.154.0 で実測した read-only shape。sed の上限行数は file/context
     # に応じて 240/260 等へ変化するため正の整数だけ許容し、それ以外の command
     # token と同一 operation-file operand の3回使用は完全一致を要求する。
-    # runtime path に空白等がある場合を壊さないよう Bash %q variant と、
-    # single-quote を含まない path の通常 single-quoted variant も同じ条件で許可する。
-    operand="$file"
-    agentctl_policy_dispatcher_matches_codex_operation_read_operand "$command_string" "$operand" && return 0
-
+    # runtime path に空白/metacharacter があっても raw unquoted operand は絶対に
+    # allow しない。Bash %q variant と、single-quote を含まない path の
+    # single-quoted variant だけを exact match する。
     printf -v escaped '%q' "$file"
     agentctl_policy_dispatcher_matches_codex_operation_read_operand "$command_string" "$escaped" && return 0
 

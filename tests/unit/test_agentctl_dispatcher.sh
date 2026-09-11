@@ -194,6 +194,38 @@ OUT=$(printf '%s\n' "$CODEX_OP_SED_EOF_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   && pass "bound Codex session allows exact sed read through EOF for its own operation file" \
   || fail "expected operation-file sed EOF read to pass, got: $OUT"
 
+
+# Raw, unquoted operation-file paths must never be accepted when the runtime path contains
+# shell metacharacters. Otherwise the exact allow exception itself can bless a command whose
+# operand triggers shell expansion/control syntax. The shell-escaped variant remains safe.
+META_RUNTIME="$WORKROOT/codex-runtime;\$(id)"
+mkdir -p "$META_RUNTIME"
+META_POLICY="$META_RUNTIME/policy.snapshot.json"
+cp "$POLICY_FILE" "$META_POLICY"
+META_OP="$META_RUNTIME/codex-op-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.txt"
+printf 'meta\n' >"$META_OP"
+META_RAW_CMD="sed -n '1,1p' $META_OP"
+META_ESCAPED=$(printf '%q' "$META_OP")
+META_ESCAPED_CMD="sed -n '1,1p' $META_ESCAPED"
+META_RAW_RESULT=$(AGENTCTL_POLICY_SNAPSHOT="$META_POLICY" bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  source '$REPO_ROOT/home/bin/agentctl-classify.sh'
+  source '$DISPATCHER'
+  if agentctl_policy_dispatcher_is_codex_operation_read \"\$1\"; then echo allow; else echo deny; fi
+" _ "$META_RAW_CMD")
+[ "$META_RAW_RESULT" = "deny" ] \
+  && pass "Codex operation-file raw path with shell metacharacters is never whitelisted" \
+  || fail "raw metacharacter operation-file path was whitelisted: $META_RAW_RESULT"
+META_ESCAPED_RESULT=$(AGENTCTL_POLICY_SNAPSHOT="$META_POLICY" bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  source '$REPO_ROOT/home/bin/agentctl-classify.sh'
+  source '$DISPATCHER'
+  if agentctl_policy_dispatcher_is_codex_operation_read \"\$1\"; then echo allow; else echo deny; fi
+" _ "$META_ESCAPED_CMD")
+[ "$META_ESCAPED_RESULT" = "allow" ] \
+  && pass "Codex operation-file shell-escaped metacharacter path remains a safe exact read" \
+  || fail "escaped metacharacter operation-file path should be allowed: $META_ESCAPED_RESULT"
+
 CODEX_OP_SED_EOF_EXTRA_CMD="$CODEX_OP_SED_EOF_CMD && git push origin"
 CODEX_OP_SED_EOF_EXTRA_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg cmd "$CODEX_OP_SED_EOF_EXTRA_CMD" \
   '{session_id:$sid,cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')

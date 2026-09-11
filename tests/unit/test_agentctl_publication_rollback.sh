@@ -54,6 +54,43 @@ else
   fail "sentinel rollback failed to restore predecessor state"
 fi
 
+# respawn 後の backend-ready failure は sentinel 未検証 backend を残さず rollback する。
+READY_ROLLBACK_MARKER="$WORKROOT/ready-rollback"
+agentctl_wait_backend_ready() { agentctl_die --code 5 "forced backend-ready failure"; }
+_rollback_failed_guard_generation() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >"$READY_ROLLBACK_MARKER"
+  return 0
+}
+set +e
+( _wait_backend_ready_or_rollback codex pane-test "$WORKROOT/runtime" session-test rt-test runtime-test "" ) \
+  >/dev/null 2>"$WORKROOT/ready-fail.err"
+RC=$?
+set -u
+if [ "$RC" -eq 5 ] && [ "$(cat "$READY_ROLLBACK_MARKER" 2>/dev/null)" = $'codex\tsession-test\trt-test\truntime-test' ]; then
+  pass "backend-ready failure after respawn rolls back the unverified generation before exit"
+else
+  fail "backend-ready failure did not rollback correctly (rc=$RC marker=$(cat "$READY_ROLLBACK_MARKER" 2>/dev/null || true))"
+fi
+
+# Codex pending registry publish failure も respawn 済み backend を rollback する。
+PENDING_ROLLBACK_MARKER="$WORKROOT/pending-rollback"
+agentctl_gen_runtime_id() { printf '%s\n' 'nonce-test'; }
+agentctl_codex_hook_publish_pending() { return 1; }
+_rollback_failed_guard_generation() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >"$PENDING_ROLLBACK_MARKER"
+  return 0
+}
+set +e
+( _prepare_codex_guard_pending_or_rollback session-test rt-test runtime-test "" "$WORKROOT/runtime" "$WORKROOT/policy.json" sha256:test "$WORKROOT/cwd" ) \
+  >/dev/null 2>"$WORKROOT/pending-fail.err"
+RC=$?
+set -u
+if [ "$RC" -eq 5 ] && [ "$(cat "$PENDING_ROLLBACK_MARKER" 2>/dev/null)" = $'codex\tsession-test\trt-test\truntime-test' ]; then
+  pass "Codex pending-binding failure after respawn rolls back the unverified generation"
+else
+  fail "Codex pending-binding failure did not rollback correctly (rc=$RC marker=$(cat "$PENDING_ROLLBACK_MARKER" 2>/dev/null || true))"
+fi
+
 if [ "$FAILED" -eq 0 ]; then
   echo "agentctl publication rollback tests: PASS"
 else

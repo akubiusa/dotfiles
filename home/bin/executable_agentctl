@@ -163,6 +163,31 @@ _rollback_failed_guard_generation() {
   fi
 }
 
+# real backend を respawn した後は sentinel 検証完了まで unverified generation として扱う。
+# readiness failure でも session/state を残さず、既存 rollback 経路で必ず回収する。
+_wait_backend_ready_or_rollback() {
+  local backend="$1" pane="$2" dir="$3" session="$4" name="$5" runtime_id="$6" predecessor_state_json="$7"
+  if ! ( agentctl_wait_backend_ready "$backend" "$pane" "$dir" ); then
+    _rollback_failed_guard_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json"
+    agentctl_die --code 5 "backend '$backend' did not become ready before guard sentinel verification; unverified generation rolled back"
+  fi
+}
+
+# Codex sentinel pending record の準備も respawn 後・sentinel 前の publication barrier に含める。
+# nonce生成/registry publish のどちらが失敗しても live backend を残さない。
+_prepare_codex_guard_pending_or_rollback() {
+  local session="$1" name="$2" runtime_id="$3" predecessor_state_json="$4" dir="$5" policy_snapshot_path="$6" policy_digest="$7" cwd="$8" nonce
+  if ! nonce=$(agentctl_gen_runtime_id); then
+    _rollback_failed_guard_generation codex "$session" "$name" "$runtime_id" "$predecessor_state_json"
+    agentctl_die --code 5 "failed to generate Codex guard sentinel nonce; unverified generation rolled back"
+  fi
+  if ! agentctl_codex_hook_publish_pending "$name" "$runtime_id" "$dir" "$policy_snapshot_path" "$policy_digest" "$cwd" "$nonce"; then
+    _rollback_failed_guard_generation codex "$session" "$name" "$runtime_id" "$predecessor_state_json"
+    agentctl_die --code 5 "failed to publish Codex guard sentinel binding; unverified generation rolled back"
+  fi
+  printf '%s' "$nonce"
+}
+
 # 新規 generation を publish する (start / resume 共通)。
 # spec の runtime publication barrier (starting state -> blocked bootstrap ->
 # owner marker -> release token) をここに一本化する。stdout に runtime_id を返す。
@@ -296,7 +321,7 @@ _publish_generation() {
   #     起動直後に paste+Enter すると Enter だけ失われ、後続 steer の paste+
   #     Enter が未 submit の initial mission と連結されて誤実行される race が
   #     起こり得るため、mission delivery の前に必ずこの barrier を通す。
-  agentctl_wait_backend_ready "$backend" "$pane" "$dir"
+  _wait_backend_ready_or_rollback "$backend" "$pane" "$dir" "$session" "$name" "$runtime_id" "$predecessor_state_json"
 
   # Codex interactive TUI の hook subprocess は respawn-pane の AGENTCTL_* env を
   # 継承しない。real sentinel turn の直前だけ HOME 固定 registry に、この generation
@@ -304,8 +329,7 @@ _publish_generation() {
   # marker の runtime_id + stable session_id を照合して session binding へ consume する。
   local sentinel_nonce=""
   if [ "$backend" = "codex" ]; then
-    sentinel_nonce=$(agentctl_gen_runtime_id)
-    agentctl_codex_hook_publish_pending "$name" "$runtime_id" "$dir" "$policy_snapshot_path" "$policy_digest" "$cwd" "$sentinel_nonce"
+    sentinel_nonce=$(_prepare_codex_guard_pending_or_rollback "$session" "$name" "$runtime_id" "$predecessor_state_json" "$dir" "$policy_snapshot_path" "$policy_digest" "$cwd")
   fi
 
   # 7a-2. guard startup verification: settings JSON を書いた/dispatcher

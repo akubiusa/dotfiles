@@ -137,21 +137,25 @@ RECONCILE=$(bash "$AGENTCTL" status --name e2ecodex --json 2>/dev/null | jq -r '
 # その結果がそれ単体の turn として正しく届く (=前の turn と混ざって欠落/破損
 # しない) ことを確認する。
 MARKER="codex-race-check-$$"
+# prompt 自体に含まれる marker を grep すると shell 実行なしでも偽陽性になる。
+# echo の出力を sha256sum した digest は prompt に存在しないため、その digest を
+# pane で観測して通常の許可 shell command が実際に PreToolUse を通過したことを証明する。
+MARKER_DIGEST=$(printf '%s\n' "$MARKER" | sha256sum | awk '{print $1}')
 bash "$AGENTCTL" steer --name e2ecodex --runtime-id "$RID" --stdin \
-  <<<"Run exactly this read-only command via the Bash tool and then stop: echo $MARKER" \
+  <<<"Run exactly this read-only command via the Bash tool and then stop: echo $MARKER | sha256sum" \
   >/dev/null
 
 MARKER_SEEN=0
 for _ in $(seq 1 60); do
   PANE_TEXT=$(bash "$AGENTCTL" logs --name e2ecodex --lines 400 2>/dev/null || true)
-  if echo "$PANE_TEXT" | grep -qF "$MARKER"; then
+  if echo "$PANE_TEXT" | grep -qF "$MARKER_DIGEST"; then
     MARKER_SEEN=1
     break
   fi
   sleep 2
 done
-[ "$MARKER_SEEN" -eq 1 ] && pass "a distinct follow-up turn after the guard sentinel's initial mission delivery is processed cleanly (no sentinel/mission turn corruption observed)" \
-  || fail "did not observe the distinct follow-up marker; the sentinel/mission delivery sequence may have corrupted subsequent turns"
+[ "$MARKER_SEEN" -eq 1 ] && pass "a distinct follow-up turn executes an ordinary allowed Bash command after guard sentinel verification" \
+  || fail "did not observe the derived shell-output digest; the follow-up command may have been denied or not executed"
 
 # `codex queue` が busy turn への steering ではなく本当に次 turn を作ったことを、
 # persisted rollout の user bootstrap turn_id で機械的に証明する。session_id は

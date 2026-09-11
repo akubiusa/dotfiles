@@ -10,6 +10,38 @@
 # (既存 Codex/Claude behavior を変えない)。agentctl runtime ではこれらの env や
 # jq 等の dependency 欠落・不一致を deny にする (fail-open にしない)。
 
+# PreToolUse payload から shell command を安全に抽出する。
+# Bash は既存 object shape、Codex exec は現行 TUI が生成する固定 JavaScript wrapper
+# の内側にある JSON object だけを受理する。JavaScript 自体は評価しない。
+agentctl_policy_dispatcher_extract_command_string() {
+  local tool_name="$1" input="$2" tool_input="" inner=""
+  case "$tool_name" in
+    Bash)
+      printf '%s' "$input" | jq -r '.tool_input.command // empty'
+      ;;
+    exec)
+      tool_input=$(printf '%s' "$input" | jq -er '.tool_input | select(type == "string" and length > 0)') || return 1
+      local prefix='const r = await tools.exec_command('
+      local suffix=$');\ntext(r.output);'
+      [[ "$tool_input" == "$prefix"*"$suffix" ]] || return 1
+      inner=${tool_input#"$prefix"}
+      inner=${inner%"$suffix"}
+      printf '%s' "$inner" | jq -e '
+        type == "object"
+        and (.cmd | type == "string" and length > 0)
+        and ((keys - ["cmd","max_output_tokens","workdir","yield_time_ms"]) | length == 0)
+        and ((has("workdir") | not) or (.workdir | type == "string"))
+        and ((has("yield_time_ms") | not) or (."yield_time_ms" | type == "number"))
+        and ((has("max_output_tokens") | not) or (."max_output_tokens" | type == "number"))
+      ' >/dev/null || return 1
+      printf '%s' "$inner" | jq -r '.cmd'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 agentctl_policy_dispatcher_main() {
   local input
   input=$(cat)
@@ -52,28 +84,35 @@ agentctl_policy_dispatcher_main() {
     sentinel_nonce=$(printf '%s' "$sentinel_marker_input" | cut -d: -f3)
   fi
 
-  if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
-    if [ -n "$sentinel_runtime_id" ]; then
-      if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id" "$sentinel_nonce"; then
-        agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-failed to bind Codex sentinel session}"
-        exit 0
-      fi
+  # nonce 付き Codex sentinel は ambient AGENTCTL_* の有無に関係なく session_id を
+  # binding する。Bash tool 経路では hook subprocess が env を継承する場合がある一方、
+  # 後続 `codex queue` は app-server session_id を必要とするため、sentinel 成功時に
+  # session binding が必ず存在することを publication invariant にする。
+  if [ -n "$sentinel_runtime_id" ]; then
+    if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id" "$sentinel_nonce"; then
+      agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-failed to bind Codex sentinel session}"
+      exit 0
+    fi
+    context_source="codex_session"
+  elif [ -n "$session_id" ]; then
+    if agentctl_policy_dispatcher_resolve_codex_session "$input"; then
+      # sentinel 後の interactive Codex は ambient AGENTCTL_* が残っていても binding を
+      # 優先する。これにより operation-file read と queue が同じ session generation を使う。
       context_source="codex_session"
-    elif [ -n "$session_id" ]; then
-      if agentctl_policy_dispatcher_resolve_codex_session "$input"; then
-        context_source="codex_session"
-      else
-        local resolve_rc=$?
-        if [ "$resolve_rc" -eq 3 ]; then
-          # binding の無い通常 Codex session は既存挙動を変えない。
-          exit 0
-        fi
+    else
+      local resolve_rc=$?
+      if [ "$resolve_rc" -ne 3 ]; then
         agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-invalid Codex agentctl session binding}"
         exit 0
       fi
-    else
-      exit 0
+      # binding の無い direct codex exec 等は ambient env があれば従来の env context、
+      # env も無ければ通常 session として no-op を維持する。
+      if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
+        exit 0
+      fi
     fi
+  elif [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
+    exit 0
   fi
 
   local deny_reason=""
@@ -128,18 +167,11 @@ agentctl_policy_dispatcher_main() {
       ;;
   esac
 
-  # "Bash" 以外の tool (code-mode の "exec" 等) は tool_input が
-  # 任意形状の値になり得 (Codex の JSON Schema 上も無型)、実行される shell command
-  # をクリーンな文字列として取り出せる保証が無い。取り出せない状態のまま
-  # 分類不能な特権操作を無条件 allow すると fail-open になるため、"Bash" 以外は
-  # 常に deny する (fail closed)。
-  if [ "$tool_name" != "Bash" ]; then
-    agentctl_policy_dispatcher_emit_deny "agentctl policy dispatcher cannot classify tool '$tool_name' calls (no reliable command text); denying by default (fail closed)"
+  local command_string
+  if ! command_string=$(agentctl_policy_dispatcher_extract_command_string "$tool_name" "$input"); then
+    agentctl_policy_dispatcher_emit_deny "agentctl policy dispatcher cannot classify tool '$tool_name' call shape; denying by default (fail closed)"
     exit 0
   fi
-
-  local command_string
-  command_string=$(echo "$input" | jq -r '.tool_input.command // empty')
   if [ -z "$command_string" ]; then
     # command を含まない Bash tool call は分類対象が無いので pass-through する。
     exit 0
@@ -399,6 +431,14 @@ agentctl_policy_dispatcher_matches_codex_operation_read_operand() {
   [ "$command_string" = "sha256sum $operand && wc -c $operand" ] && return 0
 
   prefix="sed -n '"
+  suffix="p' $operand"
+  if [[ "$command_string" == "$prefix"*"$suffix" ]]; then
+    range=${command_string#"$prefix"}
+    range=${range%"$suffix"}
+    [[ "$range" =~ ^[1-9][0-9]*,([1-9][0-9]*|\$)$ ]] && return 0
+  fi
+
+  prefix="sha256sum $operand && sed -n '"
   suffix="p' $operand"
   if [[ "$command_string" == "$prefix"*"$suffix" ]]; then
     range=${command_string#"$prefix"}

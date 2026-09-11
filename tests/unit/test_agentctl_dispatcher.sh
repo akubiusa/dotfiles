@@ -143,6 +143,31 @@ fi
 CODEX_SENTINEL_TOOL_INPUT="const r = await tools.exec_command({\"cmd\":\"true '#agentctl-guard-sentinel:$CODEX_RID:$CODEX_SENTINEL_NONCE'\"});"
 CODEX_SENTINEL_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_SENTINEL_TOOL_INPUT" \
   '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
+
+# Bash-tool 固定時は hook subprocess に ambient AGENTCTL_* が届く場合がある。
+# その場合も one-shot sentinel は session_id を binding し、後続 codex queue が
+# app-server session を解決できるようにする。nonce で確立した session context を
+# ownership 根拠にするため、TMUX_PANE 不在でも sentinel evidence を作れる。
+OUT=$(printf '%s\n' "$CODEX_SENTINEL_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  AGENTCTL_POLICY_SNAPSHOT="$CODEX_POLICY" AGENTCTL_RUNTIME_ID="$CODEX_RID" AGENTCTL_POLICY_DIGEST="$CODEX_POLICY_DIGEST" \
+  env -u TMUX_PANE bash "$DISPATCHER")
+EV_DECISION=$(echo "$OUT" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+if [ "$EV_DECISION" = "deny" ] \
+  && [ -f "$CODEX_RUNTIME_DIR/guard-sentinel.json" ] \
+  && [ -f "$CODEX_REGISTRY/sessions/$SESSION_KEY.json" ] \
+  && [ ! -f "$CODEX_REGISTRY/pending/$RID_KEY.json" ]; then
+  pass "Codex sentinel with ambient AGENTCTL_* still establishes the nonce-fenced session binding"
+else
+  fail "ambient-env Codex sentinel did not establish session binding: $OUT"
+fi
+
+# 続く no-ambient 経路も独立に検証するため同じ pending fixture を再作成する。
+rm -f "$CODEX_REGISTRY/sessions/$SESSION_KEY.json" "$CODEX_RUNTIME_DIR/guard-sentinel.json"
+jq -n --arg rid "$CODEX_RID" --arg runtime_dir "$CODEX_RUNTIME_DIR" \
+  --arg policy "$CODEX_POLICY" --arg digest "$CODEX_POLICY_DIGEST" --arg cwd "$REPO" --arg nonce "$CODEX_SENTINEL_NONCE" \
+  '{schema_version:1,runtime_id:$rid,name:"codexdisp",backend:"codex",runtime_dir:$runtime_dir,policy_snapshot:$policy,policy_digest:$digest,cwd:$cwd,sentinel_nonce:$nonce}' \
+  >"$CODEX_REGISTRY/pending/$RID_KEY.json"
+chmod 0600 "$CODEX_REGISTRY/pending/$RID_KEY.json"
 OUT=$(printf '%s\n' "$CODEX_SENTINEL_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST -u TMUX_PANE \
   bash "$DISPATCHER")
@@ -153,6 +178,47 @@ EV_DECISION=$(echo "$OUT" | jq -r '.hookSpecificOutput.permissionDecision // emp
   && [ ! -f "$CODEX_REGISTRY/pending/$RID_KEY.json" ] \
   && pass "Codex sentinel without ambient AGENTCTL_* binds hook session_id to the exact runtime generation and records deny evidence" \
   || fail "expected Codex sentinel session binding + deny evidence without ambient env, got: $OUT"
+
+# binding 成立後は ambient AGENTCTL_* が残っていても session binding を優先し、
+# operation-file read の current-runtime 制約を適用する。
+CODEX_OP_FILE="$CODEX_RUNTIME_DIR/codex-op-11111111-1111-4111-8111-111111111111.txt"
+printf 'payload\n' >"$CODEX_OP_FILE"
+CODEX_OP_CMD="sha256sum $CODEX_OP_FILE && sed -n '1,9999p' $CODEX_OP_FILE"
+CODEX_OP_JSON=$(jq -cn --arg cmd "$CODEX_OP_CMD" --arg cwd "$REPO" '{cmd:$cmd,workdir:$cwd,"yield_time_ms":10000,"max_output_tokens":2000}')
+CODEX_OP_TOOL_INPUT=$(printf 'const r = await tools.exec_command(%s);\ntext(r.output);' "$CODEX_OP_JSON")
+CODEX_OP_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_OP_TOOL_INPUT" '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
+OUT=$(printf '%s\n' "$CODEX_OP_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  AGENTCTL_POLICY_SNAPSHOT="$CODEX_POLICY" AGENTCTL_RUNTIME_ID="$CODEX_RID" AGENTCTL_POLICY_DIGEST="$CODEX_POLICY_DIGEST" \
+  env -u TMUX_PANE bash "$DISPATCHER")
+[ -z "$OUT" ] \
+  && pass "bound Codex session takes precedence over ambient AGENTCTL_* and allows its exact operation-file read" \
+  || fail "expected bound Codex session context to allow exact operation-file read with ambient env, got: $OUT"
+
+# Codex interactive TUI の exec tool は JavaScript wrapper 内の tools.exec_command JSON に
+# shell command を保持する。固定 wrapper + 厳密 JSON object だけを抽出し、通常 classifier へ渡す。
+CODEX_EXEC_READ_INPUT=$(jq -cn --arg cmd "git status" --arg cwd "$REPO" \
+  '{cmd:$cmd,workdir:$cwd,"yield_time_ms":10000,"max_output_tokens":1000}')
+CODEX_EXEC_READ_TOOL_INPUT=$(printf 'const r = await tools.exec_command(%s);\ntext(r.output);' "$CODEX_EXEC_READ_INPUT")
+CODEX_EXEC_READ_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_EXEC_READ_TOOL_INPUT" \
+  '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
+OUT=$(printf '%s\n' "$CODEX_EXEC_READ_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST -u TMUX_PANE \
+  bash "$DISPATCHER")
+[ -z "$OUT" ] \
+  && pass "bound Codex exec wrapper extracts a safe read-only shell command and allows it" \
+  || fail "expected known Codex exec wrapper read-only command to pass, got: $OUT"
+
+CODEX_EXEC_UNKNOWN_INPUT=$(jq -cn --arg cmd "git status" --arg cwd "$REPO" \
+  '{cmd:$cmd,workdir:$cwd,"yield_time_ms":10000,"max_output_tokens":1000,unexpected:true}')
+CODEX_EXEC_UNKNOWN_TOOL_INPUT=$(printf 'const r = await tools.exec_command(%s);\ntext(r.output);' "$CODEX_EXEC_UNKNOWN_INPUT")
+CODEX_EXEC_UNKNOWN_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_EXEC_UNKNOWN_TOOL_INPUT" \
+  '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
+OUT=$(printf '%s\n' "$CODEX_EXEC_UNKNOWN_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST -u TMUX_PANE \
+  bash "$DISPATCHER")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "Codex exec wrapper with unknown fields fails closed" \
+  || fail "expected unknown Codex exec wrapper shape to deny, got: $OUT"
 
 CODEX_PUSH_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" \
   '{session_id:$sid,cwd:$cwd,tool_name:"Bash",tool_input:{command:"git push origin"}}')

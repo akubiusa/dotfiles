@@ -609,14 +609,16 @@ cmd_attach() {
   agentctl_validate_name "$name"
   require_arg --runtime-id "$runtime_id"
 
-  # fencing の確認だけ per-name lock 内で行い、lock はすぐ解放する。attach
-  # 本体 (対話的に detach されるまで block する) を lock 保持中に実行すると、
-  # 同一 runtime への他 client の status/logs/steer が attach 中ずっと
-  # ブロックされてしまう。複数 client の status/logs/steer/attach は並行観測を
-  # 許すため、対話 attach 中に name lock を保持し続けない。
-  local session
-  session=$(agentctl_with_name_lock "$name" _attach_check "$name" "$runtime_id")
-  agentctl_tmux attach-session -t "$session"
+  # name lock 内で generation と exact tmux pane/session identity を採取する。
+  # attach 中ずっと lock を保持すると observer が steer/stop を阻害するため、lock は
+  # ここで解放する。その代わり attach 直前に tmux server 内の単一 command queue で
+  # old pane + runtime marker を再照合し、同名 new generation への name reuse を防ぐ。
+  local attach_evidence session_id pane
+  attach_evidence=$(agentctl_with_name_lock "$name" _attach_check "$name" "$runtime_id")
+  IFS=$'\t' read -r session_id pane <<<"$attach_evidence"
+  [ -n "$session_id" ] && [ -n "$pane" ] \
+    || agentctl_die --code 4 "failed to resolve exact tmux identity for runtime '$name'"
+  agentctl_attach_fenced "$session_id" "$pane" "$runtime_id"
 }
 
 _attach_check() {
@@ -628,11 +630,32 @@ _attach_check() {
     absent) agentctl_die --code 3 "runtime '$name' is not running (reconcile=absent)" ;;
     *) agentctl_die --code 4 "runtime '$name' is not running (reconcile=$reconcile)" ;;
   esac
-  local state_json current_id
+  local state_json current_id session pane session_id
   state_json=$(agentctl_read_state "$name") || agentctl_die --code 3 "no state for '$name'"
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
-  agentctl_tmux_session "$name"
+  session=$(agentctl_tmux_session "$name")
+  pane=$(agentctl_tmux_pane_id "$session")
+  [ -n "$pane" ] || agentctl_die --code 4 "runtime '$name' has no current tmux pane"
+  session_id=$(agentctl_tmux display-message -p -t "$pane" '#{session_id}' 2>/dev/null) \
+    || agentctl_die --code 4 "runtime '$name' tmux session disappeared during attach fencing"
+  [[ "$session_id" =~ ^\$[0-9]+$ ]] || agentctl_die --code 4 "runtime '$name' has invalid tmux session identity"
+  printf '%s\t%s\n' "$session_id" "$pane"
+}
+
+agentctl_attach_fenced() {
+  local session_id="$1" pane="$2" runtime_id="$3" condition
+  [[ "$session_id" =~ ^\$[0-9]+$ ]] || agentctl_die --code 4 "invalid tmux session identity for attach"
+  [[ "$pane" =~ ^%[0-9]+$ ]] || agentctl_die --code 4 "invalid tmux pane identity for attach"
+  [[ "$runtime_id" =~ ^[A-Za-z0-9_-]+$ ]] || agentctl_die --code 4 "invalid runtime_id for attach"
+
+  # `if-shell -F` は format 判定と true/false command を同じ tmux server command queue
+  # で処理する。pane が消失/再作成された場合や marker が別 generation なら false
+  # branch が non-zero を返し、session name を再解決して new generation へ attach しない。
+  condition="#{&&:#{==:#{pane_id},$pane},#{&&:#{==:#{@agentctl_owner},agentctl},#{==:#{@agentctl_runtime_id},$runtime_id}}}"
+  agentctl_tmux if-shell -F -t "$pane" "$condition" \
+    "attach-session -t '$session_id'" "run-shell 'exit 74'" \
+    || agentctl_die --code 4 "runtime generation changed before attach; refusing stale client"
 }
 
 # --- interrupt 処理 -----------------------------------------------------------

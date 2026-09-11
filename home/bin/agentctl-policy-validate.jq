@@ -1,18 +1,10 @@
-# agentctl policy schema validator / canonicalizer.
+# agentctl policy schema の validator / canonicalizer。
 #
-# Input: raw policy JSON (untrusted).
-# Output on success: {"ok": true, "policy": <canonical policy object>}
-# Output on failure: {"ok": false, "errors": [<string>, ...]}
-#
-# Fail-closed: any unrecognized shape produces at least one error and "ok": false.
-# Never silently defaults an unset permission flag to true.
-#
-# Canonical shape matches spec (.agent-work/specs/2026-09-10-autonomous-agent-runtime-design.md
-# "Mission policy contract"): version:1, permissions.*, scope.repositories[]
-# (id/git_common_dir/github_repo/allowed_worktree_roots), scope.remotes[]
-# (repository_id/name/push_url), scope.production_targets[] (id/deploy_argv/verify_argv).
-# This is a multi-repository identity model: repositories are looked up by id,
-# and remotes are scoped to a repository via repository_id (not implicitly global).
+# 入力は untrusted な raw policy JSON。成功時は canonical policy を返し、
+# failure 時は errors 配列を返す。未知 shape や未指定 permission を暗黙 allow しない。
+# canonical shape は version:1、permissions.*、scope.repositories[]、scope.remotes[]、
+# scope.production_targets[] から成る。repository は id で識別し、remote は
+# repository_id によって対象 repository へ明示的に紐付ける。
 
 def is_abs_path:
   type == "string" and length > 0 and startswith("/");

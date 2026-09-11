@@ -1,6 +1,6 @@
 #!/bin/bash
 # agentctl のユニットテスト。isolated XDG_STATE_HOME と fake backend/tmux server を使う。
-# 実 Claude/Codex backend (Task 4/5) や remote/production E2E (Task 13/14) は対象外。
+# 実 Claude/Codex backend と remote/production E2E は別テストで扱う。
 # shellcheck disable=SC2015,SC2329,SC2016,SC2181
 # SC2015: `check && pass "..." || fail "..."` は本テストの意図通り (pass 失敗時のみ fail に落ちる想定)。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
@@ -38,6 +38,9 @@ cat >"$WORKROOT/bin/tmux" <<WRAP
 if [ "\${AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER:-0}" = "1" ] && [ "\${1:-}" = "load-buffer" ]; then
   exit 97
 fi
+if [ "\${AGENTCTL_TEST_TMUX_FAIL_KILL_SESSION:-0}" = "1" ] && [ "\${1:-}" = "kill-session" ]; then
+  exit 98
+fi
 exec "$REAL_TMUX" -L agentctl-test "\$@"
 WRAP
 chmod +x "$WORKROOT/bin/tmux"
@@ -60,7 +63,7 @@ valid_policy() {
 JSON
 }
 
-# --- Task 0: no git/gh calls -----------------------------------------------------------
+# --- keeper 自身が git/gh を呼ばないこと -----------------------------------------------------------
 
 if grep -nE '(^|[^a-zA-Z0-9_-])(git|gh)([[:space:]]|$)' "$REPO_ROOT/home/bin/executable_agentctl" "$REPO_ROOT/home/bin/agentctl-common.sh" \
    | grep -v '^\S*:[0-9]*:#' | grep -viE 'github_repo|git_common_dir|# |agent'; then
@@ -69,7 +72,18 @@ else
   pass "agentctl keeper does not call git/gh"
 fi
 
-# --- Task 1: policy validation -----------------------------------------------------------
+# runtime inventory が空の doctor は空名 runtime を捏造せず、stderr も出さない。
+DOCTOR_EMPTY_OUT="$WORKROOT/doctor-empty.out"
+DOCTOR_EMPTY_ERR="$WORKROOT/doctor-empty.err"
+if bash "$AGENTCTL" doctor --json >"$DOCTOR_EMPTY_OUT" 2>"$DOCTOR_EMPTY_ERR" \
+  && jq -e '.runtimes == []' "$DOCTOR_EMPTY_OUT" >/dev/null 2>&1 \
+  && [ ! -s "$DOCTOR_EMPTY_ERR" ]; then
+  pass "doctor on an empty runtime inventory returns an empty array without diagnostics"
+else
+  fail "doctor fabricated an empty-name runtime or emitted diagnostics: out=$(cat "$DOCTOR_EMPTY_OUT" 2>/dev/null) err=$(cat "$DOCTOR_EMPTY_ERR" 2>/dev/null)"
+fi
+
+# --- policy validation 検証 -----------------------------------------------------------
 
 POLICY_OK="$WORKROOT/policy-ok.json"
 valid_policy >"$POLICY_OK"
@@ -132,7 +146,7 @@ else
     || fail "fake backend local_write=false rejection message missing: $(cat /tmp/agentctl-t4-err)"
 fi
 
-# --- --name path traversal validation -----------------------------------------------------------
+# --- --name path traversal validation 検証 -----------------------------------------------------------
 # --name はそのままディレクトリ名/tmux session 名/lock ファイル名に連結される。
 # 資源化される前に allowlist ([A-Za-z0-9_-]+) 一致のみを受理し、
 # traversal-like な値をすべて構造的に拒否することを、全ての public command
@@ -188,7 +202,7 @@ RUNTIMES_DIR_AFTER_TRAVERSAL=$(find "$WORKROOT/state/agentctl/runtimes" -mindept
   && pass "traversal-like --name attempts left the runtimes dir contents unchanged" \
   || fail "runtimes dir contents changed after traversal-like --name attempts (before='$RUNTIMES_DIR_BEFORE_TRAVERSAL' after='$RUNTIMES_DIR_AFTER_TRAVERSAL')"
 
-# --- Task 2: runtime identity / locking / fencing -----------------------------------------------------------
+# --- runtime identity / locking / fencing 検証 -----------------------------------------------------------
 
 NAME="rtA"
 SINK="$WORKROOT/state/agentctl/runtimes/$NAME/fake-sink.txt"
@@ -201,7 +215,7 @@ fi
 
 sleep 0.3
 
-# --- common mission contract (design.md:145-163) delivered with the task mission -----------------------------------------------------------
+# --- task mission と同時に届ける common mission contract -----------------------------------------------------------
 
 MISSION_DELIVERY="$WORKROOT/state/agentctl/runtimes/$NAME/mission-delivery.txt"
 grep -q "AGENTCTL COMMON MISSION CONTRACT" "$MISSION_DELIVERY" \
@@ -252,7 +266,7 @@ else
   pass "steer without --runtime-id is rejected"
 fi
 
-# --- logs/attach/interrupt: fencing/ownership -----------------------------------------------------------
+# --- logs/attach/interrupt: fencing/ownership 検証 -----------------------------------------------------------
 
 if bash "$AGENTCTL" logs 2>/dev/null; then
   fail "logs without --name should be rejected"
@@ -313,7 +327,7 @@ else
 fi
 
 # interrupt の実送信は $NAME の pty/sink を汚す (Ctrl-C バイトが混入する) ため、
-# 後続の Task 3 byte-exact 転送テストと独立させて専用 runtime で検証する。
+# 後続の byte-exact 転送テストと独立させて専用 runtime で検証する。
 NAME_I="rtInterrupt"
 RID_I=$(bash "$AGENTCTL" start --name "$NAME_I" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"mi")
 sleep 0.3
@@ -347,7 +361,7 @@ bash "$AGENTCTL" cleanup --name "$NAME_I" --runtime-id "$RID_I" >/dev/null
 
 # --- submit-after-paste: real backend のみ Enter を送る -----------------------------------------------------------
 # paste-buffer は実 TUI backend (Claude/Codex) の入力欄に文字を残すだけで実行
-# されない (live E2E で実測確認済み)。fake backend の byte-exact sink を壊さず
+# されない。fake backend の byte-exact sink を壊さず
 # 実 backend だけ submit するという分岐を、canonical mode の pane (Enter で
 # 素の改行バイトが1つ届く) を使い agentctl_submit_paste を直接呼んで検証する。
 # canonical mode の pane は改行が来るまで行を flush しない。fake は Enter を
@@ -419,7 +433,7 @@ else
 fi
 tmux kill-session -t "$CODEX_BUSY_SESSION" >/dev/null 2>&1 || true
 
-# --- backend readiness barrier: bracketed-paste + screen quiescence, fail-closed timeout -----------------------------------------------------------
+# --- backend readiness barrier: bracketed-paste + screen quiescence, fail-closed timeout 検証 -----------------------------------------------------------
 # 実 CLI 文字列には依存させず、bracketed paste 有効化シーケンス (\e[?2004h)
 # の出現検出 (pipe-pane raw stream) + capture-pane スクリーン静止の両方を
 # stub pane で再現して検証する。
@@ -505,7 +519,7 @@ else
 fi
 tmux kill-session -t "$SETTLE_SESSION" >/dev/null 2>&1 || true
 
-# --- agentctl_deliver_body timeout path: failed/unknown event, fail-closed die preserved -----------------------------------------------------------
+# --- agentctl_deliver_body timeout path: failed/unknown event, fail-closed die preserved 検証 -----------------------------------------------------------
 # agentctl_submit_paste の die (screen-settle timeout) はサブシェル経由で
 # agentctl_deliver_body に捕捉され、events.jsonl に submission=failed/
 # acceptance=unknown を1行だけ記録してから同じメッセージで die し直す
@@ -532,9 +546,9 @@ else
 fi
 tmux kill-session -t "$DELIVER_TIMEOUT_SESS" >/dev/null 2>&1 || true
 
-# --- A2: known pre-delivery transport failure must be typed exit 5 -------------------------------
-# load-buffer failure happens before paste-buffer is invoked, so no bytes can have reached the
-# backend. This is a definite transport failure, not the post-delivery acceptance=unknown case.
+# --- A2: known pre-delivery transport failure must be typed exit 5 検証 -------------------------------
+# load-buffer failure は paste-buffer より前なので backend へ byte は届いていない。
+# delivery 後の acceptance=unknown ではなく、確定した transport failure として扱う。
 PREFAIL_DIR="$WORKROOT/deliver-prefail"
 mkdir -p "$PREFAIL_DIR"
 PREFAIL_BODY="$WORKROOT/deliver-prefail-body.txt"
@@ -554,7 +568,7 @@ PREFAIL_RC=$?
   && pass "agentctl_deliver_body returns 5 for a definite pre-delivery transport failure" \
   || fail "pre-delivery transport failure returned $PREFAIL_RC, expected 5"
 
-# --- steer --json machine-readable result contract -----------------------------------------------------------
+# --- steer --json machine-readable result contract 検証 -----------------------------------------------------------
 # result は accepted|submitted|unknown のいずれかで、本文/payload を一切含まない。
 # 成功 (paste+Enter 送信確認済み) は "submitted"、screen-settle timeout で
 # acceptance が不確定な場合は generic な失敗ではなく明示的に "unknown" とする。
@@ -599,7 +613,7 @@ jq --arg backend claude --arg pane_id "$NEW_PANE_ID" --argjson pane_pid "$NEW_PA
   '.backend = $backend | .pane_id = $pane_id | .pane_pid = $pane_pid | .pane_pid_start = $pane_pid_start' \
   "$STATE4_JSON" >"$STATE4_JSON.tmp" && mv "$STATE4_JSON.tmp" "$STATE4_JSON"
 
-# design.md:187,189: delivery 後の unknown は再送を誘発しない non-destructive
+# delivery 後の unknown は再送を誘発しない non-destructive
 # success として exit 0 のまま扱う (delivery 前の確定 failure だけ non-zero)。
 if AGENTCTL_SUBMIT_SETTLE_TIMEOUT_SECONDS=1 AGENTCTL_SUBMIT_SETTLE_QUIET_SECONDS=2 AGENTCTL_READY_POLL_SECONDS=0.1 \
   bash "$AGENTCTL" steer --name "$NAME4_JSON" --runtime-id "$RID4_JSON" --json --stdin <<<"steer during timeout" \
@@ -625,7 +639,7 @@ else
   fail "agentctl_deliver_body timeout did not write an events.jsonl entry"
 fi
 
-# --- Task 3: arbitrary text transport -----------------------------------------------------------
+# --- arbitrary text transport 検証 -----------------------------------------------------------
 
 PAYLOAD_JA=$(python3 -c "print('こんにちは、これはテストです。'*70, end='')")
 echo -n "$PAYLOAD_JA" >"$WORKROOT/payload-ja.txt"
@@ -656,7 +670,7 @@ else
   pass "tmux steer buffer does not persist"
 fi
 
-# --- concurrent steer serialization (no byte interleave) -----------------------------------------------------------
+# --- concurrent steer serialization (no byte interleave) 検証 -----------------------------------------------------------
 
 NAME2="rtB"
 RID2=$(bash "$AGENTCTL" start --name "$NAME2" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m2")
@@ -689,7 +703,7 @@ fi
 bash "$AGENTCTL" stop --name "$NAME2" --runtime-id "$RID2" >/dev/null
 bash "$AGENTCTL" cleanup --name "$NAME2" --runtime-id "$RID2" >/dev/null
 
-# --- PID reuse -> conflict -----------------------------------------------------------
+# --- PID reuse -> conflict 検証 -----------------------------------------------------------
 
 NAME3="rtC"
 bash "$AGENTCTL" start --name "$NAME3" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m3" >/dev/null
@@ -701,7 +715,7 @@ RECONCILE3=$(bash "$AGENTCTL" status --name "$NAME3" --json | jq -r '.reconcile'
 tmux kill-session -t "agentctl-$NAME3" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME3"
 
-# --- respawned/replaced pane process -> conflict, steer refused (stale runtime_id cannot steer replacement) --------
+# --- respawned/replaced pane process -> conflict, steer refused (stale runtime_id cannot steer replacement) 検証 --------
 
 NAME4="rtRespawn"
 RID4=$(bash "$AGENTCTL" start --name "$NAME4" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m4")
@@ -720,7 +734,7 @@ fi
 tmux kill-session -t "$SESSION4" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME4"
 
-# --- cleanup must refuse conflict (no auto-remediation) -----------------------------------------------------------
+# --- cleanup must refuse conflict (no auto-remediation) 検証 -----------------------------------------------------------
 
 NAME_CONFLICT="rtConflict"
 RID_CONFLICT=$(bash "$AGENTCTL" start --name "$NAME_CONFLICT" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"mc")
@@ -740,7 +754,7 @@ fi
 tmux kill-session -t "agentctl-$NAME_CONFLICT" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_CONFLICT"
 
-# --- blocked bootstrap self-terminates on bounded timeout -----------------------------------------------------------
+# --- blocked bootstrap self-terminates on bounded timeout 検証 -----------------------------------------------------------
 
 NAME_TIMEOUT="rtTimeout"
 AGENTCTL_TEST_BOOTSTRAP_TIMEOUT_SECONDS=1 AGENTCTL_TEST_FAULT_STAGE="pre_marker" \
@@ -754,7 +768,7 @@ fi
 tmux kill-session -t "agentctl-$NAME_TIMEOUT" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_TIMEOUT"
 
-# --- steer --stdin does not leak temp file on rejection path -----------------------------------------------------------
+# --- steer --stdin does not leak temp file on rejection path 検証 -----------------------------------------------------------
 
 TMP_BEFORE=$(find "$TMPDIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
 bash "$AGENTCTL" steer --name "$NAME_TIMEOUT" --runtime-id "00000000-0000-0000-0000-000000000000" --stdin <<<"leak-check" 2>/dev/null || true
@@ -762,13 +776,24 @@ TMP_AFTER=$(find "$TMPDIR" -maxdepth 1 -type f 2>/dev/null | wc -l)
 [ "$TMP_BEFORE" = "$TMP_AFTER" ] && pass "steer --stdin does not leak temp file on rejection path" \
   || fail "steer --stdin leaked a temp file on rejection path ($TMP_BEFORE -> $TMP_AFTER)"
 
-# --- stale / exited distinction -----------------------------------------------------------
+# --- stale / exited distinction 検証 -----------------------------------------------------------
 
 NAME4="rtD"
-RID4=$(bash "$AGENTCTL" start --name "$NAME4" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m4" --fake-command 'true')
+RID4=$(bash "$AGENTCTL" start --name "$NAME4" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m4")
+PANE_PID4=$(jq -r '.pane_pid' "$WORKROOT/state/agentctl/runtimes/$NAME4/state.json")
+kill -TERM "$PANE_PID4"
 sleep 0.5
 RECONCILE4=$(bash "$AGENTCTL" status --name "$NAME4" --json | jq -r '.reconcile')
 [ "$RECONCILE4" = "exited" ] && pass "dead pane with remain-on-exit is classified as exited" || fail "expected exited, got $RECONCILE4"
+AGENTCTL_TEST_TMUX_FAIL_KILL_SESSION=1 bash "$AGENTCTL" cleanup --name "$NAME4" --runtime-id "$RID4" >/dev/null 2>"$WORKROOT/cleanup-kill-fail.err"
+CLEANUP_KILL_FAIL_RC=$?
+if [ "$CLEANUP_KILL_FAIL_RC" -eq 5 ] \
+  && [ -f "$WORKROOT/state/agentctl/runtimes/$NAME4/state.json" ] \
+  && tmux has-session -t "agentctl-$NAME4" >/dev/null 2>&1; then
+  pass "cleanup preserves state/session and exits 5 when owned tmux session removal fails"
+else
+  fail "cleanup removed evidence or returned wrong rc after tmux kill failure (rc=$CLEANUP_KILL_FAIL_RC): $(cat "$WORKROOT/cleanup-kill-fail.err")"
+fi
 bash "$AGENTCTL" cleanup --name "$NAME4" --runtime-id "$RID4" >/dev/null
 
 NAME5="rtE"
@@ -779,7 +804,7 @@ RECONCILE5=$(bash "$AGENTCTL" status --name "$NAME5" --json | jq -r '.reconcile'
 [ "$RECONCILE5" = "stale" ] && pass "state without tmux session is classified as stale" || fail "expected stale, got $RECONCILE5"
 bash "$AGENTCTL" cleanup --name "$NAME5" --runtime-id "$RID5" >/dev/null
 
-# --- fault injection: launcher crash at 4 stages -> no unowned live agent -----------------------------------------------------------
+# --- fault injection: launcher crash at 4 stages -> no unowned live agent 検証 -----------------------------------------------------------
 
 for stage in pre_tmux pre_marker post_marker_pre_release; do
   NAME_F="fault-$stage"
@@ -806,13 +831,13 @@ fi
 tmux kill-session -t "agentctl-$NAME_R" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_R"
 
-# --- doctor -----------------------------------------------------------
+# --- doctor 検証 -----------------------------------------------------------
 
 DOCTOR_JSON=$(bash "$AGENTCTL" doctor --json)
 echo "$DOCTOR_JSON" | jq -e --arg n "$NAME" '.runtimes | any(.name == $n)' >/dev/null \
   && pass "doctor lists active runtime" || fail "doctor missing active runtime: $DOCTOR_JSON"
 
-# --- policy snapshot immutability -----------------------------------------------------------
+# --- policy snapshot immutability 検証 -----------------------------------------------------------
 
 SNAPSHOT_PATH=$(find "$WORKROOT/state/agentctl/runtimes/$NAME" -maxdepth 1 -name 'policy.snapshot.*.json')
 SNAPSHOT_BEFORE=$(cat "$SNAPSHOT_PATH")
@@ -823,7 +848,7 @@ SNAPSHOT_AFTER=$(cat "$SNAPSHOT_PATH")
 bash "$AGENTCTL" stop --name "$NAME" --runtime-id "$RID" >/dev/null
 bash "$AGENTCTL" cleanup --name "$NAME" --runtime-id "$RID" >/dev/null
 
-# --- resume/complete -----------------------------------------------------------
+# --- resume/complete 検証 -----------------------------------------------------------
 
 NAME_RS="resume-t1"
 RID1=$(bash "$AGENTCTL" start --name "$NAME_RS" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"m1")
@@ -878,7 +903,7 @@ CONTRACT_POS=$(grep -n "AGENTCTL COMMON MISSION CONTRACT" "$SINK_RS" | head -1 |
   && pass "common mission contract is ordered between continuation context and the embedded original mission" \
   || fail "common mission contract is not ordered between context and mission"
 
-# --- Fix #6: resume re-policy immutability + digest linkage -----------------------------------------------------------
+# --- resume re-policy の immutability + digest linkage -----------------------------------------------------------
 # resume が明示 --policy-file を渡さない場合は前世代の snapshot path/digest を
 # そのまま継承し、continuation bundle には "unchanged" を記録する。
 STATE_RS1=$(cat "$WORKROOT/state/agentctl/runtimes/$NAME_RS/state.json")
@@ -923,7 +948,7 @@ bash "$AGENTCTL" cleanup --name "$NAME_REPOLICY" --runtime-id "$RIDR2" >/dev/nul
 tmux kill-session -t "agentctl-$NAME_REPOLICY" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_REPOLICY"
 
-# --- operation event log: unique operation_id / runtime fencing / no-payload-leak (tui-paste transport) -----------------------------------------------------------
+# --- operation event log: unique operation_id / runtime fencing / no-payload-leak (tui-paste transport) 検証 -----------------------------------------------------------
 EVENTS_RS="$WORKROOT/state/agentctl/runtimes/$NAME_RS/events.jsonl"
 if [ -f "$EVENTS_RS" ]; then
   grep -q "m1" "$EVENTS_RS" \
@@ -950,7 +975,7 @@ fi
 
 tmux kill-session -t "agentctl-$NAME_RS" >/dev/null 2>&1 || true
 
-# --- resume continuation bundle: embedded mission must be byte-exact -----------------------------------------------------------
+# --- resume continuation bundle: embedded mission must be byte-exact 検証 -----------------------------------------------------------
 
 # `$(cat file)` は末尾改行を無条件に落とすため、continuation bundle への
 # mission 埋め込みで command substitution/関数の string 引数を経由すると、
@@ -1007,7 +1032,7 @@ bash "$AGENTCTL" cleanup --name "$NAME_RS" --runtime-id "$RID2" >/dev/null 2>&1 
   && fail "cleanup did not remove events.jsonl along with the runtime dir" \
   || pass "cleanup removes events.jsonl along with the rest of the runtime state"
 
-# --- codex operation-specific secure copy: TOCTOU/no-follow, bootstrap paste -----------------------------------------------------------
+# --- codex operation-specific secure copy: TOCTOU/no-follow, bootstrap paste 検証 -----------------------------------------------------------
 
 # agentctl_secure_create は dest が (symlink 含め) 既存なら追従/上書きせず fail
 # closed すること、および衝突が無ければ mode 通りの新規ファイルを作成すること
@@ -1083,7 +1108,7 @@ else
       fail "agentctl_deliver_body(codex) operation file/bootstrap mismatch (mode=$op_mode, file=$op_file)"
     fi
 
-    # --- operation event log (metadata-only, no payload) -----------------------------------------------------------
+    # --- operation event log (metadata-only, no payload) 検証 -----------------------------------------------------------
     EVENTS_FILE_DELIVER="$DELIVER_DIR/events.jsonl"
     if [ -f "$EVENTS_FILE_DELIVER" ]; then
       EVT_MODE=$(stat -c '%a' "$EVENTS_FILE_DELIVER")
@@ -1217,7 +1242,7 @@ fi
 XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" stop --name spacedstate --runtime-id "$RID_SPACED" >/dev/null 2>&1 || true
 XDG_STATE_HOME="$SPACED_ROOT/xdg" bash "$AGENTCTL" cleanup --name spacedstate --runtime-id "$RID_SPACED" >/dev/null 2>&1 || true
 
-# --- canonical CLI contract (design.md:168-178): positional <name> + --agent, --name/--backend compat aliases -----------------------------------------------------------
+# --- canonical CLI contract: positional <name> + --agent, --name/--backend compat aliases 検証 -----------------------------------------------------------
 
 NAME_CANON="rtcanon"
 RID_CANON=$(bash "$AGENTCTL" start "$NAME_CANON" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY_OK" --mission-stdin <<<"canon mission")
@@ -1240,7 +1265,7 @@ bash "$AGENTCTL" cleanup "$NAME_CANON" --runtime-id "$RID_CANON" >/dev/null \
   && pass "cleanup accepts canonical positional <name> form" \
   || fail "cleanup with positional name failed"
 
-# resume: caller omits --cwd/--agent entirely and it must inherit from the predecessor generation's state.
+# resume は caller が --cwd/--agent を渡さず、predecessor generation の state から継承する。
 NAME_RESUME_CANON="rtresumecanon"
 RID_RC1=$(bash "$AGENTCTL" start "$NAME_RESUME_CANON" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY_OK" --mission-stdin <<<"resume canon mission")
 bash "$AGENTCTL" stop "$NAME_RESUME_CANON" --runtime-id "$RID_RC1" >/dev/null
@@ -1279,8 +1304,8 @@ RID_RSTRICT2=$(bash "$AGENTCTL" resume "$NAME_RESUME_STRICT" --from-runtime-id "
 bash "$AGENTCTL" stop "$NAME_RESUME_STRICT" --runtime-id "$RID_RSTRICT2" >/dev/null
 bash "$AGENTCTL" cleanup "$NAME_RESUME_STRICT" --runtime-id "$RID_RSTRICT2" >/dev/null
 
-# --- typed exit code contract (design.md:187): 0=postcondition met, 2=usage/schema error,
-# 3=target/subject absent, 4=ownership/conflict/refused, 5=transport failure -----------------------------------------------------------
+# --- typed exit code contract の検証: postcondition met=0, usage/schema error=2,
+# target/subject absent=3、ownership/conflict/refused=4、transport failure=5 -----------------------------------------------------------
 
 NAME_EXIT="rtexit"
 STALE_RID="00000000-0000-0000-0000-000000000000"
@@ -1296,6 +1321,24 @@ bash "$AGENTCTL" >/dev/null 2>/tmp/agentctl-exit-nocommand-err
 bash "$AGENTCTL" no-such-command >/dev/null 2>/tmp/agentctl-exit-unknowncommand-err
 [ "$?" -eq 2 ] && pass "invoking agentctl with an unknown command exits 2 (usage/schema error)" \
   || fail "unknown command did not exit 2: $(cat /tmp/agentctl-exit-unknowncommand-err)"
+
+# 値を取る option が末尾に置かれた場合も shell の unbound-variable ではなく usage error にする。
+for spec in "start --name" "status --name" "steer --runtime-id" "logs --lines" "attach --runtime-id" "interrupt --runtime-id" "stop --runtime-id" "cleanup --runtime-id" "resume --from-runtime-id" "complete --runtime-id"; do
+  cmd=${spec%% *}
+  flag=${spec#* }
+  bash "$AGENTCTL" "$cmd" "$flag" >/dev/null 2>"$WORKROOT/missing-value.err"
+  rc=$?
+  [ "$rc" -eq 2 ] && pass "$cmd $flag without value exits 2" \
+    || fail "$cmd $flag without value exited $rc instead of 2: $(cat "$WORKROOT/missing-value.err")"
+done
+
+# test-only fake command injection は public CLI で受理しない。
+bash "$AGENTCTL" start --name fakecmdreject --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin --fake-command true \
+  <<<"fake command must be rejected" >/dev/null 2>"$WORKROOT/fake-command.err"
+FAKE_COMMAND_RC=$?
+[ "$FAKE_COMMAND_RC" -eq 2 ] && grep -q "unknown option.*--fake-command" "$WORKROOT/fake-command.err" \
+  && pass "public start rejects test-only --fake-command" \
+  || fail "public start accepted --fake-command or returned wrong error (rc=$FAKE_COMMAND_RC): $(cat "$WORKROOT/fake-command.err")"
 
 bash "$AGENTCTL" status --name "no-such-$NAME_EXIT" --json >/dev/null 2>/tmp/agentctl-exit-status-absent-err
 [ "$?" -eq 0 ] && pass "status for an absent runtime exits 0 (reconcile=absent is a valid, non-error postcondition)" \

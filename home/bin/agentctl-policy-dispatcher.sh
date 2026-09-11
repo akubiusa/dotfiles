@@ -14,6 +14,19 @@ agentctl_policy_dispatcher_main() {
   local input
   input=$(cat)
 
+  # agentctl env も sentinel もなく、Codex session binding 自体が1件も無い通常
+  # session は JSON parse 前に即 no-op にする。global hook の常時起動コストを
+  # agentctl 未使用時へ持ち込まず、binding が存在する時だけ厳密な jq 検証へ進む。
+  local sessions_dir=""
+  if declare -F agentctl_codex_hook_sessions_dir >/dev/null 2>&1; then
+    sessions_dir=$(agentctl_codex_hook_sessions_dir)
+  fi
+  if { [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; } \
+    && [[ "$input" != *"agentctl-guard-sentinel:"* ]] \
+    && { [ -z "$sessions_dir" ] || ! compgen -G "$sessions_dir/*.json" >/dev/null; }; then
+    exit 0
+  fi
+
   # Codex interactive TUI の persistent execution path では TUI 起動時の
   # AGENTCTL_* env が hook subprocess へ届かない。その場合でも sentinel marker
   # + hook stdin の stable session_id から runtime context を初回 binding できる。
@@ -21,10 +34,6 @@ agentctl_policy_dispatcher_main() {
   # あるなら normal session と識別できないため fail closed。binding が一切無い
   # 通常 Codex session だけは従来どおり no-op とする。
   if ! command -v jq >/dev/null 2>&1; then
-    local sessions_dir=""
-    if declare -F agentctl_codex_hook_sessions_dir >/dev/null 2>&1; then
-      sessions_dir=$(agentctl_codex_hook_sessions_dir)
-    fi
     if { [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; } \
       && [[ "$input" != *"agentctl-guard-sentinel:"* ]] \
       && { [ -z "$sessions_dir" ] || ! compgen -G "$sessions_dir/*.json" >/dev/null; }; then
@@ -34,14 +43,18 @@ agentctl_policy_dispatcher_main() {
     exit 0
   fi
 
-  local session_id hook_cwd sentinel_runtime_id context_source="env"
+  local session_id hook_cwd sentinel_marker_input="" sentinel_runtime_id="" sentinel_nonce="" context_source="env"
   session_id=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)
   hook_cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
-  sentinel_runtime_id=$(printf '%s' "$input" | grep -oE 'agentctl-guard-sentinel:[A-Za-z0-9_-]+' | head -n1 | cut -d: -f2-)
+  sentinel_marker_input=$(printf '%s' "$input" | grep -oE 'agentctl-guard-sentinel:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+' | head -n1 || true)
+  if [ -n "$sentinel_marker_input" ]; then
+    sentinel_runtime_id=$(printf '%s' "$sentinel_marker_input" | cut -d: -f2)
+    sentinel_nonce=$(printf '%s' "$sentinel_marker_input" | cut -d: -f3)
+  fi
 
   if [ -z "${AGENTCTL_POLICY_SNAPSHOT:-}" ] && [ -z "${AGENTCTL_RUNTIME_ID:-}" ]; then
     if [ -n "$sentinel_runtime_id" ]; then
-      if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id"; then
+      if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id" "$sentinel_nonce"; then
         agentctl_policy_dispatcher_emit_deny "${AGENTCTL_POLICY_DISPATCHER_ERROR:-failed to bind Codex sentinel session}"
         exit 0
       fi
@@ -107,15 +120,15 @@ agentctl_policy_dispatcher_main() {
     *"$sentinel_marker"*)
       local dir="${AGENTCTL_POLICY_SNAPSHOT%/*}" evidence_tmp
       evidence_tmp="$dir/guard-sentinel.json.tmp.$$"
-      (umask 077; jq -n --arg runtime_id "$AGENTCTL_RUNTIME_ID" \
-        '{runtime_id:$runtime_id, decision:"deny"}' >"$evidence_tmp") \
+      (umask 077; jq -n --arg runtime_id "$AGENTCTL_RUNTIME_ID" --arg sentinel_nonce "$sentinel_nonce" \
+        '{runtime_id:$runtime_id, decision:"deny", sentinel_nonce:$sentinel_nonce}' >"$evidence_tmp") \
         && mv -f "$evidence_tmp" "$dir/guard-sentinel.json"
       agentctl_policy_dispatcher_emit_deny "agentctl guard sentinel probe (always denied)"
       exit 0
       ;;
   esac
 
-  # "Bash" 以外の tool (code-mode の "exec" 等、実測で確認済み) は tool_input が
+  # "Bash" 以外の tool (code-mode の "exec" 等) は tool_input が
   # 任意形状の値になり得 (Codex の JSON Schema 上も無型)、実行される shell command
   # をクリーンな文字列として取り出せる保証が無い。取り出せない状態のまま
   # 分類不能な特権操作を無条件 allow すると fail-open になるため、"Bash" 以外は
@@ -143,7 +156,7 @@ agentctl_policy_dispatcher_main() {
   # Codex TUI の operation-file bootstrap は model が read-only verification を
   # shell で行う。generic classifier は quote/backslash を意図的に fail closed に
   # するため、そのルールを緩めず、bound Codex session が「自分の runtime dir に
-  # agentctl が生成した UUID 名 codex-op-*.txt」を読む実測 exact shape だけを許可する。
+  # agentctl が生成した UUID 名 codex-op-*.txt」を読む exact shape だけを許可する。
   # prefix match はせず command 全体を byte-exact 比較するため、後置コマンドや
   # runtime 外 path はこの例外に入らず通常 classifier で fail closed になる。
   if [ "${AGENTCTL_POLICY_CONTEXT_SOURCE:-env}" = "codex_session" ] \
@@ -167,7 +180,7 @@ agentctl_policy_dispatcher_main() {
 # 成功時は AGENTCTL_* をこの shell 内だけに設定し 0、失敗時は
 # AGENTCTL_POLICY_DISPATCHER_ERROR を設定して非 0 を返す。
 agentctl_policy_dispatcher_bind_codex_sentinel() {
-  local input="$1" runtime_id="$2"
+  local input="$1" runtime_id="$2" sentinel_nonce="$3"
   local session_id hook_cwd pending pending_json
   AGENTCTL_POLICY_DISPATCHER_ERROR=""
   session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
@@ -186,7 +199,7 @@ agentctl_policy_dispatcher_bind_codex_sentinel() {
     return 1
   fi
 
-  local stored_schema stored_runtime_id stored_name stored_backend runtime_dir policy_snapshot policy_digest stored_cwd
+  local stored_schema stored_runtime_id stored_name stored_backend runtime_dir policy_snapshot policy_digest stored_cwd stored_sentinel_nonce
   stored_schema=$(echo "$pending_json" | jq -r '.schema_version // empty')
   stored_runtime_id=$(echo "$pending_json" | jq -r '.runtime_id // empty')
   stored_name=$(echo "$pending_json" | jq -r '.name // empty')
@@ -195,8 +208,10 @@ agentctl_policy_dispatcher_bind_codex_sentinel() {
   policy_snapshot=$(echo "$pending_json" | jq -r '.policy_snapshot // empty')
   policy_digest=$(echo "$pending_json" | jq -r '.policy_digest // empty')
   stored_cwd=$(echo "$pending_json" | jq -r '.cwd // empty')
+  stored_sentinel_nonce=$(echo "$pending_json" | jq -r '.sentinel_nonce // empty')
   if [ "$stored_schema" != "$AGENTCTL_SCHEMA_VERSION" ] || [ "$stored_runtime_id" != "$runtime_id" ] \
     || [ "$stored_backend" != "codex" ] || [ -z "$stored_name" ] || [ "$stored_cwd" != "$hook_cwd" ] \
+    || [ -z "$sentinel_nonce" ] || [ "$stored_sentinel_nonce" != "$sentinel_nonce" ] \
     || [[ "$runtime_dir" != /* ]] || [[ "$policy_snapshot" != /* ]]; then
     AGENTCTL_POLICY_DISPATCHER_ERROR="Codex pending runtime binding does not match sentinel hook identity"
     return 1
@@ -291,7 +306,7 @@ agentctl_policy_dispatcher_resolve_codex_session() {
   return 0
 }
 
-# Fix #8: runtime ownership/generation を state.json と突き合わせる。
+# runtime ownership/generation を state.json と突き合わせる。
 # Claude/env 経路は従来どおり live tmux pane marker を要求する。Codex interactive
 # TUI は hook subprocess に TMUX_PANE/AGENTCTL_* が継承されないため、sentinel で
 # bind した Codex session_id record + runtime state/cwd/backend/generation を毎回
@@ -373,14 +388,14 @@ agentctl_policy_dispatcher_check_ownership() {
   fi
 }
 
-# usage: agentctl_policy_dispatcher_is_codex_operation_read <command_string>
+# 使い方: agentctl_policy_dispatcher_is_codex_operation_read <command_string>
 # 成功(0): current runtime dir 内の agentctl-generated operation file に対する
 # exact read-only bootstrap command。失敗(1): それ以外。
 agentctl_policy_dispatcher_matches_codex_operation_read_operand() {
   local command_string="$1" operand="$2" prefix suffix range
 
-  # Codex may split verification and content read into separate read-only calls.
-  # Every accepted shape is constrained to the same known operation-file operand.
+  # Codex が verification と本文 read を別々の read-only call に分ける場合もある。
+  # 許可する形はすべて同一の既知 operation-file operand に限定する。
   [ "$command_string" = "sha256sum $operand && wc -c $operand" ] && return 0
 
   prefix="sed -n '"
@@ -404,15 +419,24 @@ agentctl_policy_dispatcher_matches_codex_operation_read_operand() {
 
 agentctl_policy_dispatcher_is_codex_operation_read() {
   local command_string="$1" dir file base operand escaped
+  local artifact_count=0
   dir="${AGENTCTL_POLICY_SNAPSHOT%/*}"
   [ -d "$dir" ] || return 1
+
+  # transport artifact は backend 側で64件に制限する。古い実装や手動改変で
+  # それを超えた runtime は例外判定を止め、通常 classifier に戻して fail closed にする。
+  for file in "$dir"/codex-op-*.txt; do
+    [ -f "$file" ] || continue
+    artifact_count=$((artifact_count + 1))
+    [ "$artifact_count" -le 64 ] || return 1
+  done
 
   for file in "$dir"/codex-op-*.txt; do
     [ -f "$file" ] || continue
     base=${file##*/}
     [[ "$base" =~ ^codex-op-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.txt$ ]] || continue
 
-    # Codex 0.154.0 で実測した read-only shape。sed の上限行数は file/context
+    # Codex が生成する read-only shape。sed の上限行数は file/context
     # に応じて 240/260 等へ変化するため正の整数だけ許容し、それ以外の command
     # token と同一 operation-file operand の3回使用は完全一致を要求する。
     # runtime path に空白/metacharacter があっても raw unquoted operand は絶対に

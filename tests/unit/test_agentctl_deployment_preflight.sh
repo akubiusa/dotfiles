@@ -69,7 +69,7 @@ RECONCILE_AFTER=$(bash "$AGENTCTL" status --name pf1 --json | jq -r '.reconcile'
 bash "$AGENTCTL" stop --name pf1 --runtime-id "$RID" >/dev/null
 bash "$AGENTCTL" cleanup --name pf1 --runtime-id "$RID" >/dev/null 2>&1 || true
 
-# --- Fix #7: rollback interlock covers inventory -> removal/apply -> postcheck as one operation ---
+# --- rollback interlock は inventory -> removal/apply -> postcheck を一操作として覆う ---
 
 MARKER="$WORKROOT/rollback-ran"
 if bash "$PREFLIGHT" -- touch "$MARKER" >/tmp/agentctl-preflight-wrap-out 2>&1; then
@@ -94,9 +94,8 @@ RECONCILE_PF2=$(bash "$AGENTCTL" status --name pf2 --json | jq -r '.reconcile')
 bash "$AGENTCTL" stop --name pf2 --runtime-id "$RID2" >/dev/null
 bash "$AGENTCTL" cleanup --name pf2 --runtime-id "$RID2" >/dev/null 2>&1 || true
 
-# race: while the rollback exclusive section is active (long-running wrapped
-# command), a concurrent 'start' must block on the shared lock and cannot
-# publish until the exclusive section releases.
+# rollback の exclusive section が長時間実行中でも、並行 start は shared lock で待機し、
+# exclusive section 解放前に generation を publish できないことを確認する。
 ROLLBACK_LOG="$WORKROOT/rollback.log"
 : >"$ROLLBACK_LOG"
 bash "$PREFLIGHT" -- bash -c 'echo begin >>'"$ROLLBACK_LOG"'; sleep 2; echo end >>'"$ROLLBACK_LOG"'' &
@@ -121,9 +120,8 @@ awk -v d="$START_DURATION" 'BEGIN{exit !(d>=1.0)}' \
 bash "$AGENTCTL" stop --name pf3 --runtime-id "$RID3" >/dev/null
 bash "$AGENTCTL" cleanup --name pf3 --runtime-id "$RID3" >/dev/null 2>&1 || true
 
-# race: same barrier, but against 'resume' instead of 'start'. A previously
-# stopped/exited runtime must also be unable to publish a fresh generation
-# while the rollback exclusive section is active.
+# 同じ barrier を resume にも適用し、stopped/exited runtime が rollback 中に
+# fresh generation を publish できないことを確認する。
 RID4=$(bash "$AGENTCTL" start --name pf4 --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY" --mission-stdin <<<"mission4")
 bash "$AGENTCTL" stop --name pf4 --runtime-id "$RID4" >/dev/null
 tmux kill-session -t "agentctl-pf4" >/dev/null 2>&1 || true
@@ -150,8 +148,8 @@ awk -v d="$RESUME_DURATION" 'BEGIN{exit !(d>=1.0)}' \
 bash "$AGENTCTL" stop --name pf4 --runtime-id "$RID4B" >/dev/null
 bash "$AGENTCTL" cleanup --name pf4 --runtime-id "$RID4B" >/dev/null 2>&1 || true
 
-# --- post-removal fail-closed: a completed rollback that removes/breaks the ---
-# --- codex guard wiring must block subsequent start AND resume from publishing ---
+# --- rollback後の guard removal/breakageを fail closed にする検証 ---
+# --- Codex guard wiring破損後は start/resume の publish を拒否する検証 ---
 # guard preflight は respawn-pane より前の _publish_generation 内で同期的に
 # 走り、失敗時はそこで die するため、guard 破壊後の start/resume には実 codex
 # バイナリは不要。resume は predecessor から backend を厳密に継承する
@@ -213,7 +211,7 @@ tmux kill-session -t "agentctl-pfcx" >/dev/null 2>&1 || true
 tmux kill-session -t "agentctl-pfcx2" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/pfcx" "$WORKROOT/state/agentctl/runtimes/pfcx2"
 
-# --- deterministic barrier races (file-existence based, not elapsed timing) ---
+# --- 経過時間ではなく file existence で判定する deterministic barrier race 検証 ---
 # AGENTCTL_TEST_BARRIER_STAGE=post_lock_pre_preflight は _publish_generation が
 # shared lock を取得した直後、guard/backend preflight の直前で処理を止める。
 # これにより「generation creation が preflight に入った/入る直前で止まっている

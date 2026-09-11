@@ -6,9 +6,8 @@
 # 入力は argv (shell 文字列の再パースではなく配列) で受け取り、
 # allow | deny | not_privileged | unknown_privileged のいずれかを返す。
 #
-# ponytail: spec (.agent-work/specs/2026-09-10-autonomous-agent-runtime-design.md
-# の "Policy enforcement model") が要求する完全な canonical identity resolution
-# のうち、以下は v1 として意図的に簡略化している。upgrade path はコメントで示す。
+# privileged operation の canonical identity resolution は fail closed を優先し、
+# v1 では以下の direct simple-command form だけを明示的に受理する。
 #   - `git -C <path>` は「`git` 直後の唯一の global option」の形のみ受理する。
 #     複数 `-C`、`--git-dir`/`--work-tree`/`-c`/`--namespace` の混在、`-C` 無し
 #     の privileged subcommand はすべて deny する (仕様どおり)。
@@ -31,18 +30,17 @@ agentctl_classify_resolve_trusted_tool_path() {
   realpath -e -- "$found" 2>/dev/null
 }
 
-# Capture the backend/hook process' initial tool identities once. Raw shell parsing below
-# rejects command-resolution state changes before a privileged operation, so a later PATH
-# mutation cannot silently redefine what bare `git`/`gh` means.
+# hook process 起動時の git/gh executable identity を一度だけ固定する。後段では
+# command resolution を変える構文を拒否するため、途中の PATH 変更で bare git/gh の
+# identity がすり替わらない。
 AGENTCTL_CLASSIFY_TRUSTED_GIT_PATH=$(agentctl_classify_resolve_trusted_tool_path git 2>/dev/null || true)
 AGENTCTL_CLASSIFY_TRUSTED_GH_PATH=$(agentctl_classify_resolve_trusted_tool_path gh 2>/dev/null || true)
 
 
-# Resolve argv tokens that are genuinely the Git/GitHub CLI executable. Bare `git`/`gh`
-# are the canonical direct forms. Alternate paths/names are accepted only when they resolve
-# to the same executable (or a byte-identical copy); an executable merely named git/gh is
-# ambiguous and must fail closed rather than inheriting privileged-tool semantics.
-# stdout: git | gh | __ambiguous_privileged__ ; no output/rc=1 when unrelated.
+# argv token が実際の Git/GitHub CLI と同一 identity かを解決する。bare git/gh は
+# canonical direct form とし、別 path/name は同一 executable または byte-identical copy
+# と確認できた場合だけ同一視する。名前だけが git/gh の別 executable は曖昧として拒否する。
+# stdout は git / gh / __ambiguous_privileged__。無関係なら出力なしで rc=1。
 agentctl_classify_known_tool_identity() {
   local invoked="$1" resolved="" tool trusted_resolved base
   base=$(basename -- "$invoked")
@@ -76,8 +74,8 @@ agentctl_classify_known_tool_identity() {
         trusted_sha=$(sha256sum -- "$trusted_resolved" 2>/dev/null | awk '{print $1}') || return 1
         [ "$resolved_sha" = "$trusted_sha" ] && { printf '%s' "$tool"; return 0; }
       else
-        # Without a way to compare an alternate executable identity, do not silently
-        # classify an explicit alternate executable as unrelated.
+        # 別 path の executable identity を比較できない場合は、無関係な command として
+        # 暗黙 allow せず曖昧な privileged form として扱う。
         echo "__ambiguous_privileged__"; return 0
       fi
     fi
@@ -89,7 +87,7 @@ agentctl_classify_known_tool_identity() {
   return 1
 }
 
-# --- git -----------------------------------------------------------
+# --- git 処理 -----------------------------------------------------------
 
 # privileged な git subcommand の分類。permission 名を返す (commit/push/git_cleanup/worktree_add/remote_delete)。
 # 非 privileged (status/diff/log/show/fetch/rev-parse 等) は "" を返す。
@@ -106,7 +104,7 @@ agentctl_classify_git_subcommand_permission() {
   esac
 }
 
-# usage: agentctl_classify_git <policy_json> <env_csv> <had_env_prefix:0|1> <git-subargs...>
+# 使い方: agentctl_classify_git <policy_json> <env_csv> <had_env_prefix:0|1> <git-subargs...>
 agentctl_classify_git() {
   local policy_json="$1" env_csv="$2" had_env_prefix="$3"; shift 3
   local args=("$@")
@@ -196,7 +194,7 @@ agentctl_classify_git() {
   fi
 
   # ここから privileged。先頭の env-assignment word / env wrapper は identity
-  # を隠蔽し得るため無条件 deny する (v8 design.md:112ff)。read-only/
+  # を隠蔽し得るため無条件 deny する。read-only/
   # not_privileged な分類 (上の分岐) には適用しない。
   if [ "$had_env_prefix" = "1" ]; then
     echo "deny"; return 0
@@ -334,7 +332,7 @@ agentctl_classify_git() {
   esac
 }
 
-# --- gh -----------------------------------------------------------
+# --- gh 処理 -----------------------------------------------------------
 
 # gh の既知 read-only (not_privileged) subcommand/second-arg allowlist。
 # ここに無い gh <sub> <sub2> の組み合わせは (pr create/merge を除き)
@@ -351,7 +349,7 @@ agentctl_classify_gh_is_known_read_only() {
   esac
 }
 
-# usage: agentctl_classify_gh <policy_json> <gh-subargs...>
+# 使い方: agentctl_classify_gh <policy_json> <gh-subargs...>
 agentctl_classify_gh() {
   local policy_json="$1"; shift
   local args=("$@")
@@ -413,7 +411,7 @@ agentctl_classify_gh() {
   echo "deny"; return 0
 }
 
-# --- production deploy/verify -----------------------------------------------------------
+# --- production deploy/verify 処理 -----------------------------------------------------------
 
 # executable path を realpath -e で正規化する。実在しない path (テスト
 # fixture 由来の placeholder のような) はそのまま literal 比較にフォール
@@ -423,7 +421,7 @@ agentctl_classify_canonicalize_path() {
   realpath -e -- "$1" 2>/dev/null || echo "$1"
 }
 
-# usage: agentctl_classify_production <policy_json> <argv...>
+# 使い方: agentctl_classify_production <policy_json> <argv...>
 agentctl_classify_production() {
   local policy_json="$1"; shift
   local args=("$@")
@@ -490,10 +488,10 @@ agentctl_classify_production() {
   echo "not_privileged"
 }
 
-# --- top-level dispatch -----------------------------------------------------------
+# --- top-level dispatch 処理 -----------------------------------------------------------
 
-# usage: agentctl_classify_command <policy_json> [--env "K=V,K=V"] -- <argv...>
-# stdout: allow | deny | not_privileged | unknown_privileged
+# 使い方: agentctl_classify_command <policy_json> [--env "K=V,K=V"] -- <argv...>
+# 標準出力: allow | deny | not_privileged | unknown_privileged
 agentctl_classify_command() {
   local policy_json="$1"; shift
   local env_csv="" force_env_prefix=0
@@ -534,8 +532,8 @@ agentctl_classify_command() {
   fi
 
   # 実際の assignment の有無に関わらず env wrapper 経由 (had_env_prefix=1) を
-  # force-env-prefix で再帰的に伝播する (v8 design.md:112ff: `env git ...` は
-  # assignment 0 件でも deny)。
+  # force-env-prefix で再帰的に伝播する。`env git ...` は assignment 0 件でも
+  # direct simple-command form ではないため deny する。
   local had_env_prefix=0
   { [ "${#prefix_assignments[@]}" -gt 0 ] || [ "$force_env_prefix" -eq 1 ]; } && had_env_prefix=1
 
@@ -564,9 +562,9 @@ agentctl_classify_command() {
     "") : ;;
   esac
 
-  # Only literal shell builtins are transparent wrappers. An executable merely named
-  # command/exec must never inherit builtin semantics. Options alter lookup/process state,
-  # so keep the transparent form intentionally minimal: `command CMD...` / `exec CMD...`.
+  # transparent wrapper として扱うのは literal shell builtin の command/exec だけ。
+  # 同名 executable は builtin semantics を継承させず、option 付きも lookup/process state
+  # を変え得るため `command CMD...` / `exec CMD...` の最小形だけを透過する。
   case "${argv[0]}" in
     command|exec)
       local rest=("${argv[@]:1}")
@@ -602,17 +600,16 @@ agentctl_classify_command() {
       ;;
   esac
 
-  # Alternate paths/names with wrapper-like basenames are not shell builtins. Shell
-  # interpreters/source/env remain unresolved privileged forms even when invoked by path.
+  # wrapper風 basename を持つ別 path/name は shell builtin ではない。shell interpreter、
+  # source、env は path 指定でも privileged identity を静的確定できない形として扱う。
   case "$cmd0_base" in
     command|exec|env|sh|bash|zsh|eval|source)
       echo "unknown_privileged"; return 0
       ;;
     *)
-      # A generic wrapper whose argv explicitly contains a known/ambiguous git/gh
-      # executable is not a direct simple-command privileged form. Do not let
-      # `timeout 5 git ...`, `nice /usr/bin/git ...`, xargs-style wrappers, etc.
-      # fall through as unrelated/nonprivileged commands.
+      # argv 内に既知または曖昧な git/gh executable を含む generic wrapper は direct
+      # simple-command form ではない。timeout/nice/xargs 等で包んだ privileged operation を
+      # unrelated/nonprivileged として暗黙 allow しない。
       local wrapped_token wrapped_identity
       for wrapped_token in "${argv[@]:1}"; do
         wrapped_identity=$(agentctl_classify_known_tool_identity "$wrapped_token" 2>/dev/null) || wrapped_identity=""
@@ -634,8 +631,8 @@ agentctl_classify_command() {
 # ため無条件 unknown_privileged とし、`;`/`&&`/`||`/`|` で分割した各 segment を
 # individually classify する (segment 分割手法は git-config-guard.sh を踏襲)。
 #
-# usage: agentctl_classify_shell_command_string <policy_json> [--env "K=V,K=V"] <command-string>
-# stdout: allow | deny | not_privileged | unknown_privileged
+# 使い方: agentctl_classify_shell_command_string <policy_json> [--env "K=V,K=V"] <command-string>
+# 標準出力: allow | deny | not_privileged | unknown_privileged
 agentctl_classify_shell_command_string() {
   local policy_json="$1"; shift
   local env_csv=""
@@ -655,10 +652,9 @@ agentctl_classify_shell_command_string() {
       echo "unknown_privileged"; return 0 ;;
   esac
 
-  # Parameter/pathname/brace/tilde expansion is performed by the shell after this
-  # parser sees the raw command string. Because expansion can synthesize a privileged
-  # executable/argument that is absent from the visible tokens, reject any such syntax
-  # rather than attempting partial shell evaluation here.
+  # parameter/pathname/brace/tilde expansion はこの parser が raw command を見た後に
+  # shell が実行する。visible token に無い privileged executable/argument を生成できるため、
+  # 部分的な shell evaluation はせず expansion 構文を丸ごと拒否する。
   case "$command_string" in
     *'$'*|*'*'*|*'?'*|*'['*|*'{'*|*'}'*|*'~'*)
       echo "unknown_privileged"; return 0 ;;

@@ -3,11 +3,11 @@
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 #
-# agentctl の real tmux integration テスト (plan Task 12)。
+# agentctl の real tmux integration テスト。
 # tests/unit/test_agentctl.sh が検証する個々の内部不変条件 (fault-stage 単位の
 # barrier、単一 runtime 内の byte-exact steer 等) を再検証するのではなく、
 # 複数コマンドをまたぐ end-to-end シナリオを real tmux server 上で検証する。
-# 実 Claude/Codex backend による live E2E (plan Task 13/14) は対象外。
+# 実 Claude/Codex backend の live E2E は別テストで扱う。
 
 set -uo pipefail
 
@@ -302,7 +302,9 @@ echo "$LOGS_E" | grep -q "logs attach mission marker" \
 # agentctl attach 内部の `tmux attach-session` (非 control-mode) は本物の
 # terminal を要求するため、`script -qc` で pty を割り当てて CLI コマンド
 # そのものを実行し、実 client が接続されることを検証する。
-script -qc "bash '$AGENTCTL' attach --name '$NAME_E' --runtime-id '$RID_E'" /dev/null \
+# CI/Command Relay が TERM=dumb を継承していても、PTY client 自体は clear capability を
+# 必要とするため、利用可能な標準 terminfo を attach client にだけ明示する。
+TERM=xterm-256color script -qc "bash '$AGENTCTL' attach --name '$NAME_E' --runtime-id '$RID_E'" /dev/null \
   >"$WORKROOT/attach-cli.out" 2>&1 &
 sleep 0.7
 

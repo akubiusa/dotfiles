@@ -54,7 +54,7 @@ check() {
   [ "$got" = "$expected" ] && pass "$desc" || fail "$desc (expected $expected, got $got)"
 }
 
-# --- git push -----------------------------------------------------------
+# --- git push 検証 -----------------------------------------------------------
 
 check "allowed: git -C <worktree> push origin" allow "$POLICY" -- git -C "$REPO" push origin
 check "denied: git push origin (no -C)" deny "$POLICY" -- git push origin
@@ -75,7 +75,7 @@ check "denied: push permission=false" deny "$POLICY_DENY" -- git -C "$REPO" push
 check "denied: remote delete without git_cleanup" deny "$(echo "$POLICY" | jq '.permissions.git_cleanup=false')" -- git -C "$REPO" push origin --delete some-branch
 check "allowed: remote delete with push+git_cleanup" allow "$POLICY" -- git -C "$REPO" push origin --delete some-branch
 
-# --- git commit / branch / worktree -----------------------------------------------------------
+# --- git commit / branch / worktree 検証 -----------------------------------------------------------
 
 check "allowed: git -C <repo> commit" allow "$POLICY" -- git -C "$REPO" commit -m msg
 check "denied: git -C <repo> commit (permission=false)" deny "$POLICY_DENY" -- git -C "$REPO" commit -m msg
@@ -95,7 +95,7 @@ check "denied: push --prune requires git_cleanup" deny "$(echo "$POLICY" | jq '.
 check "allowed: push --prune with git_cleanup=true" allow "$POLICY" -- git -C "$REPO" push --prune origin
 check "denied: push --mirror is always denied (equivalent to force-push)" deny "$POLICY" -- git -C "$REPO" push --mirror origin
 
-# --- gh -----------------------------------------------------------
+# --- gh 検証 -----------------------------------------------------------
 
 check "allowed: gh pr create --repo OWNER/REPO" allow "$POLICY" -- gh pr create --repo acme/widgets --title t --body b
 check "denied: gh pr create without --repo" deny "$POLICY" -- gh pr create --title t --body b
@@ -105,7 +105,7 @@ check "denied: gh mutation with --hostname is outside the canonical GitHub ident
 check "denied: gh mutation with duplicate --repo selectors is ambiguous" deny "$POLICY" -- gh pr merge --repo other/repo --repo acme/widgets --squash
 check "not_privileged: gh repo view" not_privileged "$POLICY" -- gh repo view
 
-# --- shell wrapper / eval -----------------------------------------------------------
+# --- shell wrapper / eval 検証 -----------------------------------------------------------
 
 check "unknown_privileged: bash -c wrapping git push" unknown_privileged "$POLICY" -- bash -c "git -C $REPO push origin"
 check "unknown_privileged: shell interpreter wrapper is fail-closed even when its script text looks unrelated" unknown_privileged "$POLICY" -- bash -c "ls -la"
@@ -113,7 +113,7 @@ check "unknown_privileged: source builtin is fail-closed because sourced file co
 check "unknown_privileged: dot/source builtin is fail-closed because sourced file contents are not statically classified" unknown_privileged "$POLICY" -- . ./script.sh
 check "unknown_privileged: eval wrapping gh pr merge" unknown_privileged "$POLICY" -- eval "gh pr merge --repo acme/widgets"
 
-# --- production deploy -----------------------------------------------------------
+# --- production deploy 検証 -----------------------------------------------------------
 
 check "allowed: exact deploy_argv match" allow "$POLICY" -- /abs/deploy --target pine
 check "not_privileged: unknown executable" not_privileged "$POLICY" -- /abs/other --target pine
@@ -123,7 +123,7 @@ check "denied: same production executable with an unapproved target argv" deny "
 check "denied: same production executable with extra trailing argv" deny "$POLICY" -- /abs/deploy --target pine --force
 check "not_privileged: unconfigured executable that merely resembles the production one" not_privileged "$POLICY" -- /abs/deploy-staging --target pine
 
-# --- production deploy: real-executable canonicalization (v8 audit finding) -----------------------------------------------------------
+# --- production deploy: real-executable canonicalization (v8 audit finding) 検証 -----------------------------------------------------------
 
 mkdir -p "$WORKROOT/bin"
 printf '#!/bin/bash\nexit 0\n' >"$WORKROOT/bin/deploy"
@@ -138,7 +138,7 @@ check "allowed: same production executable via symlink resolves to the same cano
 check "denied: canonical production executable with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/bin/deploy" --target staging
 check "denied: same production executable via symlink with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target staging
 
-# --- shell env-prefix (leading POSIX assignment word) -----------------------------------------------------------
+# --- shell env-prefix (leading POSIX assignment word) 検証 -----------------------------------------------------------
 # `FOO=bar git ...` / `GIT_DIR=x git ...` / `X=1 gh ...` は argv[0] が assignment
 # word になるため、剥がさなければ git/gh 判定に一切乗らず not_privileged
 # (暗黙 allow) にすり抜ける。
@@ -193,12 +193,12 @@ check_str "unknown_privileged: raw string env prefix before gh pr merge" unknown
 check_str "denied: raw string same production executable with unapproved target" deny "$POLICY" "/abs/deploy --target production"
 check_str "allowed: raw string exact production deploy_argv match" allow "$POLICY" "/abs/deploy --target pine"
 
-# --- clearly non-privileged -----------------------------------------------------------
+# --- clearly non-privileged 検証 -----------------------------------------------------------
 
 check "not_privileged: ls" not_privileged "$POLICY" -- ls -la
 check "not_privileged: cat file" not_privileged "$POLICY" -- cat somefile.txt
 
-# --- controller audit: config-override / identity / fail-open regressions -----------------------------------------------------------
+# --- controller audit: config-override / identity / fail-open regressions 検証 -----------------------------------------------------------
 
 check "denied: git --config-env override" deny "$POLICY" -- git --config-env=remote.origin.pushurl=EVIL -C "$REPO" push origin
 check "unknown_privileged: git unrecognized subcommand (alias/external)" unknown_privileged "$POLICY" -- git -C "$REPO" dangerous-alias
@@ -214,9 +214,8 @@ if [ -n "$REAL_GH" ]; then
 fi
 check "allowed: absolute path git identity resolves the same as bare git" allow "$POLICY" -- /usr/bin/git -C "$REPO" commit -m msg
 
-# privileged tool identity must not depend on argv[0] basename alone. A byte-identical
-# renamed copy is still the Git executable and must be classified as Git; a different
-# executable merely named `git` must fail closed rather than inherit Git privileges.
+# privileged tool identity は argv[0] basename だけで決めない。byte-identical な renamed copy は
+# Git と同一視し、名前だけが git の別 executable は privilege を継承させず fail closed にする。
 mkdir -p "$WORKROOT/tool-identity"
 REAL_GIT=$(command -v git)
 cp "$REAL_GIT" "$WORKROOT/tool-identity/gcopy"

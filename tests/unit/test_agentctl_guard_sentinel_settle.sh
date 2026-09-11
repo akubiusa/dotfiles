@@ -92,11 +92,9 @@ else
 fi
 tmux kill-session -t settletest2 >/dev/null 2>&1 || true
 
-# --- Codex: sentinel marker must be present in the first prompt itself ------------------
-# Codex runtime policy denies unclassifiable exec calls. If the sentinel prompt is hidden
-# behind an operation-file bootstrap, the first tool call is merely "read the file" and is
-# denied before the marker can ever reach PreToolUse. The sentinel is short, so Codex must
-# receive it directly as a single-line prompt.
+# --- Codex: sentinel marker must be present in the first prompt itself 検証 ------------------
+# Codex runtime は分類不能な exec call を拒否するため、sentinel を operation-file の背後へ
+# 隠すと marker 到達前の read call が拒否される。sentinel は短い固定1行を直接 prompt する。
 RUNTIME_ID3="rtcodexdirect1"
 DIR3="$WORKROOT/runtime3"
 mkdir -p "$DIR3"

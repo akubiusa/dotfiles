@@ -2,11 +2,10 @@
 # shellcheck disable=SC2015,SC2329
 # SC2015: `check && pass || fail` は本テストの意図通り。
 #
-# Real Codex PreToolUse E2E for inherited Git environment overrides.
-# A control commit first proves this exact disposable operation is otherwise allowed by the
-# real global hook. The same operation is then retried with inherited GIT_DIR/GIT_WORK_TREE;
-# the managed dispatcher must block it before either disposable repository changes.
-# No production/user repository is used as a fixture.
+# inherited Git environment override を実 Codex PreToolUse で検証する。
+# disposable repo の control commit が通常は許可されることを先に確認し、同じ操作へ
+# GIT_DIR/GIT_WORK_TREE を継承した場合だけ managed dispatcher が変更前に拒否することを確認する。
+# production/user repository は fixture に使わない。
 
 set -uo pipefail
 
@@ -24,7 +23,7 @@ if ! timeout 10 codex login status >/dev/null 2>&1; then
   exit 0
 fi
 
-# The test is meaningful only against the exact managed hook deployment.
+# managed hook の実配備内容そのものを前提条件として検証する。
 if ! HOME="$HOME" bash -c '
   source "$1/home/bin/agentctl-common.sh"
   source "$1/home/bin/agentctl-backend-codex.sh"

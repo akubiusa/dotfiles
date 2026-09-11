@@ -2,8 +2,7 @@
 # shellcheck disable=SC2015
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # agentctl-policy-dispatcher.sh の PreToolUse hook 契約テスト。
-# 実 Codex/Claude PreToolUse invocation による検証 (harmless sentinel 等) は
-# 対象外 (Task 11 の live E2E 依存分)。
+# 実 Codex/Claude PreToolUse invocation と backend hook のロード確認は live E2E で扱う。
 
 set -uo pipefail
 
@@ -11,6 +10,7 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 DISPATCHER="$REPO_ROOT/home/bin/agentctl-policy-dispatcher.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "⚠️  jq not found; skipping dispatcher tests"; exit 0; }
+REAL_JQ=$(command -v jq)
 command -v git >/dev/null 2>&1 || { echo "⚠️  git not found; skipping dispatcher tests"; exit 0; }
 command -v tmux >/dev/null 2>&1 || { echo "⚠️  tmux not found; skipping dispatcher tests"; exit 0; }
 
@@ -43,7 +43,7 @@ POLICY_FILE="$WORKROOT/policy.snapshot.json"
 jq -n --arg gcd "$GCD" '{version:1,permissions:{push:false,commit:true},scope:{repositories:[{id:"primary",git_common_dir:$gcd,github_repo:"acme/widgets",allowed_worktree_roots:[]}],remotes:[],production_targets:[]}}' >"$POLICY_FILE"
 POLICY_DIGEST=$(jq -S -c . "$POLICY_FILE" | sha256sum | awk '{print "sha256:" $1}')
 
-# 実 runtime を模した tmux pane と state.json を用意する (Fix #8: dispatcher は
+# 実 runtime を模した tmux pane と state.json を用意する。dispatcher は
 # policy version と pane owner/runtime_id/name/backend/schema marker を
 # state.json と突き合わせて検証するため)。
 STATE_FILE="$WORKROOT/state.json"
@@ -68,8 +68,26 @@ OUT=$(unset AGENTCTL_POLICY_SNAPSHOT AGENTCTL_RUNTIME_ID; run_dispatcher "git pu
 [ -z "$OUT" ] && pass "no AGENTCTL env -> no-op (existing session behavior unchanged)" \
   || fail "expected no-op without agentctl env, got: $OUT"
 
+FAST_HOME="$WORKROOT/fast-home"
+FAST_BIN="$WORKROOT/fast-bin"
+FAST_JQ_MARKER="$WORKROOT/fast-jq-invoked"
+mkdir -p "$FAST_HOME" "$FAST_BIN"
+cat >"$FAST_BIN/jq" <<WRAP
+#!/bin/bash
+touch "$FAST_JQ_MARKER"
+exec "$REAL_JQ" "\$@"
+WRAP
+chmod +x "$FAST_BIN/jq"
+FAST_PAYLOAD=$($REAL_JQ -n '{session_id:"ordinary-unbound-session",cwd:"/tmp",tool_name:"Bash",tool_input:{command:"git status"}}')
+OUT=$(printf '%s\n' "$FAST_PAYLOAD" | HOME="$FAST_HOME" PATH="$FAST_BIN:$PATH" \
+  env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST \
+  bash "$DISPATCHER")
+[ -z "$OUT" ] && [ ! -e "$FAST_JQ_MARKER" ] \
+  && pass "unbound normal Codex session with empty binding registry exits before invoking jq" \
+  || fail "normal unbound Codex session invoked jq or produced hook output: $OUT"
+
 # --- Codex interactive TUI: ambient AGENTCTL_* が消える場合の session binding -----------------------------
-# Codex 0.154.0 interactive TUI では、TUI 起動時に渡した AGENTCTL_* が
+# 現行 Codex interactive TUI では、TUI 起動時に渡した AGENTCTL_* が
 # PreToolUse hook subprocess へ継承されない。agentctl sentinel marker の runtime_id と
 # hook stdin の stable session_id を初回だけ binding し、以後は session_id から
 # runtime generation / policy snapshot を解決できることを検証する。
@@ -94,7 +112,35 @@ jq -n --arg rid "$CODEX_RID" --arg runtime_dir "$CODEX_RUNTIME_DIR" \
   >"$CODEX_REGISTRY/pending/$RID_KEY.json"
 chmod 0600 "$CODEX_REGISTRY/pending/$RID_KEY.json"
 
-CODEX_SENTINEL_TOOL_INPUT="const r = await tools.exec_command({\"cmd\":\"true '#agentctl-guard-sentinel:$CODEX_RID'\"});"
+CODEX_SENTINEL_NONCE="nonce-correct-1"
+CODEX_ATTACKER_SESSION_ID="codex-session-attacker"
+CODEX_ATTACKER_SESSION_KEY=$(printf '%s' "$CODEX_ATTACKER_SESSION_ID" | sha256sum | awk '{print $1}')
+jq --arg nonce "$CODEX_SENTINEL_NONCE" '. + {sentinel_nonce:$nonce}' "$CODEX_REGISTRY/pending/$RID_KEY.json" >"$CODEX_REGISTRY/pending/$RID_KEY.json.tmp" \
+  && mv "$CODEX_REGISTRY/pending/$RID_KEY.json.tmp" "$CODEX_REGISTRY/pending/$RID_KEY.json"
+chmod 0600 "$CODEX_REGISTRY/pending/$RID_KEY.json"
+
+CODEX_WRONG_SENTINEL_TOOL_INPUT="const r = await tools.exec_command({\"cmd\":\"true '#agentctl-guard-sentinel:$CODEX_RID:nonce-wrong'\"});"
+CODEX_WRONG_SENTINEL_PAYLOAD=$(jq -n --arg sid "$CODEX_ATTACKER_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_WRONG_SENTINEL_TOOL_INPUT" \
+  '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
+OUT=$(printf '%s\n' "$CODEX_WRONG_SENTINEL_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST -u TMUX_PANE \
+  bash "$DISPATCHER")
+if [ -f "$CODEX_REGISTRY/pending/$RID_KEY.json" ] \
+  && [ ! -f "$CODEX_REGISTRY/sessions/$CODEX_ATTACKER_SESSION_KEY.json" ] \
+  && [ ! -f "$CODEX_RUNTIME_DIR/guard-sentinel.json" ]; then
+  pass "Codex sentinel with wrong one-shot nonce cannot consume or bind a pending runtime"
+else
+  fail "wrong Codex sentinel nonce consumed/bound pending runtime or wrote evidence: $OUT"
+  # 後続の正しい sentinel 検証を独立して続行できるよう fixture を復元する。
+  rm -f "$CODEX_REGISTRY/sessions/$CODEX_ATTACKER_SESSION_KEY.json" "$CODEX_RUNTIME_DIR/guard-sentinel.json"
+  jq -n --arg rid "$CODEX_RID" --arg runtime_dir "$CODEX_RUNTIME_DIR" \
+    --arg policy "$CODEX_POLICY" --arg digest "$CODEX_POLICY_DIGEST" --arg cwd "$REPO" --arg nonce "$CODEX_SENTINEL_NONCE" \
+    '{schema_version:1,runtime_id:$rid,name:"codexdisp",backend:"codex",runtime_dir:$runtime_dir,policy_snapshot:$policy,policy_digest:$digest,cwd:$cwd,sentinel_nonce:$nonce}' \
+    >"$CODEX_REGISTRY/pending/$RID_KEY.json"
+  chmod 0600 "$CODEX_REGISTRY/pending/$RID_KEY.json"
+fi
+
+CODEX_SENTINEL_TOOL_INPUT="const r = await tools.exec_command({\"cmd\":\"true '#agentctl-guard-sentinel:$CODEX_RID:$CODEX_SENTINEL_NONCE'\"});"
 CODEX_SENTINEL_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg ti "$CODEX_SENTINEL_TOOL_INPUT" \
   '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
 OUT=$(printf '%s\n' "$CODEX_SENTINEL_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
@@ -125,7 +171,7 @@ OUT=$(printf '%s\n' "$CODEX_LS_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
 [ -z "$OUT" ] && pass "bound Codex session allows non-privileged operation without ambient AGENTCTL_*" \
   || fail "expected bound Codex session non-privileged no-op, got: $OUT"
 
-# real Codex 0.154.0 が operation file bootstrap を読む際に実測した exact shape。
+# 実 Codex が operation file bootstrap を読む際の exact shape。
 # generic classifier の quote fail-closed は維持したまま、この runtime 自身の
 # codex-op-*.txt に対する read-only verification/read sequence だけを許可する。
 CODEX_OP="$CODEX_RUNTIME_DIR/codex-op-11111111-2222-3333-4444-555555555555.txt"
@@ -173,7 +219,7 @@ OUT=$(printf '%s\n' "$CODEX_OP_SED_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   && pass "bound Codex session allows exact positive-range sed read for its own operation file" \
   || fail "expected operation-file sed read to pass, got: $OUT"
 
-# real Codex queue turn で実測した分割 read shape: hash 単体 + EOF までの sed。
+# 実 Codex queue turn が使う分割 read shape: hash 単体 + EOF までの sed。
 CODEX_OP_HASH_CMD="sha256sum $CODEX_OP"
 CODEX_OP_HASH_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" --arg cmd "$CODEX_OP_HASH_CMD" \
   '{session_id:$sid,cwd:$cwd,tool_name:"Bash",tool_input:{command:$cmd}}')
@@ -195,9 +241,8 @@ OUT=$(printf '%s\n' "$CODEX_OP_SED_EOF_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   || fail "expected operation-file sed EOF read to pass, got: $OUT"
 
 
-# Raw, unquoted operation-file paths must never be accepted when the runtime path contains
-# shell metacharacters. Otherwise the exact allow exception itself can bless a command whose
-# operand triggers shell expansion/control syntax. The shell-escaped variant remains safe.
+# runtime path に shell metacharacter がある場合、raw unquoted operation-file path は許可しない。
+# allow 例外自体が expansion/control syntax を有効化しないよう、shell-escaped variant だけを許可する。
 META_RUNTIME="$WORKROOT/codex-runtime;\$(id)"
 mkdir -p "$META_RUNTIME"
 META_POLICY="$META_RUNTIME/policy.snapshot.json"
@@ -307,7 +352,7 @@ OUT=$(echo "$PAYLOAD" | PATH="$FAKE_BIN" AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE"
 echo "$OUT" | grep -q '"permissionDecision":"deny"' \
   && pass "missing jq dependency -> deny (fail closed, no jq needed to emit it)" || fail "expected deny, got: $OUT"
 
-# --- agentctl runtime: policy digest fail-closed -----------------------------------------------------------
+# --- agentctl runtime: policy digest fail-closed 検証 -----------------------------------------------------------
 
 OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" run_dispatcher "ls")
 echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
@@ -362,7 +407,7 @@ echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/nul
   && pass "inherited GH_HOST env cannot redirect an otherwise-allowed GitHub mutation" \
   || fail "expected deny for inherited GH_HOST override, got: $OUT"
 
-# --- Fix #8: schema/runtime ownership marker fail-closed hardening -----------------------------------------------------------
+# --- schema/runtime ownership marker の fail-closed 検証 -----------------------------------------------------------
 
 OUT=$(TMUX_PANE="" AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$POLICY_DIGEST" run_dispatcher "ls")
 echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
@@ -404,7 +449,7 @@ OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL
 [ -z "$OUT" ] && pass "restored marker + valid ownership evidence -> not_privileged no-op (existing behavior unaffected)" \
   || fail "expected no-op, got: $OUT"
 
-# --- 実測: 実 Codex model (gpt-5.6-terra) は shell command を "Bash" という
+# --- 実 Codex は shell command を "Bash" という
 # 名前の tool ではなく、code-mode の "exec" tool 経由 (tool_input が任意形状の
 # JS ソース) で実行することがある。hooks.json の matcher は "^(Bash|exec)$" で
 # これも PreToolUse として捕捉するが、"exec" の tool_input からクリーンな

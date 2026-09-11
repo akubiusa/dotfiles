@@ -1,9 +1,9 @@
 #!/bin/bash
-# agentctl deployment/rollback interlock: policy guard (dispatcher/classify/
+# agentctl deployment/rollback interlock。policy guard (dispatcher/classify/
 # hooks.json) を再デプロイ・ロールバックする前に、既に稼働中の agentctl
 # runtime が存在しないことを検証する。
 #
-# usage: agentctl-deployment-preflight [-- <command> [args...]]
+# 使い方: agentctl-deployment-preflight [-- <command> [args...]]
 #
 # コマンドを渡した場合 (実際の rollback 操作): exclusive deployment lock を
 # inventory (稼働中 runtime の有無確認) から <command> (removal/apply/
@@ -76,7 +76,7 @@ set +e
 # 永久に保持し続けて以後の全 start/resume (shared lock) を無期限に wedge する。
 # サブシェルで自 lock fd を閉じてから <command> を呼ぶことで継承を防ぐ。
 (
-  eval "exec ${AGENTCTL_DEPLOY_LOCK_FD}<&-"
+  agentctl_close_fd_value "$AGENTCTL_DEPLOY_LOCK_FD" || exit 1
   "$@"
 )
 status=$?

@@ -1,7 +1,7 @@
 #!/bin/bash
 # agentctl: 自律 AI agent runtime keeper CLI entrypoint。
 #
-# 設計方針 (spec: .agent-work/specs/2026-09-10-autonomous-agent-runtime-design.md):
+# runtime keeper の不変条件:
 #   - keeper は Git/worktree/merge lifecycle を一切所有しない (git/gh を呼ばない)。
 #   - mission/steer 本文は argv/state/event に残さない (file/stdin のみ)。
 #   - runtime_id + caller expected token による fencing で stale command を拒否する。
@@ -52,22 +52,26 @@ require_arg() {
   [ -n "$value" ] || agentctl_die "missing required argument: $flag"
 }
 
-# --- start -----------------------------------------------------------
+require_option_value() {
+  local flag="$1" remaining_argc="$2"
+  [ "$remaining_argc" -ge 2 ] || agentctl_die "missing value for option: $flag"
+}
+
+# --- start 処理 -----------------------------------------------------------
 
 cmd_start() {
-  local name="" cwd="" backend="" policy_file="" mission_file="" mission_stdin=0 fake_command=""
+  local name="" cwd="" backend="" policy_file="" mission_file="" mission_stdin=0
   if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
     name="$1"; shift
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --cwd) cwd="$2"; shift 2 ;;
-      --backend|--agent) backend="$2"; shift 2 ;;
-      --policy-file) policy_file="$2"; shift 2 ;;
-      --mission-file) mission_file="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --cwd) require_option_value "$1" "$#"; cwd="$2"; shift 2 ;;
+      --backend|--agent) require_option_value "$1" "$#"; backend="$2"; shift 2 ;;
+      --policy-file) require_option_value "$1" "$#"; policy_file="$2"; shift 2 ;;
+      --mission-file) require_option_value "$1" "$#"; mission_file="$2"; shift 2 ;;
       --mission-stdin) mission_stdin=1; shift ;;
-      --fake-command) fake_command="$2"; shift 2 ;; # test-only: fake backend 用の respawn 先コマンド
       *) agentctl_die "unknown option for start: $1" ;;
     esac
   done
@@ -101,11 +105,11 @@ cmd_start() {
   policy_json=$(agentctl_validate_policy_file "$policy_file")
 
   agentctl_ensure_root
-  agentctl_with_name_lock "$name" _start_locked "$name" "$cwd" "$backend" "$policy_file" "$policy_json" "$mission_file" "$mission_stdin" "$fake_command"
+  agentctl_with_name_lock "$name" _start_locked "$name" "$cwd" "$backend" "$policy_file" "$policy_json" "$mission_file" "$mission_stdin"
 }
 
 _start_locked() {
-  local name="$1" cwd="$2" backend="$3" policy_file="$4" policy_json="$5" mission_file="$6" mission_stdin="$7" fake_command="$8"
+  local name="$1" cwd="$2" backend="$3" policy_file="$4" policy_json="$5" mission_file="$6" mission_stdin="$7"
 
   local existing
   existing=$(agentctl_reconcile "$name")
@@ -131,7 +135,7 @@ _start_locked() {
   # policy snapshot: source file 変更後も effective policy が変わらないよう canonical JSON を固定する。
   # content-addressed path (policy.snapshot.<sha256>.json) にすることで、
   # 将来の resume が別の policy を渡してもこの generation の snapshot を
-  # 上書きできない (Fix #6: resume re-policy immutability)。
+  # 上書きできず、前 generation の effective policy を immutable に保つ。
   local policy_snapshot_path policy_digest
   {
     IFS= read -r policy_snapshot_path
@@ -140,7 +144,23 @@ _start_locked() {
 
   agentctl_write_initial_manifest "$name" "$cwd"
 
-  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$fake_command" "" "start"
+  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "" "start"
+}
+
+# guard sentinel 検証に失敗した generation を rollback する。owned session の
+# termination が成功するまでは binding/state を残し、live backend を unguarded にしない。
+_rollback_failed_guard_generation() {
+  local backend="$1" session="$2" name="$3" runtime_id="$4" predecessor_state_json="$5"
+
+  agentctl_tmux kill-session -t "$session" 2>/dev/null \
+    || agentctl_die --code 5 "guard sentinel verification failed and owned tmux session could not be terminated; preserving runtime state/bindings for '$name'"
+
+  [ "$backend" != "codex" ] || agentctl_codex_hook_remove_runtime_bindings "$runtime_id"
+  if [ -n "$predecessor_state_json" ]; then
+    printf '%s\n' "$predecessor_state_json" | agentctl_write_state_json "$name"
+  else
+    rm -f "$(agentctl_state_file "$name")"
+  fi
 }
 
 # 新規 generation を publish する (start / resume 共通)。
@@ -149,7 +169,7 @@ _start_locked() {
 # prelude_path が非空なら (resume の continuation bundle、元の mission 本文を
 # 内包済み)、mission.txt の代わりにそれを 1 turn として fresh backend へ届ける。
 _publish_generation() {
-  local name="$1" cwd="$2" backend="$3" policy_snapshot_path="$4" policy_digest="$5" fake_command="$6" prelude_path="$7" operation_name="${8:-start}"
+  local name="$1" cwd="$2" backend="$3" policy_snapshot_path="$4" policy_digest="$5" prelude_path="$6" operation_name="${7:-start}"
   local dir manifest_path
   dir=$(agentctl_runtime_dir "$name")
   manifest_path="$dir/manifest.json"
@@ -179,12 +199,12 @@ _publish_generation() {
   # 1. guard/backend preflight は shared lock 取得後、state/tmux に一切触れる前に
   #    行う (fake backend は no-op preflight)。guard 配線が壊れている/依存が
   #    消えている状態で start/resume しても "starting" state や blocked
-  #    bootstrap session を publish してしまわないようにする (Fix #7:
-  #    post-removal fail-closed は runtime を一切 publish しないことまで含む)。
+  #    bootstrap session を publish してしまわないようにする。preflight失敗時は
+  #    runtime generation 自体を一切 publish しない。
   local backend_cmd
   if [ "$backend" = "fake" ]; then
     # local_write=false は機械的な read-only mode で強制する必要がある
-    # (spec: "その機械的 read-only mode を構成できない backend は start を拒否する")。
+    # 機械的 read-only mode を構成できない backend は read-only policy で起動しない。
     # fake backend にはその仕組みが無いため、local_write=false なら start 自体を拒否する。
     local local_write
     local_write=$(jq -r '.permissions.local_write' "$policy_snapshot_path")
@@ -195,11 +215,11 @@ _publish_generation() {
     # 実インタラクティブ backend (Claude/Codex TUI) はいずれも raw mode で
     # 端末を読むため、最終行が改行なしでも即時読み取れる挙動に合わせる。
     # sink は O_APPEND ではなく単一の長命 fd で開く (O_APPEND だと pty 上の
-    # 2 回目以降の paste-buffer 由来データが実測で失われるため使わない)。
+    # 2 回目以降の paste-buffer 由来データを失い得るため使わない)。
     # cat ではなく tee を使い、受信内容を sink file に加えて自身の stdout
     # (= pane 画面) にも複製する。これにより `agentctl logs` が pane capture
     # 経由で実際の受信内容を観測できる (cat のみだと画面には何も描画されない)。
-    backend_cmd="${fake_command:-stty raw -echo; tee \"$dir/fake-sink.txt\"}"
+    backend_cmd="stty raw -echo; tee \"$dir/fake-sink.txt\""
   elif [ "$backend" = "claude" ] || [ "$backend" = "claude-work" ]; then
     backend_cmd=$(agentctl_backend_claude_command "$backend" "$policy_snapshot_path" "$dir") \
       || agentctl_die --code 5 "claude backend guard preflight failed"
@@ -275,18 +295,20 @@ _publish_generation() {
   # 7a. 実 backend の readline が armed になるまで待つ (fake は即 return)。
   #     起動直後に paste+Enter すると Enter だけ失われ、後続 steer の paste+
   #     Enter が未 submit の initial mission と連結されて誤実行される race が
-  #     実測で確認されたため、mission delivery の前に必ずこの barrier を通す。
+  #     起こり得るため、mission delivery の前に必ずこの barrier を通す。
   agentctl_wait_backend_ready "$backend" "$pane" "$dir"
 
   # Codex interactive TUI の hook subprocess は respawn-pane の AGENTCTL_* env を
   # 継承しない。real sentinel turn の直前だけ HOME 固定 registry に、この generation
   # の absolute runtime/policy context を pending publish する。sentinel hook 自身が
   # marker の runtime_id + stable session_id を照合して session binding へ consume する。
+  local sentinel_nonce=""
   if [ "$backend" = "codex" ]; then
-    agentctl_codex_hook_publish_pending "$name" "$runtime_id" "$dir" "$policy_snapshot_path" "$policy_digest" "$cwd"
+    sentinel_nonce=$(agentctl_gen_runtime_id)
+    agentctl_codex_hook_publish_pending "$name" "$runtime_id" "$dir" "$policy_snapshot_path" "$policy_digest" "$cwd" "$sentinel_nonce"
   fi
 
-  # 7a-2. guard startup verification (Fix #8): settings JSON を書いた/dispatcher
+  # 7a-2. guard startup verification: settings JSON を書いた/dispatcher
   #       を直接呼んだだけでは実 backend process が hook を実際に load した
   #       証拠にならない。無害な sentinel command を実 turn 経由で走らせ、
   #       PreToolUse dispatcher が deny evidence を書くことを機械的に確認する
@@ -294,14 +316,8 @@ _publish_generation() {
   #       得られなければ、この generation は一切生きた痕跡を残さず fail
   #       closed する (predecessor が存在するなら元の state.json へ復元する)。
   if [ "$backend" != "fake" ]; then
-    if ! agentctl_verify_guard_sentinel "$backend" "$pane" "$dir" "$runtime_id"; then
-      [ "$backend" != "codex" ] || agentctl_codex_hook_remove_runtime_bindings "$runtime_id"
-      agentctl_tmux kill-session -t "$session" 2>/dev/null || true
-      if [ -n "$predecessor_state_json" ]; then
-        echo "$predecessor_state_json" | agentctl_write_state_json "$name"
-      else
-        rm -f "$(agentctl_state_file "$name")"
-      fi
+    if ! agentctl_verify_guard_sentinel "$backend" "$pane" "$dir" "$runtime_id" "$sentinel_nonce"; then
+      _rollback_failed_guard_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json"
       agentctl_die --code 5 "guard sentinel verification failed for backend '$backend': could not obtain mechanical proof that the PreToolUse guard is active (no runtime published)"
     fi
     # 現行 interactive TUI では sentinel hook が pending を consume する。将来
@@ -369,7 +385,7 @@ _publish_generation() {
   echo "$runtime_id"
 }
 
-# --- status -----------------------------------------------------------
+# --- status 処理 -----------------------------------------------------------
 
 cmd_status() {
   local name="" json=0
@@ -378,7 +394,7 @@ cmd_status() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
       --json) json=1; shift ;;
       *) agentctl_die "unknown option for status: $1" ;;
     esac
@@ -408,7 +424,7 @@ cmd_status() {
   fi
 }
 
-# --- steer -----------------------------------------------------------
+# --- steer 処理 -----------------------------------------------------------
 
 cmd_steer() {
   local name="" runtime_id="" file="" use_stdin=0 json=0
@@ -417,9 +433,9 @@ cmd_steer() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
-      --file) file="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
+      --file) require_option_value "$1" "$#"; file="$2"; shift 2 ;;
       --stdin) use_stdin=1; shift ;;
       --json) json=1; shift ;;
       *) agentctl_die "unknown option for steer: $1" ;;
@@ -479,7 +495,7 @@ _steer_locked() {
   # そのものを paste せず operation-specific secure copy の bootstrap を送る)。
   # agentctl_deliver_body の唯一の失敗経路は paste 後の screen-settle timeout
   # であり、これは常に delivery 後 (paste 自体は既に発生済み) の不確定状態
-  # (result=unknown) を意味する。design.md:189 により delivery 後の unknown
+  # (result=unknown) を意味する。delivery 後の unknown
   # は再送を誘発しないため non-destructive success として exit 0 のまま扱う
   # (delivery 前の確定 failure は上の agentctl_die --code 4 で既に typed
   # non-zero exit している)。
@@ -510,7 +526,7 @@ _steer_locked() {
   fi
 }
 
-# --- logs -----------------------------------------------------------
+# --- logs 処理 -----------------------------------------------------------
 
 cmd_logs() {
   local name="" lines=200 follow=0
@@ -519,8 +535,8 @@ cmd_logs() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --lines) lines="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --lines) require_option_value "$1" "$#"; lines="$2"; shift 2 ;;
       --follow) follow=1; shift ;;
       *) agentctl_die "unknown option for logs: $1" ;;
     esac
@@ -554,8 +570,8 @@ cmd_logs() {
 
 # pane 全体を毎回再取得し前回との差分だけ出力する素朴な poll loop。
 # follow client を kill/detach しても読み取り専用のため runtime へは一切
-# 影響しない (spec: "logs --follow 切断で agent に EOF/signal を送らない")。
-# ponytail: tmux pipe-pane の方が効率的だが、pane に恒久的な hook を残し
+# 影響しない。follow client の切断を runtime の EOF/signal に変換しない。
+# tmux pipe-pane は効率的だが、pane に恒久的な hook を残し
 # 他操作 (respawn-pane 等) と干渉し得るため、この規模の log 量では素朴な
 # 差分 poll で十分とする。
 _logs_follow() {
@@ -575,7 +591,7 @@ _logs_follow() {
   done
 }
 
-# --- attach -----------------------------------------------------------
+# --- attach 処理 -----------------------------------------------------------
 
 cmd_attach() {
   local name="" runtime_id=""
@@ -584,8 +600,8 @@ cmd_attach() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for attach: $1" ;;
     esac
   done
@@ -596,8 +612,8 @@ cmd_attach() {
   # fencing の確認だけ per-name lock 内で行い、lock はすぐ解放する。attach
   # 本体 (対話的に detach されるまで block する) を lock 保持中に実行すると、
   # 同一 runtime への他 client の status/logs/steer が attach 中ずっと
-  # ブロックされてしまう (spec: 複数 client からの同時 status/logs/steer/attach
-  # を許容する)。
+  # ブロックされてしまう。複数 client の status/logs/steer/attach は並行観測を
+  # 許すため、対話 attach 中に name lock を保持し続けない。
   local session
   session=$(agentctl_with_name_lock "$name" _attach_check "$name" "$runtime_id")
   agentctl_tmux attach-session -t "$session"
@@ -619,7 +635,7 @@ _attach_check() {
   agentctl_tmux_session "$name"
 }
 
-# --- interrupt -----------------------------------------------------------
+# --- interrupt 処理 -----------------------------------------------------------
 
 cmd_interrupt() {
   local name="" runtime_id=""
@@ -628,8 +644,8 @@ cmd_interrupt() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for interrupt: $1" ;;
     esac
   done
@@ -662,7 +678,7 @@ _interrupt_locked() {
   echo "interrupted"
 }
 
-# --- stop -----------------------------------------------------------
+# --- stop 処理 -----------------------------------------------------------
 
 cmd_stop() {
   local name="" runtime_id=""
@@ -671,8 +687,8 @@ cmd_stop() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for stop: $1" ;;
     esac
   done
@@ -696,11 +712,12 @@ _stop_locked() {
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
   session=$(echo "$state_json" | jq -r '.tmux_session')
-  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  agentctl_tmux kill-session -t "$session" 2>/dev/null \
+    || agentctl_die --code 5 "failed to stop owned tmux session for runtime '$name'"
   echo "stopped"
 }
 
-# --- cleanup -----------------------------------------------------------
+# --- cleanup 処理 -----------------------------------------------------------
 
 cmd_cleanup() {
   local name="" runtime_id=""
@@ -709,8 +726,8 @@ cmd_cleanup() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for cleanup: $1" ;;
     esac
   done
@@ -743,27 +760,29 @@ _cleanup_locked() {
   [ -n "$expected_id" ] || agentctl_die --code 3 "cannot determine expected runtime_id for cleanup"
   [ "$runtime_id" = "$expected_id" ] || agentctl_die --code 4 "stale --runtime-id (expected $expected_id)"
 
-  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  if [ "$reconcile" != "stale" ]; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null \
+      || agentctl_die --code 5 "failed to remove owned tmux session during cleanup for runtime '$name'"
+  fi
   agentctl_codex_hook_remove_runtime_bindings "$runtime_id"
   rm -rf "$(agentctl_runtime_dir "$name")"
   echo "cleaned"
 }
 
-# --- resume -----------------------------------------------------------
+# --- resume 処理 -----------------------------------------------------------
 
 cmd_resume() {
-  local name="" cwd="" backend="" policy_file="" from_runtime_id="" fake_command=""
+  local name="" cwd="" backend="" policy_file="" from_runtime_id=""
   if [ $# -gt 0 ] && [[ "$1" != --* ]]; then
     name="$1"; shift
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --cwd) cwd="$2"; shift 2 ;;
-      --backend|--agent) backend="$2"; shift 2 ;;
-      --policy-file) policy_file="$2"; shift 2 ;;
-      --from-runtime-id) from_runtime_id="$2"; shift 2 ;;
-      --fake-command) fake_command="$2"; shift 2 ;; # test-only: fake backend 用の respawn 先コマンド
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --cwd) require_option_value "$1" "$#"; cwd="$2"; shift 2 ;;
+      --backend|--agent) require_option_value "$1" "$#"; backend="$2"; shift 2 ;;
+      --policy-file) require_option_value "$1" "$#"; policy_file="$2"; shift 2 ;;
+      --from-runtime-id) require_option_value "$1" "$#"; from_runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for resume: $1" ;;
     esac
   done
@@ -787,11 +806,11 @@ cmd_resume() {
   fi
 
   agentctl_ensure_root
-  agentctl_with_name_lock "$name" _resume_locked "$name" "$policy_json" "$from_runtime_id" "$fake_command"
+  agentctl_with_name_lock "$name" _resume_locked "$name" "$policy_json" "$from_runtime_id"
 }
 
 _resume_locked() {
-  local name="$1" policy_json_in="$2" from_runtime_id="$3" fake_command="$4"
+  local name="$1" policy_json_in="$2" from_runtime_id="$3"
 
   local reconcile
   reconcile=$(agentctl_reconcile "$name")
@@ -829,13 +848,16 @@ _resume_locked() {
   session=$(agentctl_tmux_session "$name")
   log_tail=$(agentctl_capture_pane_tail "$session" "${AGENTCTL_RESUME_LOG_TAIL_LINES:-500}")
 
-  # 前世代の leftover tmux session を消す (exited/stale どちらでも publish 前に必ず不在にする必要がある)。
-  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  # exited generation の dead pane は新 generation 公開前に確実に除去する。stale は既に session 不在。
+  if [ "$reconcile" = "exited" ]; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null \
+      || agentctl_die --code 5 "failed to remove predecessor tmux session before resume for runtime '$name'"
+  fi
 
   # 前世代の policy snapshot/digest は resume が明示的な --policy-file を
   # 渡さない限りそのまま継承する。渡された場合も content-addressed path
   # (agentctl_write_policy_snapshot) へ書くため、前世代の snapshot ファイル
-  # 自体は決して上書きされない (Fix #6: resume re-policy immutability)。
+  # 自体は決して上書きせず、predecessor の policy snapshot を immutable に保つ。
   local dir policy_snapshot_path policy_digest old_digest
   dir=$(agentctl_runtime_dir "$name")
   old_digest=$(echo "$state_json" | jq -r '.policy_digest')
@@ -860,10 +882,10 @@ _resume_locked() {
   agentctl_build_continuation_bundle "$manifest_json" "$log_tail" "$policy_snapshot_path" "$mission_path" "$old_digest" "$policy_digest" \
     | agentctl_atomic_write "$continuation_path" 0600
 
-  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$fake_command" "$continuation_path" "resume"
+  _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$continuation_path" "resume"
 }
 
-# --- complete -----------------------------------------------------------
+# --- complete 処理 -----------------------------------------------------------
 
 cmd_complete() {
   local name="" runtime_id=""
@@ -872,8 +894,8 @@ cmd_complete() {
   fi
   while [ $# -gt 0 ]; do
     case "$1" in
-      --name) name="$2"; shift 2 ;;
-      --runtime-id) runtime_id="$2"; shift 2 ;;
+      --name) require_option_value "$1" "$#"; name="$2"; shift 2 ;;
+      --runtime-id) require_option_value "$1" "$#"; runtime_id="$2"; shift 2 ;;
       *) agentctl_die "unknown option for complete: $1" ;;
     esac
   done
@@ -917,11 +939,14 @@ _complete_locked() {
   [ -n "$expected_id" ] || agentctl_die --code 3 "cannot determine expected runtime_id for complete"
   [ "$runtime_id" = "$expected_id" ] || agentctl_die --code 4 "stale --runtime-id (expected $expected_id)"
 
-  agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+  if [ "$reconcile" != "stale" ]; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null \
+      || agentctl_die --code 5 "failed to remove owned tmux session while completing runtime '$name'"
+  fi
   echo "completed"
 }
 
-# --- doctor -----------------------------------------------------------
+# --- doctor 処理 -----------------------------------------------------------
 
 cmd_doctor() {
   local json=0
@@ -944,13 +969,13 @@ cmd_doctor() {
       agentctl-*)
         local n="${sess#agentctl-}"
         local already=0
-        for existing in "${names[@]:-}"; do [ "$existing" = "$n" ] && already=1; done
+        for existing in "${names[@]}"; do [ "$existing" = "$n" ] && already=1; done
         [ "$already" -eq 1 ] || names+=("$n")
         ;;
     esac
   done < <(agentctl_tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
 
-  for n in "${names[@]:-}"; do
+  for n in "${names[@]}"; do
     local r
     r=$(agentctl_reconcile "$n")
     entries=$(echo "$entries" | jq --arg name "$n" --arg reconcile "$r" '. + [{name:$name, reconcile:$reconcile}]')

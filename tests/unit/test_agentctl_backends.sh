@@ -3,8 +3,7 @@
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2016: CLAUDE_CONFIG_DIR fixture は意図的な literal string (展開させない)。
 # agentctl-backend-claude.sh / agentctl-backend-codex.sh の command 構築と
-# preflight fail-closed 挙動のテスト。実 claude/codex CLI 起動 (Task 13 live
-# E2E) は対象外。
+# preflight fail-closed 挙動のテスト。実 claude/codex CLI 起動は live E2E で扱う。
 
 set -uo pipefail
 
@@ -32,7 +31,37 @@ echo '{"permissions":{"local_write":true}}' >"$POLICY_SNAPSHOT"
 POLICY_SNAPSHOT_RO="$WORKROOT/policy.snapshot.readonly.json"
 echo '{"permissions":{"local_write":false}}' >"$POLICY_SNAPSHOT_RO"
 
-# --- claude backend -----------------------------------------------------------
+# --- Codex operation artifact bounds 検証 ------------------------------------------
+
+CODEX_LIMIT_BODY="$WORKROOT/codex-limit-body.txt"
+printf 'bounded body\n' >"$CODEX_LIMIT_BODY"
+
+CODEX_COUNT_DIR="$WORKROOT/codex-count-limit"
+mkdir -p "$CODEX_COUNT_DIR"
+for i in $(seq 1 64); do
+  printf -v suffix '%012d' "$i"
+  : >"$CODEX_COUNT_DIR/codex-op-00000000-0000-0000-0000-$suffix.txt"
+done
+COUNT_BEFORE=$(find "$CODEX_COUNT_DIR" -maxdepth 1 -type f -name 'codex-op-*.txt' | wc -l)
+agentctl_backend_codex_prepare_operation_file "$CODEX_COUNT_DIR" "$CODEX_LIMIT_BODY" >/dev/null 2>"$WORKROOT/codex-count-limit.err"
+COUNT_RC=$?
+COUNT_AFTER=$(find "$CODEX_COUNT_DIR" -maxdepth 1 -type f -name 'codex-op-*.txt' | wc -l)
+[ "$COUNT_RC" -ne 0 ] && [ "$COUNT_BEFORE" = "$COUNT_AFTER" ] \
+  && pass "Codex operation artifact count is capped before creating another file" \
+  || fail "Codex operation artifact count limit was not enforced (rc=$COUNT_RC before=$COUNT_BEFORE after=$COUNT_AFTER)"
+
+CODEX_BYTES_DIR="$WORKROOT/codex-bytes-limit"
+mkdir -p "$CODEX_BYTES_DIR"
+truncate -s 67108864 "$CODEX_BYTES_DIR/codex-op-00000000-0000-0000-0000-000000000001.txt"
+BYTES_BEFORE=$(find "$CODEX_BYTES_DIR" -maxdepth 1 -type f -name 'codex-op-*.txt' | wc -l)
+agentctl_backend_codex_prepare_operation_file "$CODEX_BYTES_DIR" "$CODEX_LIMIT_BODY" >/dev/null 2>"$WORKROOT/codex-bytes-limit.err"
+BYTES_RC=$?
+BYTES_AFTER=$(find "$CODEX_BYTES_DIR" -maxdepth 1 -type f -name 'codex-op-*.txt' | wc -l)
+[ "$BYTES_RC" -ne 0 ] && [ "$BYTES_BEFORE" = "$BYTES_AFTER" ] \
+  && pass "Codex operation artifact total bytes are capped before creating another file" \
+  || fail "Codex operation artifact byte limit was not enforced (rc=$BYTES_RC before=$BYTES_BEFORE after=$BYTES_AFTER)"
+
+# --- claude backend 検証 -----------------------------------------------------------
 
 CMD=$(agentctl_backend_claude_command "claude" "$POLICY_SNAPSHOT" "$DIR")
 echo "$CMD" | grep -q '^exec claude --settings ' \
@@ -66,7 +95,7 @@ echo "$CMD_RO" | grep -q -- '--permission-mode plan' \
   && pass "local_write=false forces claude Plan mode (mechanical read-only)" \
   || fail "expected --permission-mode plan for local_write=false: $CMD_RO"
 
-# --- codex transport bootstrap provenance -----------------------------------------------------------
+# --- codex transport bootstrap provenance 検証 -----------------------------------------------------------
 
 BOOTSTRAP=$(agentctl_backend_codex_bootstrap_message "/tmp/agentctl-runtime/codex-op-11111111-2222-3333-4444-555555555555.txt" "0123456789abcdef")
 if echo "$BOOTSTRAP" | grep -qF "verbatim user message for this turn" \
@@ -79,7 +108,7 @@ else
   fail "Codex bootstrap does not clearly identify trusted transport provenance: $BOOTSTRAP"
 fi
 
-# --- codex backend: preflight fail-closed -----------------------------------------------------------
+# --- codex backend: preflight fail-closed 検証 -----------------------------------------------------------
 
 MISSING_HOME="$WORKROOT/no-codex-home"
 mkdir -p "$MISSING_HOME"
@@ -127,7 +156,7 @@ RC=$?
   && pass "codex backend succeeds when hooks.json + matching deployed dispatcher present" \
   || fail "expected 'exec codex' when preflight satisfied, got rc=$RC out=$OUT"
 
-# managed registration must include the exact matcher used by the real Codex shell tool path.
+# managed registration は実 Codex shell tool path と一致する matcher を要求する。
 cp "$CODEX_HOME/.codex/hooks.json" "$CODEX_HOME/.codex/hooks.json.good"
 jq '(.hooks.PreToolUse[] | select(any(.hooks[]?; .command == "bash ~/.codex/hooks/agentctl-policy-dispatcher.sh")) | .matcher) = "^Bash$"' \
   "$CODEX_HOME/.codex/hooks.json.good" >"$CODEX_HOME/.codex/hooks.json"
@@ -141,8 +170,8 @@ RC=$?
   || fail "expected non-zero exit for stale dispatcher matcher, got rc=$RC out=$OUT"
 mv "$CODEX_HOME/.codex/hooks.json.good" "$CODEX_HOME/.codex/hooks.json"
 
-# A stale wrapper that still contains the two historical grep lines must also fail. This is the
-# regression that requires a managed content hash rather than source-line presence checks.
+# 古い wrapper が見かけ上の source line を含んでいても通さず、managed content hash で
+# 配備内容そのものを検証する。
 cp "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh" "$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh.good"
 printf '\n# stale-but-grep-compatible\n' >>"$CODEX_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
 OUT=$(HOME="$CODEX_HOME" bash -c '

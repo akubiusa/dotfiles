@@ -3,7 +3,7 @@
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 #
-# Fix #8 (guard startup verification): 実 Claude backend を使った live E2E。
+# guard startup verification を実 Claude backend で確認する live E2E。
 # settings JSON を書いた/dispatcher を script として直接呼んだだけでは、
 # 実 Claude process が実際に PreToolUse hook を load して発火させる保証には
 # ならない。ここでは agentctl start の実運用経路をそのまま使い、無害な

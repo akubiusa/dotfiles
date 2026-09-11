@@ -64,11 +64,11 @@ agentctl_codex_hook_registry_ensure() {
   chmod 0700 "$root" "$pending" "$sessions"
 }
 
-# usage: agentctl_codex_hook_publish_pending <name> <runtime_id> <runtime_dir>
-#        <policy_snapshot> <policy_digest> <cwd>
+# 使い方: agentctl_codex_hook_publish_pending <name> <runtime_id> <runtime_dir>
+# 引数続き: <policy_snapshot> <policy_digest> <cwd> <sentinel_nonce>
 # Sentinel hook が session_id を初回 binding するまでだけ存在する rendezvous record。
 agentctl_codex_hook_publish_pending() {
-  local name="$1" runtime_id="$2" runtime_dir="$3" policy_snapshot="$4" policy_digest="$5" cwd="$6"
+  local name="$1" runtime_id="$2" runtime_dir="$3" policy_snapshot="$4" policy_digest="$5" cwd="$6" sentinel_nonce="$7"
   local dest
   agentctl_codex_hook_registry_ensure
   dest=$(agentctl_codex_hook_pending_file "$runtime_id")
@@ -80,7 +80,8 @@ agentctl_codex_hook_publish_pending() {
     --arg policy_snapshot "$policy_snapshot" \
     --arg policy_digest "$policy_digest" \
     --arg cwd "$cwd" \
-    '{schema_version:$schema_version,runtime_id:$runtime_id,name:$name,backend:"codex",runtime_dir:$runtime_dir,policy_snapshot:$policy_snapshot,policy_digest:$policy_digest,cwd:$cwd}' \
+    --arg sentinel_nonce "$sentinel_nonce" \
+    '{schema_version:$schema_version,runtime_id:$runtime_id,name:$name,backend:"codex",runtime_dir:$runtime_dir,policy_snapshot:$policy_snapshot,policy_digest:$policy_digest,cwd:$cwd,sentinel_nonce:$sentinel_nonce}' \
     | agentctl_atomic_write "$dest" 0600
 }
 
@@ -103,8 +104,8 @@ agentctl_codex_hook_remove_runtime_bindings() {
   done
 }
 
-# usage: agentctl_codex_hook_session_id_for_runtime <runtime_id> <runtime_dir>
-# stdout: current generation に一意に bind 済みの Codex session_id。
+# 使い方: agentctl_codex_hook_session_id_for_runtime <runtime_id> <runtime_dir>
+# 標準出力: current generation に一意に bind 済みの Codex session_id。
 # queue transport は tmux pane ではなく app-server session を直接指定するため、
 # registry の runtime_id だけを信用せず state.json の generation/name/cwd/policy
 # identity と binding 全体を再照合する。一致が 0 件/複数件/filename hash 不一致なら
@@ -155,7 +156,7 @@ agentctl_codex_hook_session_id_for_runtime() {
   printf '%s' "$found"
 }
 
-# usage: agentctl_validate_name <name>
+# 使い方: agentctl_validate_name <name>
 # --name はディレクトリ名 (agentctl_runtime_dir)・tmux session 名
 # (agentctl_tmux_session)・lock ファイル名 (agentctl_with_name_lock) に
 # そのまま連結される。allowlist ([A-Za-z0-9_-]+) 一致のみを受理することで、
@@ -180,16 +181,24 @@ agentctl_ensure_root() {
   chmod 0700 "$root" "$(agentctl_runtimes_dir)" "$(agentctl_locks_dir)"
 }
 
+# lock FD は shell program ではなく数値 descriptor としてのみ扱う。
+agentctl_close_fd_value() {
+  local fd="${1:-}"
+  [ -z "$fd" ] && return 0
+  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+  { exec {fd}<&-; } 2>/dev/null
+}
+
 # tmux は全呼び出しをこの wrapper 経由にする。
-# bash の {fd} 自動割当は close-on-exec が立たない (実測確認済み)。
+# bash の {fd} 自動割当は close-on-exec ではないため、子プロセス起動前に明示的に閉じる。
 # tmux server に session が無い状態は既定 exit-empty により自己終了するため、
 # `new-session` で初めて daemonize が起きた場合、その時点で lock fd が
 # 開いていると server 自身が fd を継承し flock を永久に保持してしまう。
 # サブシェルで自 lock fd を閉じてから tmux を呼ぶことで継承を防ぐ。
 agentctl_tmux() {
   (
-    [ -z "${AGENTCTL_LOCK_FD:-}" ] || eval "exec ${AGENTCTL_LOCK_FD}<&-" 2>/dev/null
-    [ -z "${AGENTCTL_DEPLOY_LOCK_FD:-}" ] || eval "exec ${AGENTCTL_DEPLOY_LOCK_FD}<&-" 2>/dev/null
+    agentctl_close_fd_value "${AGENTCTL_LOCK_FD:-}" || return 1
+    agentctl_close_fd_value "${AGENTCTL_DEPLOY_LOCK_FD:-}" || return 1
     command tmux "$@"
   )
 }
@@ -199,10 +208,10 @@ agentctl_tmux() {
 # シーケンスは capture-pane の描画済みスクリーンには現れないため、これの
 # 「一度でも出現したか」の検出にのみ raw byte stream を使う (quiescence の
 # 判定には使わない: pipe-pane の配送は高負荷時に ~1KB/1秒超まとめて遅延
-# することが実測で確認されており、短時間の無変化を「静止」と誤検知する)。
+# するため、短時間の無変化を「静止」と誤検知し得る)。
 # pipe-pane は書き込み先コマンドへのデータを内部バッファリングしており、
 # 出力量が小さいと pipe を張ったまま待ち続けても raw_file に一切反映されない
-# ことが実測で確認された (バッファは pipe-pane を無効化した瞬間にまとめて
+# ことがある (バッファは pipe-pane を無効化した瞬間にまとめて
 # flush される)。そのため毎 poll ごとに無効化/再有効化して強制的に flush する。
 agentctl_wait_bracketed_paste_armed() {
   local pane="$1" dir="$2" timeout="$3"
@@ -233,7 +242,7 @@ agentctl_wait_bracketed_paste_armed() {
 # tmux capture-pane が返す現在のスクリーン内容 (tmux 自身が直接保持している
 # 状態) を snapshot として比較し、一定「時間」(poll 回数ではなく wall-clock
 # 秒数) 無変化が続くまで待つ。pipe-pane の非同期配送チャネルを経由しない
-# ため、上記の配送遅延バッチングの影響を受けない (実測で capture-pane は
+# ため、上記の配送遅延バッチングの影響を受けない (capture-pane は
 # 描画の都度リアルタイムに追従することを確認済み)。特定 UI 文字列には一切
 # 依存しない。runtime state/reconcile はこの関数を使わず marker/pid token
 # のみで判定する (この待受けは publication/submit の一度きりの barrier に
@@ -287,7 +296,7 @@ agentctl_wait_screen_contains() {
 # 起動直後に paste+Enter すると、実 backend の readline がまだ armed でない
 # 間に Enter だけ失われ (byte は届くが submit されない)、後続 steer の
 # paste+Enter が未 submit の initial mission と連結されて誤実行される race
-# が実測で確認された (単純 sleep 追加では backend 起動時間のばらつきに対し
+# が起こり得る (単純 sleep 追加では backend 起動時間のばらつきに対し
 # 再現性がない)。mission を届ける前に、readline が armed かつ画面遷移が
 # 収まるまで待つ。timeout は fail-closed で die する。
 agentctl_wait_backend_ready() {
@@ -303,11 +312,11 @@ agentctl_wait_backend_ready() {
 }
 
 # paste-buffer は pty へ本文を投入するだけで、実 TUI backend (Claude/Codex)
-# の入力欄には残ったまま実行されない (実測確認済み: 手動 Enter 1 回で即実行)。
+# の入力欄には残ったまま実行されないため、submit barrier が必要になる。
 # 長文 multiline paste は TUI 側が "[Pasted text #N +M lines]" のような
 # placeholder へ再描画するまでの短い非同期処理を挟むため、paste 直後に
 # 即 Enter すると (readline は既に armed でも) その Enter が同様に失われる
-# ことが実測で確認された。send-keys Enter の前に画面が再び静止するまで
+# ことがある。send-keys Enter の前に画面が再び静止するまで
 # 待つ。fake backend は tee sink がバイト受信をそのまま観測するだけで
 # submit 概念が無いため、byte-exact assertion を壊さないよう何もしない。
 agentctl_submit_paste() {
@@ -334,7 +343,7 @@ agentctl_submit_paste() {
   agentctl_tmux send-keys -t "$pane" Enter
 }
 
-# Fix #8: guard startup verification (mechanical proof)。settings JSON を
+# guard startup verification は settings JSON の存在だけではなく mechanical proof を要求する。
 # 書いた/dispatcher を直接呼んだだけでは、実 backend process が実際に hook を
 # load して PreToolUse を発火させる保証にならない。無害な sentinel command
 # (実行されても no-op) を実 backend の turn 経由で走らせ、agentctl-policy-
@@ -343,13 +352,17 @@ agentctl_submit_paste() {
 # 持たないため呼び出し元で skip する。証拠が期限内に得られなければ 1 を返す
 # (fail closed の判断/後始末は呼び出し元が行う)。
 agentctl_guard_sentinel_command() {
-  local runtime_id="$1"
-  echo "true '#agentctl-guard-sentinel:$runtime_id'"
+  local runtime_id="$1" sentinel_nonce="${2:-}"
+  if [ -n "$sentinel_nonce" ]; then
+    echo "true '#agentctl-guard-sentinel:$runtime_id:$sentinel_nonce'"
+  else
+    echo "true '#agentctl-guard-sentinel:$runtime_id'"
+  fi
 }
 
-# usage: agentctl_verify_guard_sentinel <backend> <pane> <dir> <runtime_id>
+# 使い方: agentctl_verify_guard_sentinel <backend> <pane> <dir> <runtime_id> [sentinel_nonce]
 agentctl_verify_guard_sentinel() {
-  local backend="$1" pane="$2" dir="$3" runtime_id="$4"
+  local backend="$1" pane="$2" dir="$3" runtime_id="$4" sentinel_nonce="${5:-}"
   local evidence_file="$dir/guard-sentinel.json"
   rm -f "$evidence_file"
 
@@ -361,14 +374,14 @@ agentctl_verify_guard_sentinel() {
     # sentinel は短い固定 1 行なので、複数行 paste の既知問題を避けつつ
     # marker 自体を最初の prompt に直接含める。
     printf 'System check (do not explain, just act): run exactly this shell command and nothing else: %s' \
-      "$(agentctl_guard_sentinel_command "$runtime_id")" \
+      "$(agentctl_guard_sentinel_command "$runtime_id" "$sentinel_nonce")" \
       | agentctl_tmux load-buffer -b "$bufname" -
   else
     local prompt_path
     prompt_path=$(mktemp)
     {
       echo "System check (do not explain, just act): run the Bash tool with exactly this command and nothing else:"
-      agentctl_guard_sentinel_command "$runtime_id"
+      agentctl_guard_sentinel_command "$runtime_id" "$sentinel_nonce"
     } >"$prompt_path"
     agentctl_tmux load-buffer -b "$bufname" -- "$prompt_path"
     rm -f "$prompt_path"
@@ -388,10 +401,12 @@ agentctl_verify_guard_sentinel() {
     elapsed=$(awk -v e="$elapsed" -v p="$poll_interval" 'BEGIN{print e+p}')
   done
 
-  local ev_runtime_id ev_decision
+  local ev_runtime_id ev_decision ev_nonce
   ev_runtime_id=$(jq -r '.runtime_id // empty' "$evidence_file" 2>/dev/null)
   ev_decision=$(jq -r '.decision // empty' "$evidence_file" 2>/dev/null)
+  ev_nonce=$(jq -r '.sentinel_nonce // empty' "$evidence_file" 2>/dev/null)
   [ "$ev_runtime_id" = "$runtime_id" ] && [ "$ev_decision" = "deny" ] || return 1
+  [ -z "$sentinel_nonce" ] || [ "$ev_nonce" = "$sentinel_nonce" ] || return 1
 
   # evidence file は dispatcher が deny を判定した瞬間に書かれるが、それは
   # backend の PreToolUse 発火タイミングであって、backend 自身が deny 結果を
@@ -406,11 +421,11 @@ agentctl_verify_guard_sentinel() {
 
 # --- 汎用ヘルパ -----------------------------------------------------------
 
-# design.md:187 の typed exit code contract に従い、既定は 2 (usage/schema
-# error) とする (呼び出し側の大半がこの分類のため)。3 (target absent)/
+# typed exit code contract として既定は 2 (usage/schema error) とする。
+# target absent は 3、
 # 4 (ownership/conflict/refused)/5 (transport failure) が必要な呼び出し元は
 # `--code N` を明示する。
-# usage: agentctl_die [--code 2|3|4|5] <message...>
+# 使い方: agentctl_die [--code 2|3|4|5] <message...>
 agentctl_die() {
   local code=2
   if [ "${1:-}" = "--code" ]; then
@@ -424,13 +439,13 @@ agentctl_gen_runtime_id() {
   if [ -r /proc/sys/kernel/random/uuid ]; then
     cat /proc/sys/kernel/random/uuid
   else
-    # ponytail: uuidgen 非搭載環境向けの最小フォールバック。より厳密な乱数性が要る場合は uuidgen 導入で置換。
+    # uuidgen 非搭載環境でも cryptographically random UUID を生成するフォールバック。
     python3 -c 'import uuid; print(uuid.uuid4())'
   fi
 }
 
 # 指定 mode で atomic write する。本文は stdin から受け取り、argv/state には残さない。
-# usage: agentctl_atomic_write <dest_path> <mode>  (stdin=content)
+# 使い方: agentctl_atomic_write <dest_path> <mode>  (stdin=content)
 agentctl_atomic_write() {
   local dest="$1" mode="$2" tmp
   tmp="${dest}.tmp.$$"
@@ -462,7 +477,7 @@ finally:
 # O_EXCL 相当 (noclobber) で作成し、fsync 後に atomic rename で publish する。
 # 呼び出し元は、以後 dest を一切変更しない (一操作専用ファイルとして扱う)
 # ことで作成後〜読み取りまでの TOCTOU を避ける。本文は stdin から受け取る。
-# usage: agentctl_secure_create <dest_path> <mode>  (stdin=content)
+# 使い方: agentctl_secure_create <dest_path> <mode>  (stdin=content)
 agentctl_secure_create() {
   local dest="$1" mode="$2" tmp
   tmp="${dest}.tmp.$$"
@@ -487,7 +502,7 @@ agentctl_gen_operation_id() {
   agentctl_gen_runtime_id
 }
 
-# --- operation event log -----------------------------------------------------------
+# --- operation event log 処理 -----------------------------------------------------------
 # mission/steer/resume の各 delivery 操作について、本文を一切含まない
 # メタデータのみ (operation_id/timestamp/runtime_id/operation/transport/
 # body の sha256/submission と acceptance の結果) を append-only の
@@ -495,7 +510,7 @@ agentctl_gen_operation_id() {
 # 避けてきた既存対策が意味を成さなくなるため、payload 文字列は引数として
 # 一切受け取らない (呼び出し元は sha256 だけを渡す)。
 
-# usage: agentctl_log_operation_event <dir> <operation_id> <runtime_id> <operation> <transport> <body_sha256> <submission> <acceptance>
+# 使い方: agentctl_log_operation_event <dir> <operation_id> <runtime_id> <operation> <transport> <body_sha256> <submission> <acceptance>
 # submission: submitted|failed。acceptance: unknown|accepted (screen heuristic からは
 # 絶対に "accepted" を記録しない。native transport が turn ID 等の確証を得られる
 # 場合にのみ将来 "accepted" を渡せるようにする、現行 fallback は常に "unknown")。
@@ -516,7 +531,7 @@ agentctl_log_operation_event() {
 # body_path 全文を pane へ届ける。fake/claude/claude-work は本文をそのまま
 # paste する (byte-exact, 既存動作を維持)。codex だけは、pane 高さを超える
 # 長文 multiline paste で TUI 側の paste-end 追跡が壊れ Enter が届かない
-# 不具合が実測されたため、本文を直接 paste せず operation-specific secure
+# 長文 multiline paste の submit が不安定になり得るため、本文を直接 paste せず operation-specific secure
 # copy への絶対 path + sha256 を示す短い固定 bootstrap を paste する
 # (agentctl-backend-codex.sh 側で用意する)。
 #
@@ -526,7 +541,7 @@ agentctl_log_operation_event() {
 # サブシェルで実行して exit code/stderr を捕まえ、"failed"/"unknown" として
 # 記録してから同じメッセージで die し直す (real backend の paste/submit 挙動
 # 自体はサブシェル化しても変わらない)。
-# usage: agentctl_deliver_body <backend> <pane> <dir> <body_path> <runtime_id> <operation>
+# 使い方: agentctl_deliver_body <backend> <pane> <dir> <body_path> <runtime_id> <operation>
 agentctl_deliver_body() {
   local backend="$1" pane="$2" dir="$3" body_path="$4" runtime_id="$5" operation="$6"
   local bufname="agentctl-deliver-$$"
@@ -708,8 +723,8 @@ agentctl_policy_digest() {
 # へ immutable に書く。ファイル名自体が内容の digest なので、resume で
 # 新しい policy を渡しても既存 generation の snapshot を上書きできない
 # (同一内容なら同じ path に解決され、既存ファイルへは書かずそのまま再利用する)。
-# usage: agentctl_write_policy_snapshot <dir> <policy_json>
-# stdout: 2 行 (<snapshot_path>\n<digest>\n)。path にスペースを含む dir
+# 使い方: agentctl_write_policy_snapshot <dir> <policy_json>
+# 標準出力: 2 行 (<snapshot_path>\n<digest>\n)。path にスペースを含む dir
 # (XDG_STATE_HOME 等) でも壊れないよう、1 行 1 field で返す
 # (space 区切りの 1 行だと呼び出し側の `read -r a b` が path 側で split してしまう)。
 agentctl_write_policy_snapshot() {
@@ -723,7 +738,7 @@ agentctl_write_policy_snapshot() {
 
 # --- per-name ロック -----------------------------------------------------------
 
-# usage: agentctl_with_name_lock <name> <func> [args...]
+# 使い方: agentctl_with_name_lock <name> <func> [args...]
 agentctl_with_name_lock() {
   local name="$1"; shift
   agentctl_validate_name "$name"
@@ -736,7 +751,7 @@ agentctl_with_name_lock() {
   )
 }
 
-# --- deployment global lock (shared: publication / exclusive: rollback) --------
+# --- deployment global lock (shared: publication / exclusive: rollback) 処理 --------
 
 agentctl_deployment_lock_path() {
   echo "$(agentctl_locks_dir)/deployment.lock"
@@ -762,7 +777,7 @@ agentctl_acquire_deployment_lock_exclusive() {
 
 agentctl_release_deployment_lock() {
   [ -n "${AGENTCTL_DEPLOY_LOCK_FD:-}" ] || return 0
-  eval "exec ${AGENTCTL_DEPLOY_LOCK_FD}<&-"
+  agentctl_close_fd_value "$AGENTCTL_DEPLOY_LOCK_FD" || return 1
   unset AGENTCTL_DEPLOY_LOCK_FD
 }
 
@@ -833,7 +848,7 @@ agentctl_tmux_get_marker() {
   agentctl_tmux show-options -p -t "$pane" -v "@agentctl_${key}" 2>/dev/null
 }
 
-# --- PID fencing -----------------------------------------------------------
+# --- PID fencing 処理 -----------------------------------------------------------
 
 # PID 再利用を検出するための起動時刻トークン (/proc/PID/stat の22番目フィールド = starttime)。
 agentctl_pid_start_token() {
@@ -844,7 +859,7 @@ agentctl_pid_start_token() {
   echo "$stat" | awk -F') ' '{print $2}' | awk '{print $20}'
 }
 
-# --- state I/O -----------------------------------------------------------
+# --- state I/O 処理 -----------------------------------------------------------
 
 agentctl_state_file() {
   echo "$(agentctl_runtime_dir "$1")/state.json"
@@ -858,7 +873,7 @@ agentctl_read_state() {
 }
 
 agentctl_write_state_json() {
-  # usage: agentctl_write_state_json <name> <json-on-stdin>
+  # 使い方: agentctl_write_state_json <name> <json-on-stdin>
   local name="$1" dir
   dir=$(agentctl_runtime_dir "$name")
   mkdir -p "$dir"
@@ -866,7 +881,7 @@ agentctl_write_state_json() {
   agentctl_atomic_write "$(agentctl_state_file "$name")" 0600
 }
 
-# --- continuation manifest -----------------------------------------------------------
+# --- continuation manifest 処理 -----------------------------------------------------------
 # keeper は manifest content を Git/merge 判定には使わない。agent-authored な
 # checkpoint を resume/complete が読むための read-only index として扱う。
 
@@ -895,14 +910,14 @@ agentctl_read_manifest() {
 
 # 生存中の pane から末尾ログを取る。pane が既に無い場合は空文字を返す
 # (resume は前世代 session を kill する前にこれを呼ぶ必要がある)。
-# usage: agentctl_capture_pane_tail <pane> <lines>
+# 使い方: agentctl_capture_pane_tail <pane> <lines>
 agentctl_capture_pane_tail() {
   local pane="$1" lines="$2"
   agentctl_tmux_has_session "$pane" || { echo ""; return 0; }
   agentctl_tmux capture-pane -p -J -t "$pane" -S "-$lines" 2>/dev/null || echo ""
 }
 
-# design.md:145-163 の共通 mission contract。start/resume どちらでも
+# start/resume の両方へ必ず付与する共通 mission contract。
 # task-specific mission と必ず一緒に (1回だけ) 届ける固定文言。
 # ここで返す内容だけで決まる静的テキストなので command substitution で
 # 呼び出しても trailing newline 以外の byte-exact 契約には影響しない
@@ -936,7 +951,7 @@ EOF
 # manifest はあくまで前世代 agent の自己申告 (last_checkpoint 等) であり、
 # クラッシュ・キャンセル・agent 自身の誤り等で実際の Git/PR 状態と乖離し
 # 得るため、本文中で明示的に fresh agent へ実状態の再検証を指示する
-# (spec: 継続 context を鵜呑みにせず実 Git/PR 状態を revalidate させる)。
+# 前世代の自己申告だけを信用せず、実 Git/PR 状態を再検証するよう明示する。
 # continuation context と元の mission は 1 本のファイルにまとめ、単一の
 # paste+submit (1 turn) として届ける。paste+screen-settle には agent が
 # turn を「完了した」ことを確認する barrier が無いため、2 回に分けて別々に
@@ -947,7 +962,7 @@ EOF
 # 末尾複数改行、多バイト文字等) の byte-exact 契約に違反する。mission 本文
 # だけは `cat -- <path>` でそのまま stdout へ streaming し、呼び出し元の
 # パイプ (agentctl_atomic_write) までバイト単位で無加工に届ける。
-# usage: agentctl_build_continuation_bundle <manifest_json> <log_tail> <policy_snapshot_path> <mission_path> <old_digest> <new_digest>
+# 使い方: agentctl_build_continuation_bundle <manifest_json> <log_tail> <policy_snapshot_path> <mission_path> <old_digest> <new_digest>
 agentctl_build_continuation_bundle() {
   local manifest_json="$1" log_tail="$2" policy_snapshot_path="$3" mission_path="$4" old_digest="$5" new_digest="$6" policy_json policy_change_note
   policy_json=$(cat "$policy_snapshot_path")
@@ -986,7 +1001,7 @@ EOF
   cat -- "$mission_path"
 }
 
-# --- reconcile -----------------------------------------------------------
+# --- reconcile 処理 -----------------------------------------------------------
 
 # name の実態を running|starting|stale|orphan|conflict|exited|absent のいずれかで返す。
 # 画面スクレイピングをせず、tmux marker + pane 評価 + state file のみで判定する。

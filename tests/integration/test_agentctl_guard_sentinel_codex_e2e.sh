@@ -3,7 +3,7 @@
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 #
-# Fix #8 (guard startup verification) の Codex 版 live E2E。
+# guard startup verification を実 Codex backend で確認する live E2E。
 # tests/integration/test_agentctl_guard_sentinel_e2e.sh は実 Claude backend
 # しか検証しておらず、Codex は hooks.json 配線が global/deployed 経由である点が
 # Claude (session-local settings) と根本的に異なるため、別途 real Codex の

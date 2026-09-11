@@ -1,8 +1,8 @@
 #!/bin/bash
 # Claude backend (claude/claude-work) の exec command 構築ライブラリ。
-# spec の profile isolation (claude-work は CLAUDE_CONFIG_DIR を分離) と、
+# profile isolation (claude-work は CLAUDE_CONFIG_DIR を分離) と、
 # session-local PreToolUse guard (agentctl-policy-dispatcher.sh) の配線を担う。
-# 実 Claude CLI の起動確認 (Task 13 live E2E) はこのファイルの対象外。
+# 実 Claude CLI の起動確認は backend library ではなく live E2E で行う。
 
 # session-local settings JSON を runtime dir に書き、guard hook を配線する。
 # guard 本体は home/bin/agentctl-policy-dispatcher.sh を直接 source する薄い
@@ -34,8 +34,8 @@ EOS
   echo "$settings_path"
 }
 
-# usage: agentctl_backend_claude_command <backend> <policy_snapshot_path> <runtime_dir>
-# stdout: `bash -c` に渡す exec command string。
+# 使い方: agentctl_backend_claude_command <backend> <policy_snapshot_path> <runtime_dir>
+# 標準出力: `bash -c` に渡す exec command string。
 agentctl_backend_claude_command() {
   local backend="$1" policy_snapshot_path="$2" dir="$3"
   local settings_path config_dir_env="" permission_mode_flag=""
@@ -47,7 +47,7 @@ agentctl_backend_claude_command() {
 
   # local_write=false は Claude の Plan mode (--permission-mode plan) で強制する。
   # Plan mode は Edit/Write/Bash 等の filesystem mutation tool を機械的に禁止する
-  # 唯一の read-only mode であり、spec の「機械的 read-only mode」要件を満たす。
+  # filesystem mutation tool を機械的に禁止する read-only mode として使う。
   local local_write
   local_write=$(jq -r '.permissions.local_write' "$policy_snapshot_path")
   [ "$local_write" = "true" ] || permission_mode_flag=" --permission-mode plan"

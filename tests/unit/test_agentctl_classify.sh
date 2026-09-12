@@ -33,16 +33,19 @@ git -C "$REPO" remote add origin git@github.com:acme/widgets.git
 GIT_COMMON_DIR=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
 
 ALLOWED_ROOT="$WORKROOT/worktrees"
-mkdir -p "$ALLOWED_ROOT"
+mkdir -p "$ALLOWED_ROOT" "$WORKROOT/bin"
+PROD_DEPLOY="$WORKROOT/bin/deploy-base"
+printf '#!/bin/bash\nexit 0\n' >"$PROD_DEPLOY"
+chmod +x "$PROD_DEPLOY"
 
-POLICY=$(jq -n --arg gcd "$GIT_COMMON_DIR" --arg gh "acme/widgets" --arg root "$ALLOWED_ROOT" '
+POLICY=$(jq -n --arg gcd "$GIT_COMMON_DIR" --arg gh "acme/widgets" --arg root "$ALLOWED_ROOT" --arg deploy "$PROD_DEPLOY" '
 {
   version: 1,
   permissions: {local_write:true, commit:true, push:true, create_pr:true, merge:true, git_cleanup:true, deploy:true, production_verify:false},
   scope: {
     repositories: [{id:"primary", git_common_dir:$gcd, github_repo:$gh, allowed_worktree_roots:[$root]}],
     remotes: [{repository_id:"primary", name:"origin", push_url:"git@github.com:acme/widgets.git"}],
-    production_targets: [{id:"pine", deploy_argv:[["/abs/deploy","--target","pine"]], verify_argv:[]}]
+    production_targets: [{id:"pine", deploy_argv:[[$deploy,"--target","pine"]], verify_argv:[]}]
   }
 }')
 POLICY_DENY=$(echo "$POLICY" | jq '.permissions = {commit:false, push:false, create_pr:false, merge:false, git_cleanup:false, deploy:false, production_verify:false}')
@@ -115,15 +118,22 @@ check "unknown_privileged: eval wrapping gh pr merge" unknown_privileged "$POLIC
 
 # --- production deploy 検証 -----------------------------------------------------------
 
-check "allowed: exact deploy_argv match" allow "$POLICY" -- /abs/deploy --target pine
-check "denied: production deploy with leading env assignment cannot alter approved execution context" deny "$POLICY" -- DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine
-check "denied: production deploy through env wrapper cannot alter approved execution context" deny "$POLICY" -- env DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine
+check "allowed: exact deploy_argv match" allow "$POLICY" -- "$PROD_DEPLOY" --target pine
+check "denied: production deploy with leading env assignment cannot alter approved execution context" deny "$POLICY" -- DEPLOY_CONFIG=/tmp/other "$PROD_DEPLOY" --target pine
+check "denied: production deploy through env wrapper cannot alter approved execution context" deny "$POLICY" -- env DEPLOY_CONFIG=/tmp/other "$PROD_DEPLOY" --target pine
 check "not_privileged: unknown executable" not_privileged "$POLICY" -- /abs/other --target pine
-check "unknown_privileged: bash -c wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- bash -c "/abs/deploy --target pine"
-check "unknown_privileged: eval wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- eval "/abs/deploy --target pine"
-check "denied: same production executable with an unapproved target argv" deny "$POLICY" -- /abs/deploy --target production
-check "denied: same production executable with extra trailing argv" deny "$POLICY" -- /abs/deploy --target pine --force
+check "unknown_privileged: bash -c wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- bash -c "$PROD_DEPLOY --target pine"
+check "unknown_privileged: eval wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- eval "$PROD_DEPLOY --target pine"
+check "denied: same production executable with an unapproved target argv" deny "$POLICY" -- "$PROD_DEPLOY" --target production
+check "denied: same production executable with extra trailing argv" deny "$POLICY" -- "$PROD_DEPLOY" --target pine --force
 check "not_privileged: unconfigured executable that merely resembles the production one" not_privileged "$POLICY" -- /abs/deploy-staging --target pine
+
+POLICY_BAD_PROD_BARE=$(echo "$POLICY" | jq '.scope.production_targets=[{id:"bad",deploy_argv:[["deploy","--target","pine"]],verify_argv:[]}]')
+POLICY_BAD_PROD_REL=$(echo "$POLICY" | jq '.scope.production_targets=[{id:"bad",deploy_argv:[["./deploy","--target","pine"]],verify_argv:[]}]')
+POLICY_BAD_PROD_MISSING=$(echo "$POLICY" | jq '.scope.production_targets=[{id:"bad",deploy_argv:[["/definitely/missing/agentctl-deploy","--target","pine"]],verify_argv:[]}]')
+check "denied: malformed production policy with bare executable fails closed" deny "$POLICY_BAD_PROD_BARE" -- deploy --target pine
+check "denied: malformed production policy with relative executable fails closed" deny "$POLICY_BAD_PROD_REL" -- ./deploy --target pine
+check "denied: malformed production policy with nonexistent executable fails closed" deny "$POLICY_BAD_PROD_MISSING" -- /definitely/missing/agentctl-deploy --target pine
 
 # --- production deploy: real-executable canonicalization (v8 audit finding) 検証 -----------------------------------------------------------
 
@@ -192,10 +202,10 @@ check_str "not_privileged: chained clearly non-privileged segments" not_privileg
 check_str "denied: raw string leading env-assignment before a privileged git commit denies" deny "$POLICY" "FOO=bar git -C $REPO commit -m msg"
 check_str "denied: raw string GIT_DIR env prefix before git push" deny "$POLICY" "GIT_DIR=/tmp/evil git -C $REPO push origin"
 check_str "unknown_privileged: raw string env prefix before gh pr merge" unknown_privileged "$POLICY" "X=1 gh pr merge --repo acme/widgets --squash"
-check_str "denied: raw string same production executable with unapproved target" deny "$POLICY" "/abs/deploy --target production"
-check_str "allowed: raw string exact production deploy_argv match" allow "$POLICY" "/abs/deploy --target pine"
-check_str "denied: raw production deploy with env assignment prefix" deny "$POLICY" "DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine"
-check_str "denied: raw production deploy through env wrapper" deny "$POLICY" "env DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine"
+check_str "denied: raw string same production executable with unapproved target" deny "$POLICY" "$PROD_DEPLOY --target production"
+check_str "allowed: raw string exact production deploy_argv match" allow "$POLICY" "$PROD_DEPLOY --target pine"
+check_str "denied: raw production deploy with env assignment prefix" deny "$POLICY" "DEPLOY_CONFIG=/tmp/other $PROD_DEPLOY --target pine"
+check_str "denied: raw production deploy through env wrapper" deny "$POLICY" "env DEPLOY_CONFIG=/tmp/other $PROD_DEPLOY --target pine"
 
 # --- clearly non-privileged 検証 -----------------------------------------------------------
 

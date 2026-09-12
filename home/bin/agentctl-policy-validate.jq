@@ -109,8 +109,11 @@ def remotes_errors:
 def is_argv:
   (type == "array") and (length > 0) and (map(is_nonempty_str) | all);
 
+def is_production_argv:
+  is_argv and (.[0] | is_abs_path);
+
 def is_argv_list:
-  (type == "array") and (map(is_argv) | all);
+  (type == "array") and (map(is_production_argv) | all);
 
 def production_targets_errors:
   ((.scope.production_targets // []) as $pts
@@ -124,7 +127,7 @@ def production_targets_errors:
            or ((.verify_argv // []) | is_argv_list | not)
          )) | length) as $bad
         | if $bad > 0 then
-            ["scope.production_targets entries must have id, and deploy_argv/verify_argv as arrays of non-empty argv arrays"]
+            ["scope.production_targets entries must have id, and deploy_argv/verify_argv as arrays of non-empty argv arrays whose argv[0] is absolute"]
           else [] end)
        + (($pts | map(.id // empty) | map(select(is_nonempty_str))) as $ids
           | if ($ids | unique | length) != ($ids | length) then

@@ -686,6 +686,14 @@ agentctl_policy_path_is_canonical() {
   [ "$canonical" = "$path" ]
 }
 
+agentctl_policy_executable_is_canonical() {
+  local path="$1" canonical
+  [[ "$path" == /* ]] || return 1
+  canonical=$(realpath -e -- "$path" 2>/dev/null) || return 1
+  [ "$canonical" = "$path" ] || return 1
+  [ -f "$path" ] && [ -x "$path" ]
+}
+
 # 標準出力に canonical policy JSON を返す。不正なら stderr にエラー一覧を出して exit 1 (fail closed)。
 agentctl_validate_policy_file() {
   local policy_file="$1" result ok
@@ -711,6 +719,15 @@ agentctl_validate_policy_file() {
       exit 2
     fi
   done < <(echo "$policy_json" | jq -r '.scope.repositories[] | .git_common_dir, (.allowed_worktree_roots[]?)')
+
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! agentctl_policy_executable_is_canonical "$path"; then
+      echo "agentctl: policy validation failed:" >&2
+      echo "  - production argv[0] must be an absolute canonical existing executable: $path" >&2
+      exit 2
+    fi
+  done < <(echo "$policy_json" | jq -r '.scope.production_targets[]? | ((.deploy_argv // []) + (.verify_argv // []))[]? | .[0]')
   echo "$policy_json"
 }
 

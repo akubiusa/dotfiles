@@ -85,6 +85,12 @@ fi
 
 # --- policy validation 検証 -----------------------------------------------------------
 
+# validator 関数は agentctl-common.sh 内部関数なので、必ず source した fresh shell で呼ぶ。
+# 未定義 command の exit 127 を「reject」と誤認しない。
+validate_policy_file() {
+  bash -c 'source "$1/agentctl-common.sh"; agentctl_validate_policy_file "$2"' _ "$REPO_ROOT/home/bin" "$1"
+}
+
 POLICY_OK="$WORKROOT/policy-ok.json"
 valid_policy >"$POLICY_OK"
 
@@ -93,7 +99,7 @@ echo "{\"version\":1,$POLICY_PERMISSIONS_ALL_FALSE,\"scope\":{\"repositories\":[
 
 POLICY_DUP_REMOTE="$WORKROOT/policy-dup-remote.json"
 jq --arg gcd "$REPO_FIXTURE/.git" --arg root "$WORKROOT/worktree" -n   '{version:1,permissions:{local_write:true,commit:false,push:false,create_pr:false,merge:false,git_cleanup:false,deploy:false,production_verify:false},scope:{repositories:[{id:"primary",git_common_dir:$gcd,github_repo:"acme/widgets",allowed_worktree_roots:[$root]}],remotes:[{repository_id:"primary",name:"origin",push_url:"git@example/a"},{repository_id:"primary",name:"origin",push_url:"git@example/b"}],production_targets:[]}}' >"$POLICY_DUP_REMOTE"
-if (agentctl_validate_policy_file "$POLICY_DUP_REMOTE" >/dev/null 2>&1); then
+if (validate_policy_file "$POLICY_DUP_REMOTE" >/dev/null 2>&1); then
   fail "policy validator must reject duplicate (repository_id,name) remote identities"
 else
   pass "policy validator rejects duplicate (repository_id,name) remote identities"
@@ -101,10 +107,52 @@ fi
 
 POLICY_NONCANON="$WORKROOT/policy-noncanonical.json"
 jq --arg gcd "$REPO_FIXTURE/../repo/.git" --arg root "$WORKROOT/worktree/../worktree" -n   '{version:1,permissions:{local_write:true,commit:false,push:false,create_pr:false,merge:false,git_cleanup:false,deploy:false,production_verify:false},scope:{repositories:[{id:"primary",git_common_dir:$gcd,github_repo:"acme/widgets",allowed_worktree_roots:[$root]}],remotes:[],production_targets:[]}}' >"$POLICY_NONCANON"
-if (agentctl_validate_policy_file "$POLICY_NONCANON" >/dev/null 2>&1); then
+if (validate_policy_file "$POLICY_NONCANON" >/dev/null 2>&1); then
   fail "policy validator must reject non-canonical repository/worktree paths"
 else
   pass "policy validator rejects non-canonical repository/worktree paths"
+fi
+
+# production argv[0] は PATH/cwd 解決に依存しない canonical executable identity のみ許可する。
+PROD_BIN_DIR="$WORKROOT/prod-bin"
+mkdir -p "$PROD_BIN_DIR"
+PROD_EXE="$PROD_BIN_DIR/deploy"
+printf '#!/bin/bash\nexit 0\n' >"$PROD_EXE"
+chmod +x "$PROD_EXE"
+PROD_LINK="$PROD_BIN_DIR/deploy-link"
+ln -s "$PROD_EXE" "$PROD_LINK"
+PROD_NONEXEC="$PROD_BIN_DIR/nonexec"
+printf '#!/bin/bash\nexit 0\n' >"$PROD_NONEXEC"
+
+make_prod_policy() {
+  local argv0="$1" out="$2"
+  jq --arg exe "$argv0" '.scope.production_targets=[{id:"pine",deploy_argv:[[$exe,"--target","pine"]],verify_argv:[]}]' "$POLICY_OK" >"$out"
+}
+
+POLICY_PROD_BARE="$WORKROOT/policy-prod-bare.json"; make_prod_policy "deploy" "$POLICY_PROD_BARE"
+POLICY_PROD_REL="$WORKROOT/policy-prod-rel.json"; make_prod_policy "./prod-bin/deploy" "$POLICY_PROD_REL"
+POLICY_PROD_MISSING="$WORKROOT/policy-prod-missing.json"; make_prod_policy "$PROD_BIN_DIR/missing" "$POLICY_PROD_MISSING"
+POLICY_PROD_SYMLINK="$WORKROOT/policy-prod-symlink.json"; make_prod_policy "$PROD_LINK" "$POLICY_PROD_SYMLINK"
+POLICY_PROD_NONEXEC="$WORKROOT/policy-prod-nonexec.json"; make_prod_policy "$PROD_NONEXEC" "$POLICY_PROD_NONEXEC"
+POLICY_PROD_OK="$WORKROOT/policy-prod-ok.json"; make_prod_policy "$PROD_EXE" "$POLICY_PROD_OK"
+
+for spec in \
+  "bare:$POLICY_PROD_BARE" \
+  "relative:$POLICY_PROD_REL" \
+  "missing:$POLICY_PROD_MISSING" \
+  "noncanonical-symlink:$POLICY_PROD_SYMLINK" \
+  "non-executable:$POLICY_PROD_NONEXEC"; do
+  label=${spec%%:*}; file=${spec#*:}
+  if (validate_policy_file "$file" >/dev/null 2>&1); then
+    fail "policy validator must reject $label production executable identity"
+  else
+    pass "policy validator rejects $label production executable identity"
+  fi
+done
+if validate_policy_file "$POLICY_PROD_OK" >/dev/null 2>&1; then
+  pass "policy validator accepts absolute canonical existing executable production argv[0]"
+else
+  fail "policy validator rejected valid canonical production executable"
 fi
 
 if bash "$AGENTCTL" start --name t1 --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_BAD" --mission-stdin <<<"mission" 2>/tmp/agentctl-t1-err; then

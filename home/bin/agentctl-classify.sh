@@ -425,6 +425,18 @@ agentctl_classify_canonicalize_path() {
 agentctl_classify_production() {
   local policy_json="$1" had_env_prefix="$2"; shift 2
   local args=("$@")
+
+  # 通常は policy validator が保証するが、classifier 単体でも malformed production
+  # identity を fail-open にしない。policy 側 argv[0] は absolute/canonical/existing executable
+  # でなければ、この policy 下の production 判定を deny に固定する。
+  local policy_exec policy_exec_canonical
+  while IFS= read -r policy_exec; do
+    [ -n "$policy_exec" ] || continue
+    [[ "$policy_exec" == /* ]] || { echo "deny"; return 0; }
+    policy_exec_canonical=$(realpath -e -- "$policy_exec" 2>/dev/null) || { echo "deny"; return 0; }
+    [ "$policy_exec_canonical" = "$policy_exec" ] || { echo "deny"; return 0; }
+    [ -f "$policy_exec" ] && [ -x "$policy_exec" ] || { echo "deny"; return 0; }
+  done < <(echo "$policy_json" | jq -r '(.scope.production_targets // [])[] | ((.deploy_argv // []) + (.verify_argv // []))[]? | .[0] // empty')
   local exec0="${args[0]:-}"
   local exec0_canonical=""
   [ -n "$exec0" ] && exec0_canonical=$(agentctl_classify_canonicalize_path "$exec0")

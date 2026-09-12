@@ -276,7 +276,7 @@ _publish_generation() {
     --arg cwd "$cwd" --arg tmux_session "$session" --arg started_at "$started_at" \
     --arg policy_snapshot_path "$policy_snapshot_path" --arg policy_digest "$policy_digest" \
     '{schema_version:$schema_version, name:$name, backend:$backend, runtime_id:$runtime_id,
-      cwd:$cwd, tmux_session:$tmux_session, pane_id:null, pane_pid:null, pane_pid_start:null,
+      cwd:$cwd, tmux_session:$tmux_session, tmux_socket_path:null, pane_id:null, pane_pid:null, pane_pid_start:null,
       started_at:$started_at, policy_snapshot_path:$policy_snapshot_path, policy_digest:$policy_digest,
       status:"starting"}' | agentctl_write_state_json "$name"
 
@@ -294,6 +294,19 @@ _publish_generation() {
   agentctl_tmux new-session -d -s "$session" -c "$cwd" -- \
     bash -c "trap '' TERM INT; sleep $bootstrap_timeout"
   agentctl_tmux set-option -t "$session" remain-on-exit on >/dev/null
+
+  # Codex hookはpersistent app-server経由でlauncherのPATH/TMUX_TMPDIRを継承しないことがある。
+  # ambient tmux server選択に依存せずowner generationを照合できるよう、実serverの
+  # socket絶対pathをstateへpublication evidenceとして保存する。
+  local tmux_socket_path starting_state_json
+  tmux_socket_path=$(agentctl_tmux_socket_path "$session")
+  if [[ "$tmux_socket_path" != /* ]] || [ ! -S "$tmux_socket_path" ]; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null || true
+    rm -f "$(agentctl_state_file "$name")"
+    agentctl_die --code 5 "failed to resolve owned tmux server socket after session creation"
+  fi
+  starting_state_json=$(agentctl_read_state "$name") || agentctl_die --code 5 "starting state disappeared during tmux publication"
+  printf '%s\n' "$starting_state_json" | jq --arg socket "$tmux_socket_path" '.tmux_socket_path = $socket' | agentctl_write_state_json "$name"
 
   agentctl_maybe_fault pre_marker
 
@@ -408,12 +421,12 @@ _publish_generation() {
   jq -n \
     --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" \
     --arg name "$name" --arg backend "$backend" --arg runtime_id "$runtime_id" \
-    --arg cwd "$cwd" --arg tmux_session "$session" --arg pane_id "$pane" \
+    --arg cwd "$cwd" --arg tmux_session "$session" --arg tmux_socket_path "$tmux_socket_path" --arg pane_id "$pane" \
     --argjson pane_pid "$pane_pid" --arg pane_pid_start "$pane_pid_start" \
     --arg started_at "$started_at" \
     --arg policy_snapshot_path "$policy_snapshot_path" --arg policy_digest "$policy_digest" \
     '{schema_version:$schema_version, name:$name, backend:$backend, runtime_id:$runtime_id,
-      cwd:$cwd, tmux_session:$tmux_session, pane_id:$pane_id, pane_pid:$pane_pid, pane_pid_start:$pane_pid_start,
+      cwd:$cwd, tmux_session:$tmux_session, tmux_socket_path:$tmux_socket_path, pane_id:$pane_id, pane_pid:$pane_pid, pane_pid_start:$pane_pid_start,
       started_at:$started_at, policy_snapshot_path:$policy_snapshot_path, policy_digest:$policy_digest,
       status:"running"}' | agentctl_write_state_json "$name"
 
@@ -738,6 +751,18 @@ _interrupt_locked() {
   echo "interrupted"
 }
 
+
+# tmux generation の終了成功後に persistent Codex binding を失効させ、state が残る場合は
+# lifecycle status も terminal に更新する。binding revoke を state update より先に行うことで、
+# state write が失敗しても旧 app-server session が privileged operation を続けない。
+_agentctl_finalize_terminated_generation() {
+  local name="$1" runtime_id="$2" terminal_status="$3" state_json="${4:-}"
+  agentctl_codex_hook_remove_runtime_bindings "$runtime_id"
+  if [ -n "$state_json" ]; then
+    printf '%s\n' "$state_json" | jq --arg status "$terminal_status" '.status = $status' | agentctl_write_state_json "$name"
+  fi
+}
+
 # --- stop 処理 -----------------------------------------------------------
 
 cmd_stop() {
@@ -763,8 +788,8 @@ _stop_locked() {
   local reconcile
   reconcile=$(agentctl_reconcile "$name")
   case "$reconcile" in
-    absent|stale|exited) echo "already stopped (reconcile=$reconcile)"; return 0 ;;
-    running|starting) : ;;
+    absent) echo "already stopped (reconcile=$reconcile)"; return 0 ;;
+    stale|exited|running|starting) : ;;
     *) agentctl_die --code 4 "cannot stop runtime '$name' in state '$reconcile'" ;;
   esac
   local state_json current_id session
@@ -772,8 +797,11 @@ _stop_locked() {
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
   session=$(echo "$state_json" | jq -r '.tmux_session')
-  agentctl_tmux kill-session -t "$session" 2>/dev/null \
-    || agentctl_die --code 5 "failed to stop owned tmux session for runtime '$name'"
+  if [ "$reconcile" = "running" ] || [ "$reconcile" = "starting" ]; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null \
+      || agentctl_die --code 5 "failed to stop owned tmux session for runtime '$name'"
+  fi
+  _agentctl_finalize_terminated_generation "$name" "$runtime_id" stopped "$state_json"
   echo "stopped"
 }
 
@@ -990,7 +1018,7 @@ _complete_locked() {
 
   # state が無い (orphan) 場合も tmux marker の runtime_id と照合し、
   # caller の runtime_id を素通りさせない (cleanup と同じ fencing pattern)。
-  local state_json expected_id
+  local state_json="" expected_id
   if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
     expected_id=$(echo "$state_json" | jq -r '.runtime_id')
   else
@@ -1003,6 +1031,7 @@ _complete_locked() {
     agentctl_tmux kill-session -t "$session" 2>/dev/null \
       || agentctl_die --code 5 "failed to remove owned tmux session while completing runtime '$name'"
   fi
+  _agentctl_finalize_terminated_generation "$name" "$runtime_id" completed "$state_json"
   echo "completed"
 }
 

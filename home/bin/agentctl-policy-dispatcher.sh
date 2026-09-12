@@ -368,12 +368,18 @@ agentctl_policy_dispatcher_check_ownership() {
     return
   fi
 
-  local state_runtime_id state_name state_backend state_schema state_cwd
+  local state_runtime_id state_name state_backend state_schema state_cwd state_status state_session state_socket state_pane_id state_pane_pid state_pane_pid_start
   state_runtime_id=$(echo "$state_json" | jq -r '.runtime_id // empty')
   state_name=$(echo "$state_json" | jq -r '.name // empty')
   state_backend=$(echo "$state_json" | jq -r '.backend // empty')
   state_schema=$(echo "$state_json" | jq -r '.schema_version // empty')
   state_cwd=$(echo "$state_json" | jq -r '.cwd // empty')
+  state_status=$(echo "$state_json" | jq -r '.status // empty')
+  state_session=$(echo "$state_json" | jq -r '.tmux_session // empty')
+  state_socket=$(echo "$state_json" | jq -r '.tmux_socket_path // empty')
+  state_pane_id=$(echo "$state_json" | jq -r '.pane_id // empty')
+  state_pane_pid=$(echo "$state_json" | jq -r '.pane_pid // empty')
+  state_pane_pid_start=$(echo "$state_json" | jq -r '.pane_pid_start // empty')
   if [ "$state_runtime_id" != "$AGENTCTL_RUNTIME_ID" ]; then
     echo "agentctl runtime state runtime_id does not match this generation (possibly superseded)"
     return
@@ -382,9 +388,45 @@ agentctl_policy_dispatcher_check_ownership() {
   if [ "${AGENTCTL_POLICY_CONTEXT_SOURCE:-env}" = "codex_session" ]; then
     local binding_file="${AGENTCTL_CODEX_BINDING_FILE:-}" binding_json
     if [ "$state_backend" != "codex" ] || [ "$state_schema" != "$AGENTCTL_SCHEMA_VERSION" ] \
-      || [ -z "$state_name" ] || [ -z "$state_cwd" ] || [ "$state_cwd" != "${AGENTCTL_CODEX_HOOK_CWD:-}" ]; then
-      echo "Codex session binding does not match runtime state identity"
+      || [ -z "$state_name" ] || [ -z "$state_cwd" ] || [ "$state_cwd" != "${AGENTCTL_CODEX_HOOK_CWD:-}" ] \
+      || { [ "$state_status" != "starting" ] && [ "$state_status" != "running" ]; } \
+      || [ "$state_session" != "agentctl-$state_name" ] || [[ "$state_socket" != /* ]] || [ ! -S "$state_socket" ]; then
+      echo "Codex session binding does not match a live runtime state identity"
       return
+    fi
+
+    # Codex app-server/session_id は TUI pane より長生きし得るため、binding record と
+    # state.json だけでは lifecycle ownership の証拠にならない。launcher由来の
+    # PATH/TMUX_TMPDIRにも依存せず、stateに固定したowner socketへ `tmux -S` で
+    # 毎 hook call 接続し、session/marker/pane/PID generationを再照合する。
+    if ! command tmux -S "$state_socket" has-session -t "=$state_session" 2>/dev/null; then
+      echo "Codex bound runtime tmux session is no longer live"
+      return
+    fi
+    local live_pane live_dead live_owner live_runtime_id live_name live_backend live_schema
+    live_pane=$(command tmux -S "$state_socket" display-message -p -t "$state_session" '#{pane_id}' 2>/dev/null)
+    live_dead=$(command tmux -S "$state_socket" display-message -p -t "$state_session" '#{pane_dead}' 2>/dev/null)
+    live_owner=$(command tmux -S "$state_socket" show-options -p -t "$live_pane" -v @agentctl_owner 2>/dev/null)
+    live_runtime_id=$(command tmux -S "$state_socket" show-options -p -t "$live_pane" -v @agentctl_runtime_id 2>/dev/null)
+    live_name=$(command tmux -S "$state_socket" show-options -p -t "$live_pane" -v @agentctl_name 2>/dev/null)
+    live_backend=$(command tmux -S "$state_socket" show-options -p -t "$live_pane" -v @agentctl_backend 2>/dev/null)
+    live_schema=$(command tmux -S "$state_socket" show-options -p -t "$live_pane" -v @agentctl_schema_version 2>/dev/null)
+    if [ -z "$live_pane" ] || [ "$live_dead" != "0" ] || [ "$live_owner" != "agentctl" ] \
+      || [ "$live_runtime_id" != "$state_runtime_id" ] || [ "$live_name" != "$state_name" ] \
+      || [ "$live_backend" != "codex" ] || [ "$live_schema" != "$state_schema" ]; then
+      echo "Codex bound runtime tmux generation is dead or ownership markers changed"
+      return
+    fi
+    if [ "$state_status" = "running" ]; then
+      local live_pid live_pid_start
+      live_pid=$(command tmux -S "$state_socket" display-message -p -t "$state_session" '#{pane_pid}' 2>/dev/null)
+      live_pid_start=$(agentctl_pid_start_token "$live_pid")
+      if [ -z "$state_pane_id" ] || [ -z "$state_pane_pid" ] || [ -z "$state_pane_pid_start" ] \
+        || [ "$live_pane" != "$state_pane_id" ] || [ "$live_pid" != "$state_pane_pid" ] \
+        || [ "$live_pid_start" != "$state_pane_pid_start" ]; then
+        echo "Codex bound runtime pane/PID generation no longer matches published state"
+        return
+      fi
     fi
     if [ -z "$binding_file" ] || ! binding_json=$(jq -c . "$binding_file" 2>/dev/null); then
       echo "Codex session binding file is missing or invalid"

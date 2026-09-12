@@ -145,8 +145,8 @@ POLICY_REALEXEC=$(echo "$POLICY" | jq --arg exe "$WORKROOT/bin/deploy" \
   '.scope.production_targets += [{id:"real",deploy_argv:[[$exe,"--target","production"]],verify_argv:[]}]')
 
 check "allowed: canonical production executable path" allow "$POLICY_REALEXEC" -- "$WORKROOT/bin/deploy" --target production
-check "allowed: same production executable via ../ traversal resolves to the same canonical identity" allow "$POLICY_REALEXEC" -- "$WORKROOT/bin/../bin/deploy" --target production
-check "allowed: same production executable via symlink resolves to the same canonical identity" allow "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target production
+check "denied: production invocation via ../ traversal is not a canonical argv[0]" deny "$POLICY_REALEXEC" -- "$WORKROOT/bin/../bin/deploy" --target production
+check "denied: production invocation via symlink is not a canonical argv[0]" deny "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target production
 check "denied: canonical production executable with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/bin/deploy" --target staging
 check "denied: same production executable via symlink with unapproved argv" deny "$POLICY_REALEXEC" -- "$WORKROOT/deploy-link" --target staging
 

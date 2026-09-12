@@ -101,8 +101,19 @@ chmod 0700 "$CODEX_REGISTRY" "$CODEX_REGISTRY/pending" "$CODEX_REGISTRY/sessions
 CODEX_POLICY="$CODEX_RUNTIME_DIR/policy.snapshot.json"
 cp "$POLICY_FILE" "$CODEX_POLICY"
 CODEX_POLICY_DIGEST=$(jq -S -c . "$CODEX_POLICY" | sha256sum | awk '{print "sha256:" $1}')
-jq -n --arg cwd "$REPO" --arg rid "$CODEX_RID" \
-  '{schema_version:1,name:"codexdisp",backend:"codex",runtime_id:$rid,cwd:$cwd,status:"starting"}' \
+CODEX_TMUX_SESSION="agentctl-codexdisp"
+tmux new-session -d -s "$CODEX_TMUX_SESSION" -c "$REPO"
+CODEX_PANE=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{pane_id}')
+CODEX_SOCKET=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{socket_path}')
+CODEX_PANE_PID=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{pane_pid}')
+CODEX_PANE_START=$(awk -F') ' '{print $2}' "/proc/$CODEX_PANE_PID/stat" | awk '{print $20}')
+tmux set-option -p -t "$CODEX_PANE" @agentctl_owner agentctl
+tmux set-option -p -t "$CODEX_PANE" @agentctl_name codexdisp
+tmux set-option -p -t "$CODEX_PANE" @agentctl_runtime_id "$CODEX_RID"
+tmux set-option -p -t "$CODEX_PANE" @agentctl_backend codex
+tmux set-option -p -t "$CODEX_PANE" @agentctl_schema_version 1
+jq -n --arg cwd "$REPO" --arg rid "$CODEX_RID" --arg session "$CODEX_TMUX_SESSION" --arg socket "$CODEX_SOCKET" \
+  '{schema_version:1,name:"codexdisp",backend:"codex",runtime_id:$rid,cwd:$cwd,tmux_session:$session,tmux_socket_path:$socket,pane_id:null,pane_pid:null,pane_pid_start:null,status:"starting"}' \
   >"$CODEX_RUNTIME_DIR/state.json"
 RID_KEY=$(printf '%s' "$CODEX_RID" | sha256sum | awk '{print $1}')
 SESSION_KEY=$(printf '%s' "$CODEX_SESSION_ID" | sha256sum | awk '{print $1}')
@@ -179,6 +190,12 @@ EV_DECISION=$(echo "$OUT" | jq -r '.hookSpecificOutput.permissionDecision // emp
   && pass "Codex sentinel without ambient AGENTCTL_* binds hook session_id to the exact runtime generation and records deny evidence" \
   || fail "expected Codex sentinel session binding + deny evidence without ambient env, got: $OUT"
 
+# sentinel完了後の通常turnは published running state と同じ pane generation を要求する。
+jq --arg pane "$CODEX_PANE" --arg socket "$CODEX_SOCKET" --argjson pid "$CODEX_PANE_PID" --arg start "$CODEX_PANE_START" \
+  '.status="running" | .tmux_socket_path=$socket | .pane_id=$pane | .pane_pid=$pid | .pane_pid_start=$start' \
+  "$CODEX_RUNTIME_DIR/state.json" >"$CODEX_RUNTIME_DIR/state.json.tmp" \
+  && mv "$CODEX_RUNTIME_DIR/state.json.tmp" "$CODEX_RUNTIME_DIR/state.json"
+
 # binding 成立後は ambient AGENTCTL_* が残っていても session binding を優先し、
 # operation-file read の current-runtime 制約を適用する。
 CODEX_OP_FILE="$CODEX_RUNTIME_DIR/codex-op-11111111-1111-4111-8111-111111111111.txt"
@@ -236,6 +253,29 @@ OUT=$(printf '%s\n' "$CODEX_LS_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   bash "$DISPATCHER")
 [ -z "$OUT" ] && pass "bound Codex session allows non-privileged operation without ambient AGENTCTL_*" \
   || fail "expected bound Codex session non-privileged no-op, got: $OUT"
+
+# persistent app-server の session_id binding が残っていても、owned tmux generation が
+# 消えた後は stale session として必ず deny する。
+tmux kill-session -t "$CODEX_TMUX_SESSION"
+OUT=$(printf '%s\n' "$CODEX_LS_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
+  env -u AGENTCTL_POLICY_SNAPSHOT -u AGENTCTL_RUNTIME_ID -u AGENTCTL_POLICY_DIGEST -u TMUX_PANE \
+  bash "$DISPATCHER")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "bound Codex session is denied after its owned tmux generation is gone" \
+  || fail "stale Codex session binding survived backend termination: $OUT"
+# 後続 operation-file tests 用に同一generation evidenceを復元する。
+tmux new-session -d -s "$CODEX_TMUX_SESSION" -c "$REPO"
+CODEX_PANE=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{pane_id}')
+CODEX_SOCKET=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{socket_path}')
+CODEX_PANE_PID=$(tmux display-message -p -t "$CODEX_TMUX_SESSION" '#{pane_pid}')
+CODEX_PANE_START=$(awk -F') ' '{print $2}' "/proc/$CODEX_PANE_PID/stat" | awk '{print $20}')
+for kv in owner=agentctl name=codexdisp runtime_id="$CODEX_RID" backend=codex schema_version=1; do
+  tmux set-option -p -t "$CODEX_PANE" "@agentctl_${kv%%=*}" "${kv#*=}"
+done
+jq --arg pane "$CODEX_PANE" --arg socket "$CODEX_SOCKET" --argjson pid "$CODEX_PANE_PID" --arg start "$CODEX_PANE_START" \
+  '.status="running" | .tmux_socket_path=$socket | .pane_id=$pane | .pane_pid=$pid | .pane_pid_start=$start' \
+  "$CODEX_RUNTIME_DIR/state.json" >"$CODEX_RUNTIME_DIR/state.json.tmp" \
+  && mv "$CODEX_RUNTIME_DIR/state.json.tmp" "$CODEX_RUNTIME_DIR/state.json"
 
 # 実 Codex が operation file bootstrap を読む際の exact shape。
 # generic classifier の quote fail-closed は維持したまま、この runtime 自身の

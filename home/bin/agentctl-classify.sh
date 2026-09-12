@@ -438,15 +438,20 @@ agentctl_classify_production() {
     [ -f "$policy_exec" ] && [ -x "$policy_exec" ] || { echo "deny"; return 0; }
   done < <(echo "$policy_json" | jq -r '(.scope.production_targets // [])[] | ((.deploy_argv // []) + (.verify_argv // []))[]? | .[0] // empty')
   local exec0="${args[0]:-}"
-  local exec0_canonical=""
-  [ -n "$exec0" ] && exec0_canonical=$(agentctl_classify_canonicalize_path "$exec0")
+  local exec0_canonical="" exec0_is_canonical=0
+  if [ -n "$exec0" ]; then
+    exec0_canonical=$(agentctl_classify_canonicalize_path "$exec0")
+    if [[ "$exec0" == /* ]] && [ "$exec0_canonical" = "$exec0" ] && [ -f "$exec0" ] && [ -x "$exec0" ]; then
+      exec0_is_canonical=1
+    fi
+  fi
 
-  # deploy_argv/verify_argv は exact な argv 全体一致だけを allow 対象にする
-  # (startswith prefix match だと承認済み argv の後ろに任意の追加引数
-  # (--force 等) を足しても allow され続ける)。argv[0] (実行ファイル
-  # identity) は realpath -e で正規化して比較し (相対パスの .. や symlink
-  # 越しの同一 identity への迂回を防ぐ)、残りの引数は literal 一致を要求
-  # する。permission が enable かどうかに関わらず先に exact match を探し、
+  # deploy_argv/verify_argv は exact な argv 全体一致だけを allow 対象にする。
+  # policy 側だけでなく実 invocation の argv[0] 自体も absolute/canonical/existing
+  # executable でなければならない。同じ実体を指す `../` や symlink も production
+  # allowlist では別表記として拒否し、PATH/cwd/aliasing による execution identity の
+  # ずれを持ち込ませない。残りの引数は literal 一致を要求する。
+  # permission が enable かどうかに関わらず先に exact match を探し、
   # 見つかれば permission に応じて allow/deny を確定する (not_privileged
   # にはしない)。
   local match_key
@@ -465,6 +470,7 @@ agentctl_classify_production() {
       cand0=$(echo "$cand" | jq -r '.[0]')
       cand0_canonical=$(agentctl_classify_canonicalize_path "$cand0")
       [ "$cand0_canonical" = "$exec0_canonical" ] || continue
+      [ "$exec0_is_canonical" -eq 1 ] || { echo "deny"; return 0; }
       local rest_match=1 idx cand_arg
       for ((idx = 1; idx < cand_len; idx++)); do
         cand_arg=$(echo "$cand" | jq -r --argjson i "$idx" '.[$i]')

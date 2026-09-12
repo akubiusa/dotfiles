@@ -843,6 +843,12 @@ agentctl_tmux_pane_id() {
   agentctl_tmux display-message -p -t "$1" '#{pane_id}' 2>/dev/null
 }
 
+agentctl_tmux_socket_path() {
+  # persistent hook/app-server が launcher の PATH/TMUX_TMPDIR を継承しなくても
+  # owner tmux server を直接再照合できるよう、server socket の絶対pathを取得する。
+  agentctl_tmux display-message -p -t "$1" '#{socket_path}' 2>/dev/null
+}
+
 agentctl_tmux_pane_pid() {
   agentctl_tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null
 }

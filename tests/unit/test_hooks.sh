@@ -386,12 +386,29 @@ for cmd in \
   fi
 done
 
+# hooks.json の matcher が "^(Bash|exec)$" に拡張されたため、tool_input が
+# 文字列 (code-mode の "exec" tool) の PreToolUse でもクラッシュしないこと
+# (jq の型エラーで rc!=0 にならないこと) を確認する。
+EXEC_TOOL_INPUT_OUTPUT=$(jq -n '{tool_name: "exec", tool_input: "const r = await tools.exec_command({\"cmd\": \"git config --get user.name\"});"}' | bash "$CODEX_GIT_CONFIG_GUARD")
+EXEC_TOOL_INPUT_RC=$?
+if [[ "$EXEC_TOOL_INPUT_RC" -ne 0 ]]; then
+  echo "❌ Codex git-config-guard crashed on non-object (exec) tool_input (rc=$EXEC_TOOL_INPUT_RC)"
+  FAILED=1
+elif [[ -n "$EXEC_TOOL_INPUT_OUTPUT" ]]; then
+  echo "❌ Codex git-config-guard should pass through unparseable exec tool_input, got: $EXEC_TOOL_INPUT_OUTPUT"
+  FAILED=1
+else
+  echo "✅ Codex git-config-guard passes through non-object (exec) tool_input without crashing"
+fi
+
 if ! jq empty home/dot_codex/hooks.json; then
   echo "❌ Codex hooks.json is invalid JSON"
   FAILED=1
 elif ! jq -e '
-  .hooks.PreToolUse[0].matcher == "^Bash$"
-  and .hooks.PreToolUse[0].hooks[0].command == "bash ~/.codex/hooks/git-config-guard.sh"
+  (.hooks.PreToolUse | length) == 1
+  and .hooks.PreToolUse[0].matcher == "^(Bash|exec)$"
+  and .hooks.PreToolUse[0].hooks[0].command == "bash ~/.codex/hooks/agentctl-policy-dispatcher.sh"
+  and .hooks.PreToolUse[0].hooks[1].command == "bash ~/.codex/hooks/git-config-guard.sh"
   and .hooks.PostToolUse[0].hooks[0].command == "bash ~/.codex/scripts/completion-notify/notify-post-tool-use.sh"
   and .hooks.PermissionRequest[0].hooks[0].command == "bash ~/.codex/hooks/pr-monitor-pane-state.sh approval_pending"
   and .hooks.UserPromptSubmit[0].hooks[0].command == "bash ~/.codex/hooks/pr-monitor-pane-state.sh busy"

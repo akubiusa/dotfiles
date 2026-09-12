@@ -35,7 +35,7 @@ if [ -f "home/dot_claude/settings.json" ]; then
 fi
 
 # Codex CLI config.toml modify template
-if [ -f "home/dot_codex/modify_config.toml" ]; then
+if [ -f "home/dot_codex/modify_private_config.toml" ]; then
   echo "Validating Codex CLI config.toml..."
   CODEX_CONFIG_INPUT=$(mktemp)
   trap 'rm -rf "${CHEZMOI_BIN_DIR:-}" "$CODEX_CONFIG_INPUT"' EXIT
@@ -52,7 +52,7 @@ if [ -f "home/dot_codex/modify_config.toml" ]; then
     '[features]' \
     'codex_hooks = false' \
     'remote_control = true' > "$CODEX_CONFIG_INPUT"
-  if ! chezmoi execute-template --file --with-stdin home/dot_codex/modify_config.toml < "$CODEX_CONFIG_INPUT" | python3 -c '
+  if ! chezmoi execute-template --file --with-stdin home/dot_codex/modify_private_config.toml < "$CODEX_CONFIG_INPUT" | python3 -c '
 import sys
 
 try:
@@ -72,6 +72,13 @@ assert config["features"]["remote_control"] is True
 assert "codex_hooks" not in config["features"]
 assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
 assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
+state = config["hooks"]["state"]
+dispatcher = [(k, v) for k, v in state.items() if k.endswith("/.codex/hooks.json:pre_tool_use:0:0")]
+git_guard = [(k, v) for k, v in state.items() if k.endswith("/.codex/hooks.json:pre_tool_use:0:1")]
+assert len(dispatcher) == 1
+assert dispatcher[0][1]["trusted_hash"] == "sha256:8863117dfc0f0ed890109dff2a9c7eaa3076dd94ed001602d3de33ef7517dbdc"
+assert len(git_guard) == 1
+assert git_guard[0][1]["trusted_hash"] == "sha256:5be52eb577c8c54cec54e7635c1fb9ad3fa4166798f3652f0444a50a5fadf979"
 assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"
 '
   then
@@ -79,6 +86,47 @@ assert config["notice"]["model_migrations"]["gpt_5_4"] == "gpt-5.6"
     FAILED=1
   else
     echo "✅ Codex CLI config.toml validation passed"
+  fi
+  if ! python3 - <<'PYHOOK'
+import hashlib
+import json
+from pathlib import Path
+
+hooks = json.loads(Path("home/dot_codex/hooks.json").read_text())["hooks"]["PreToolUse"]
+assert len(hooks) == 1, hooks
+group = hooks[0]
+expected = [
+    "sha256:8863117dfc0f0ed890109dff2a9c7eaa3076dd94ed001602d3de33ef7517dbdc",
+    "sha256:5be52eb577c8c54cec54e7635c1fb9ad3fa4166798f3652f0444a50a5fadf979",
+]
+actual = []
+for handler in group["hooks"]:
+    normalized = {
+        "type": "command",
+        "command": handler["command"],
+        "timeout": max(int(handler.get("timeout", 600)), 1),
+        "async": bool(handler.get("async", False)),
+    }
+    if handler.get("commandWindows") is not None:
+        normalized["commandWindows"] = handler["commandWindows"]
+    if handler.get("statusMessage") is not None:
+        normalized["statusMessage"] = handler["statusMessage"]
+    if handler.get("additionalContextLimit") is not None:
+        normalized["additionalContextLimit"] = handler["additionalContextLimit"]
+    identity = {
+        "event_name": "pre_tool_use",
+        "matcher": group.get("matcher"),
+        "hooks": [normalized],
+    }
+    payload = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    actual.append("sha256:" + hashlib.sha256(payload).hexdigest())
+assert actual == expected, (actual, expected)
+PYHOOK
+  then
+    echo "❌ Codex managed hook trusted_hash fingerprints drifted from hooks.json"
+    FAILED=1
+  else
+    echo "✅ Codex managed hook trusted_hash fingerprints match hooks.json"
   fi
   FILES_CHECKED=$((FILES_CHECKED + 1))
 fi

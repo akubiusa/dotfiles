@@ -3,8 +3,14 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^Bash$",
+        "matcher": "^(Bash|exec)$",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.codex/hooks/agentctl-policy-dispatcher.sh",
+            "timeout": 10,
+            "statusMessage": "Checking agentctl policy"
+          },
           {
             "type": "command",
             "command": "bash ~/.codex/hooks/git-config-guard.sh",

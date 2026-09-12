@@ -13,7 +13,7 @@ if [[ "$INPUT" != *"git config"* ]]; then
     exit 0
 fi
 
-CMD=$(jq -r '.tool_input.command // empty' <<<"$INPUT")
+CMD=$(jq -r '.tool_input.command? // empty' <<<"$INPUT")
 if [[ -z "$CMD" || "$CMD" != *"git config"* ]]; then
     exit 0
 fi

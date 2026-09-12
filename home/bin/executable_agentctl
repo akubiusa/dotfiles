@@ -228,6 +228,22 @@ _respawn_backend_or_rollback() {
   fi
 }
 
+# guard検証済みでもrunning stateをpublishする前のinitial/continuation delivery失敗は
+# starting generationとして回収する。paste後のacceptance=unknownでもbackendをkillすることで
+# 失敗したstart/resumeからagent processだけが残る状態を作らない。
+_deliver_starting_body_or_rollback() {
+  local backend="$1" pane="$2" dir="$3" body_path="$4" runtime_id="$5" operation="$6"
+  local session="$7" name="$8" predecessor_state_json="$9" description="${10}"
+  local deliver_rc=0
+  agentctl_deliver_body "$backend" "$pane" "$dir" "$body_path" "$runtime_id" "$operation" || deliver_rc=$?
+  [ "$deliver_rc" -eq 0 ] && return 0
+
+  if ! _rollback_unverified_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json" 1; then
+    agentctl_die --code 5 "$description failed and owned tmux session could not be terminated; preserving runtime state/bindings for '$name'"
+  fi
+  agentctl_die --code 5 "$description failed; starting generation rolled back"
+}
+
 # 新規 generation を publish する (start / resume 共通)。
 # spec の runtime publication barrier (starting state -> blocked bootstrap ->
 # owner marker -> release token) をここに一本化する。stdout に runtime_id を返す。
@@ -424,8 +440,8 @@ _publish_generation() {
   # 確認する barrier が無く、2 回に分けると実 backend 上で 1 turn 目実行中の
   # steer と区別できず衝突し得るため)。
   if [ -n "$prelude_path" ]; then
-    agentctl_deliver_body "$backend" "$pane" "$dir" "$prelude_path" "$runtime_id" "$operation_name" \
-      || agentctl_die --code 5 "failed to deliver continuation bundle to backend '$backend' (publication left at status=starting)"
+    _deliver_starting_body_or_rollback "$backend" "$pane" "$dir" "$prelude_path" "$runtime_id" "$operation_name" \
+      "$session" "$name" "$predecessor_state_json" "continuation bundle delivery to backend '$backend'"
   else
     local mission_path="$dir/mission.txt"
     if [ -f "$mission_path" ]; then
@@ -441,8 +457,8 @@ _publish_generation() {
         echo "=== TASK MISSION ==="
         cat -- "$mission_path"
       } | agentctl_atomic_write "$delivery_path" 0600
-      agentctl_deliver_body "$backend" "$pane" "$dir" "$delivery_path" "$runtime_id" "$operation_name" \
-        || agentctl_die --code 5 "failed to deliver initial mission to backend '$backend' (publication left at status=starting)"
+      _deliver_starting_body_or_rollback "$backend" "$pane" "$dir" "$delivery_path" "$runtime_id" "$operation_name" \
+        "$session" "$name" "$predecessor_state_json" "initial mission delivery to backend '$backend'"
     fi
   fi
 
@@ -577,8 +593,10 @@ _steer_locked() {
 
   local session pane backend dir
   session=$(echo "$state_json" | jq -r '.tmux_session')
+  pane=$(echo "$state_json" | jq -r '.pane_id // empty')
   backend=$(echo "$state_json" | jq -r '.backend')
-  pane="${session}"
+  [[ "$pane" =~ ^%[0-9]+$ ]] \
+    || agentctl_die --code 4 "runtime '$name' has invalid exact pane ownership evidence"
   dir=$(agentctl_runtime_dir "$name")
   # 本文をバッファ名/argv に残さず tmux buffer 経由で投入する (codex は本文
   # そのものを paste せず operation-specific secure copy の bootstrap を送る)。

@@ -46,6 +46,9 @@ fi
 if [ "\${AGENTCTL_TEST_TMUX_FAIL_KILL_SESSION:-0}" = "1" ] && [ "\$op" = "kill-session" ]; then
   exit 98
 fi
+if [ -n "\${AGENTCTL_TEST_TMUX_SWITCH_ACTIVE_BEFORE_PASTE:-}" ] && [ "\$op" = "paste-buffer" ]; then
+  "$REAL_TMUX" -L agentctl-test select-window -t "\$AGENTCTL_TEST_TMUX_SWITCH_ACTIVE_BEFORE_PASTE" >/dev/null 2>&1 || exit 99
+fi
 exec "$REAL_TMUX" -L agentctl-test "\$@"
 WRAP
 chmod +x "$WORKROOT/bin/tmux"
@@ -620,6 +623,47 @@ PREFAIL_RC=$?
 [ "$PREFAIL_RC" -eq 5 ] \
   && pass "agentctl_deliver_body returns 5 for a definite pre-delivery transport failure" \
   || fail "pre-delivery transport failure returned $PREFAIL_RC, expected 5"
+
+# start/resume publicationではinitial bodyのdelivery失敗もruntimeを残してはならない。
+# fake backendのload-bufferを確定失敗させ、実backend相当のsession/stateがrollbackされることを検証する。
+NAME_START_DELIVERY_FAIL="rtStartDeliveryFail"
+AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER=1 \
+  bash "$AGENTCTL" start --name "$NAME_START_DELIVERY_FAIL" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin \
+  <<<"delivery failure mission" >/tmp/agentctl-start-delivery-fail-out 2>/tmp/agentctl-start-delivery-fail-err
+START_DELIVERY_FAIL_RC=$?
+if [ "$START_DELIVERY_FAIL_RC" -eq 5 ] \
+  && [ ! -f "$WORKROOT/state/agentctl/runtimes/$NAME_START_DELIVERY_FAIL/state.json" ] \
+  && ! tmux has-session -t "agentctl-$NAME_START_DELIVERY_FAIL" >/dev/null 2>&1; then
+  pass "start rolls back state/session when initial mission delivery fails"
+else
+  fail "start delivery failure left a published starting generation (rc=$START_DELIVERY_FAIL_RC state=$([ -f "$WORKROOT/state/agentctl/runtimes/$NAME_START_DELIVERY_FAIL/state.json" ] && echo yes || echo no) session=$(tmux has-session -t "agentctl-$NAME_START_DELIVERY_FAIL" >/dev/null 2>&1 && echo yes || echo no))"
+fi
+tmux kill-session -t "agentctl-$NAME_START_DELIVERY_FAIL" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_START_DELIVERY_FAIL"
+
+# steerはsession名ではなくstate記録のexact pane_idをtargetにする。tmux wrapperでpaste直前に
+# 別windowをactiveへ切り替えても、payloadがowner pane以外へ流れないことを決定的に検証する。
+NAME_STEER_PANE="rtSteerPaneFence"
+RID_STEER_PANE=$(bash "$AGENTCTL" start --name "$NAME_STEER_PANE" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"pane fence mission")
+SESSION_STEER_PANE="agentctl-$NAME_STEER_PANE"
+STATE_STEER_PANE="$WORKROOT/state/agentctl/runtimes/$NAME_STEER_PANE/state.json"
+OWNER_PANE=$(jq -r '.pane_id' "$STATE_STEER_PANE")
+OWNER_SINK="$WORKROOT/state/agentctl/runtimes/$NAME_STEER_PANE/fake-sink.txt"
+OTHER_SINK="$WORKROOT/steer-pane-other-sink.txt"
+tmux new-window -d -t "$SESSION_STEER_PANE" -n intruder -- bash -c "stty raw -echo; tee '$OTHER_SINK'"
+sleep 0.2
+STEER_PANE_MARKER="exact-pane-steer-$RANDOM-$$"
+AGENTCTL_TEST_TMUX_SWITCH_ACTIVE_BEFORE_PASTE="$SESSION_STEER_PANE:intruder" \
+  bash "$AGENTCTL" steer --name "$NAME_STEER_PANE" --runtime-id "$RID_STEER_PANE" --stdin <<<"$STEER_PANE_MARKER" >/dev/null
+sleep 0.2
+if grep -qF "$STEER_PANE_MARKER" "$OWNER_SINK" 2>/dev/null \
+  && ! grep -qF "$STEER_PANE_MARKER" "$OTHER_SINK" 2>/dev/null; then
+  pass "steer targets the state-owned exact pane $OWNER_PANE even if the session active pane changes before paste"
+else
+  fail "steer followed the session active pane instead of recorded owner pane $OWNER_PANE"
+fi
+tmux kill-session -t "$SESSION_STEER_PANE" >/dev/null 2>&1 || true
+rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_STEER_PANE"
 
 # --- steer --json machine-readable result contract 検証 -----------------------------------------------------------
 # result は accepted|submitted|unknown のいずれかで、本文/payload を一切含まない。

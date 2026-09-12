@@ -37,23 +37,29 @@ agentctl_ensure_root
 agentctl_acquire_deployment_lock_exclusive
 
 blockers=()
+names=()
+if [ -d "$(agentctl_runtimes_dir)" ]; then
+  while IFS= read -r -d '' d; do
+    names+=("$(basename "$d")")
+  done < <(find "$(agentctl_runtimes_dir)" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+fi
+# stateを失ったambient-server orphanもinventoryへ追加する。stateを持つruntimeは
+# reconcile自身が保存済みtmux_socket_pathへ接続するため、custom socketでも見落とさない。
 while IFS= read -r sess; do
-  case "$sess" in
-    agentctl-*) : ;;
-    *) continue ;;
-  esac
-  name="${sess#agentctl-}"
+  case "$sess" in agentctl-*) name="${sess#agentctl-}" ;; *) continue ;; esac
+  found=0
+  for existing in "${names[@]}"; do [ "$existing" = "$name" ] && found=1; done
+  [ "$found" -eq 1 ] || names+=("$name")
+done < <(agentctl_tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+
+for name in "${names[@]}"; do
   reconcile=$(agentctl_reconcile "$name")
-  # 既知の安全な終了状態のみを許可する allow-list にする (running/starting/
-  # orphan/conflict を個別に列挙する block-list だと、将来 agentctl_reconcile
-  # に追加される未知の状態が素通りしてしまう fail-open な穴になるため)。
+  # 既知の安全な終了状態のみを許可する allow-list にする。
   case "$reconcile" in
     absent|exited|stale) : ;;
-    *)
-      blockers+=("$name ($reconcile)")
-      ;;
+    *) blockers+=("$name ($reconcile)") ;;
   esac
-done < <(agentctl_tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+done
 
 if [ "${#blockers[@]}" -gt 0 ]; then
   agentctl_release_deployment_lock

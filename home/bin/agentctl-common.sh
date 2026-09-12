@@ -199,7 +199,12 @@ agentctl_tmux() {
   (
     agentctl_close_fd_value "${AGENTCTL_LOCK_FD:-}" || return 1
     agentctl_close_fd_value "${AGENTCTL_DEPLOY_LOCK_FD:-}" || return 1
-    command tmux "$@"
+    if [ -n "${AGENTCTL_TMUX_SOCKET_PATH:-}" ]; then
+      [[ "$AGENTCTL_TMUX_SOCKET_PATH" == /* ]] && [ -S "$AGENTCTL_TMUX_SOCKET_PATH" ] || return 1
+      command tmux -S "$AGENTCTL_TMUX_SOCKET_PATH" "$@"
+    else
+      command tmux "$@"
+    fi
   )
 }
 
@@ -895,6 +900,15 @@ agentctl_read_state() {
   jq -c . "$f"
 }
 
+# state が所有する tmux server socket を返す。socket実体が既に消えていても
+# stale generation の証拠としてpath自体は有効なので、ここではabsolute性だけ検証する。
+agentctl_state_tmux_socket_path() {
+  local state_json="$1" socket
+  socket=$(printf '%s\n' "$state_json" | jq -r '.tmux_socket_path // empty' 2>/dev/null) || return 1
+  [[ "$socket" == /* ]] || return 1
+  printf '%s' "$socket"
+}
+
 agentctl_write_state_json() {
   # 使い方: agentctl_write_state_json <name> <json-on-stdin>
   local name="$1" dir
@@ -1031,19 +1045,28 @@ EOF
 agentctl_reconcile() {
   local name="$1" session state_json marker_owner marker_runtime_id marker_name
   session=$(agentctl_tmux_session "$name")
-  local has_tmux=0
-  agentctl_tmux_has_session "$session" && has_tmux=1
 
-  local has_state=0 state_runtime_id="" state_status="" state_pane_id="" state_pane_pid="" state_pane_pid_start=""
+  local has_state=0 state_runtime_id="" state_status="" state_socket="" state_pane_id="" state_pane_pid="" state_pane_pid_start=""
   if state_json=$(agentctl_read_state "$name"); then
     has_state=1
     state_runtime_id=$(echo "$state_json" | jq -r '.runtime_id')
     state_status=$(echo "$state_json" | jq -r '.status')
+    state_socket=$(agentctl_state_tmux_socket_path "$state_json") || {
+      echo "conflict"
+      return 0
+    }
     state_pane_id=$(echo "$state_json" | jq -r '.pane_id')
     state_pane_pid=$(echo "$state_json" | jq -r '.pane_pid')
     state_pane_pid_start=$(echo "$state_json" | jq -r '.pane_pid_start')
   fi
 
+  # state があるgenerationは、そのstateに固定されたtmux socketだけをowner serverと
+  # みなす。callerのTMUX/TMUX_TMPDIR/PATHで別serverへ接続してstale判定しない。
+  local AGENTCTL_TMUX_SOCKET_PATH=""
+  [ "$has_state" -eq 0 ] || AGENTCTL_TMUX_SOCKET_PATH="$state_socket"
+
+  local has_tmux=0
+  agentctl_tmux_has_session "$session" && has_tmux=1
   if [ "$has_tmux" -eq 0 ]; then
     if [ "$has_state" -eq 1 ]; then
       echo "stale"
@@ -1054,7 +1077,7 @@ agentctl_reconcile() {
   fi
 
   # tmux セッションはある。pane marker を読む (pane_id ではなくセッション名で
-  # アクティブ pane を解決する。base-index が 0 以外の tmux.conf でも安全)。
+  # アクティブ pane を解決する。base-index がユーザ tmux.conf で 0 以外でも安全)。
   local pane
   pane="$session"
   marker_owner=$(agentctl_tmux_get_marker "$pane" owner)
@@ -1062,7 +1085,6 @@ agentctl_reconcile() {
   marker_runtime_id=$(agentctl_tmux_get_marker "$pane" runtime_id)
 
   if [ "$marker_owner" != "agentctl" ] || [ -z "$marker_runtime_id" ]; then
-    # agentctl marker が不完全 = bootstrap 途中で終わった launcher crash 跡か、無関係セッション。
     if [ "$has_state" -eq 1 ]; then
       echo "conflict"
     else
@@ -1088,9 +1110,6 @@ agentctl_reconcile() {
     return 0
   fi
 
-  # pane 差し替えフェンシング: bootstrap 完了済み (pane_id 記録済み) の generation
-  # では、marker が (再利用/コピーされて) 一致していても、session 内の pane 自体が
-  # respawn/差し替えされていれば pane_id が変わる。これを検出する。
   if [ -n "$state_pane_id" ] && [ "$state_pane_id" != "null" ]; then
     local current_pane_id
     current_pane_id=$(agentctl_tmux_pane_id "$pane")
@@ -1100,11 +1119,6 @@ agentctl_reconcile() {
     fi
   fi
 
-  # PID フェンシング: 記録した pane_pid が (a) 現在も /proc に存在し、
-  # (b) 現在の pane が実際に指すプロセスと一致し、(c) 起動時刻トークンが
-  # 一致することを要求する。記録済み pid が /proc から消えている (プロセスが
-  # 死んで pane が respawn/差し替えされた) 場合にチェックを丸ごとスキップして
-  # "running" にフォールバックしないよう、いずれか欠けても conflict にする。
   if [ -n "$state_pane_pid" ] && [ "$state_pane_pid" != "null" ]; then
     local current_pane_pid current_start
     current_pane_pid=$(agentctl_tmux_pane_pid "$pane")
@@ -1119,9 +1133,9 @@ agentctl_reconcile() {
     fi
   fi
 
-  if [ "$state_status" = "starting" ]; then
-    echo "starting"
-  else
-    echo "running"
-  fi
+  case "$state_status" in
+    starting) echo "starting" ;;
+    running) echo "running" ;;
+    *) echo "conflict" ;;
+  esac
 }

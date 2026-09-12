@@ -35,10 +35,15 @@ mkdir -p "$WORKROOT/bin"
 REAL_TMUX=$(command -v tmux)
 cat >"$WORKROOT/bin/tmux" <<WRAP
 #!/bin/bash
-if [ "\${AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER:-0}" = "1" ] && [ "\${1:-}" = "load-buffer" ]; then
+op_index=1
+if [ "\${1:-}" = "-S" ]; then
+  op_index=3
+fi
+op="\${!op_index:-}"
+if [ "\${AGENTCTL_TEST_TMUX_FAIL_LOAD_BUFFER:-0}" = "1" ] && [ "\$op" = "load-buffer" ]; then
   exit 97
 fi
-if [ "\${AGENTCTL_TEST_TMUX_FAIL_KILL_SESSION:-0}" = "1" ] && [ "\${1:-}" = "kill-session" ]; then
+if [ "\${AGENTCTL_TEST_TMUX_FAIL_KILL_SESSION:-0}" = "1" ] && [ "\$op" = "kill-session" ]; then
   exit 98
 fi
 exec "$REAL_TMUX" -L agentctl-test "\$@"

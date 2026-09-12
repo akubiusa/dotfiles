@@ -211,6 +211,9 @@ _respawn_backend_or_rollback() {
 # 内包済み)、mission.txt の代わりにそれを 1 turn として fresh backend へ届ける。
 _publish_generation() {
   local name="$1" cwd="$2" backend="$3" policy_snapshot_path="$4" policy_digest="$5" prelude_path="$6" operation_name="${7:-start}"
+  # predecessor 操作でstate socketを選択していても、新generationはcallerが現在選択している
+  # ambient tmux serverへpublishする。旧socketを動的scopeから継承しない。
+  local AGENTCTL_TMUX_SOCKET_PATH=""
   local dir manifest_path
   dir=$(agentctl_runtime_dir "$name")
   manifest_path="$dir/manifest.json"
@@ -535,6 +538,9 @@ _steer_locked() {
   state_json=$(agentctl_read_state "$name") || agentctl_die --code 3 "no state for '$name'"
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
+  local AGENTCTL_TMUX_SOCKET_PATH
+  AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+    || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
 
   local session pane backend dir
   session=$(echo "$state_json" | jq -r '.tmux_session')
@@ -609,6 +615,11 @@ cmd_logs() {
     *) agentctl_die --code 4 "runtime '$name' is in unrecognized state '$reconcile'; refusing logs" ;;
   esac
 
+  local AGENTCTL_TMUX_SOCKET_PATH="" logs_state=""
+  if logs_state=$(agentctl_read_state "$name" 2>/dev/null); then
+    AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$logs_state") \
+      || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
+  fi
   local pane
   pane=$(agentctl_tmux_session "$name")
   if [ "$follow" -eq 1 ]; then
@@ -663,10 +674,12 @@ cmd_attach() {
   # attach 中ずっと lock を保持すると observer が steer/stop を阻害するため、lock は
   # ここで解放する。その代わり attach 直前に tmux server 内の単一 command queue で
   # old pane + runtime marker を再照合し、同名 new generation への name reuse を防ぐ。
-  local attach_evidence session_id pane
+  local attach_evidence session_id pane AGENTCTL_TMUX_SOCKET_PATH
   attach_evidence=$(agentctl_with_name_lock "$name" _attach_check "$name" "$runtime_id")
-  IFS=$'\t' read -r session_id pane <<<"$attach_evidence"
-  [ -n "$session_id" ] && [ -n "$pane" ] \
+  AGENTCTL_TMUX_SOCKET_PATH=$(echo "$attach_evidence" | jq -r '.tmux_socket_path // empty')
+  session_id=$(echo "$attach_evidence" | jq -r '.session_id // empty')
+  pane=$(echo "$attach_evidence" | jq -r '.pane_id // empty')
+  [[ "$AGENTCTL_TMUX_SOCKET_PATH" == /* ]] && [ -n "$session_id" ] && [ -n "$pane" ] \
     || agentctl_die --code 4 "failed to resolve exact tmux identity for runtime '$name'"
   agentctl_attach_fenced "$session_id" "$pane" "$runtime_id"
 }
@@ -680,17 +693,20 @@ _attach_check() {
     absent) agentctl_die --code 3 "runtime '$name' is not running (reconcile=absent)" ;;
     *) agentctl_die --code 4 "runtime '$name' is not running (reconcile=$reconcile)" ;;
   esac
-  local state_json current_id session pane session_id
+  local state_json current_id session pane session_id AGENTCTL_TMUX_SOCKET_PATH
   state_json=$(agentctl_read_state "$name") || agentctl_die --code 3 "no state for '$name'"
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
+  AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+    || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
   session=$(agentctl_tmux_session "$name")
   pane=$(agentctl_tmux_pane_id "$session")
   [ -n "$pane" ] || agentctl_die --code 4 "runtime '$name' has no current tmux pane"
   session_id=$(agentctl_tmux display-message -p -t "$pane" '#{session_id}' 2>/dev/null) \
     || agentctl_die --code 4 "runtime '$name' tmux session disappeared during attach fencing"
   [[ "$session_id" =~ ^\$[0-9]+$ ]] || agentctl_die --code 4 "runtime '$name' has invalid tmux session identity"
-  printf '%s\t%s\n' "$session_id" "$pane"
+  jq -n --arg socket "$AGENTCTL_TMUX_SOCKET_PATH" --arg session_id "$session_id" --arg pane_id "$pane" \
+    '{tmux_socket_path:$socket,session_id:$session_id,pane_id:$pane_id}'
 }
 
 agentctl_attach_fenced() {
@@ -741,6 +757,9 @@ _interrupt_locked() {
   state_json=$(agentctl_read_state "$name") || agentctl_die --code 3 "no state for '$name'"
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
+  local AGENTCTL_TMUX_SOCKET_PATH
+  AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+    || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
 
   local pane
   pane=$(echo "$state_json" | jq -r '.tmux_session')
@@ -797,6 +816,9 @@ _stop_locked() {
   current_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$runtime_id" = "$current_id" ] || agentctl_die --code 4 "stale --runtime-id (expected current generation $current_id)"
   session=$(echo "$state_json" | jq -r '.tmux_session')
+  local AGENTCTL_TMUX_SOCKET_PATH
+  AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+    || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
   if [ "$reconcile" = "running" ] || [ "$reconcile" = "starting" ]; then
     agentctl_tmux kill-session -t "$session" 2>/dev/null \
       || agentctl_die --code 5 "failed to stop owned tmux session for runtime '$name'"
@@ -837,12 +859,14 @@ _cleanup_locked() {
     *) agentctl_die --code 4 "runtime '$name' is in unrecognized state '$reconcile'; refusing cleanup" ;;
   esac
 
-  local expected_id session
+  local expected_id session state_json="" AGENTCTL_TMUX_SOCKET_PATH=""
   session=$(agentctl_tmux_session "$name")
   if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
     expected_id=$(echo "$state_json" | jq -r '.runtime_id')
+    AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+      || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
   else
-    # orphan: state が無いので tmux marker の runtime_id と照合する。
+    # orphan: state が無いので caller が見ている tmux server の marker と照合する。
     expected_id=$(agentctl_tmux_get_marker "${session}" runtime_id)
   fi
   [ -n "$expected_id" ] || agentctl_die --code 3 "cannot determine expected runtime_id for cleanup"
@@ -912,6 +936,9 @@ _resume_locked() {
   state_json=$(agentctl_read_state "$name") || agentctl_die --code 3 "no predecessor state for '$name'"
   predecessor_id=$(echo "$state_json" | jq -r '.runtime_id')
   [ "$from_runtime_id" = "$predecessor_id" ] || agentctl_die --code 4 "stale --from-runtime-id (expected predecessor generation $predecessor_id)"
+  local AGENTCTL_TMUX_SOCKET_PATH
+  AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+    || agentctl_die --code 4 "predecessor runtime '$name' has invalid tmux socket ownership evidence"
 
   # cwd/backend は常に predecessor の state.json から継承する (v8 正典構文;
   # caller からの override は cmd_resume 側で既に usage error にしている)。
@@ -970,6 +997,7 @@ _resume_locked() {
   agentctl_build_continuation_bundle "$manifest_json" "$log_tail" "$policy_snapshot_path" "$mission_path" "$old_digest" "$policy_digest" \
     | agentctl_atomic_write "$continuation_path" 0600
 
+  AGENTCTL_TMUX_SOCKET_PATH=""
   _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "$continuation_path" "resume"
 }
 
@@ -1018,9 +1046,11 @@ _complete_locked() {
 
   # state が無い (orphan) 場合も tmux marker の runtime_id と照合し、
   # caller の runtime_id を素通りさせない (cleanup と同じ fencing pattern)。
-  local state_json="" expected_id
+  local state_json="" expected_id AGENTCTL_TMUX_SOCKET_PATH=""
   if state_json=$(agentctl_read_state "$name" 2>/dev/null); then
     expected_id=$(echo "$state_json" | jq -r '.runtime_id')
+    AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
+      || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
   else
     expected_id=$(agentctl_tmux_get_marker "$session" runtime_id)
   fi

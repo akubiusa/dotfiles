@@ -13,7 +13,7 @@ pass(){ echo "✅ $*"; }
 fail(){ echo "❌ $*"; FAILED=1; }
 NAME=codexlife
 RID=11111111-2222-4333-8444-555555555555
-STATE='{"schema_version":1,"name":"codexlife","backend":"codex","runtime_id":"'$RID'","cwd":"/tmp","tmux_session":"agentctl-codexlife","status":"running"}'
+STATE='{"schema_version":1,"name":"codexlife","backend":"codex","runtime_id":"'$RID'","cwd":"/tmp","tmux_session":"agentctl-codexlife","tmux_socket_path":"/tmp/agentctl-codexlife.sock","status":"running"}'
 REMOVE_MARKER="$WORKROOT/removed"
 WRITE_MARKER="$WORKROOT/state-written"
 agentctl_reconcile(){ echo running; }

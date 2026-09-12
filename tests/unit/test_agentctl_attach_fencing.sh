@@ -34,8 +34,9 @@ jq -n --arg gcd "$WORKROOT/repo/.git" --arg root "$WORKROOT/worktree" \
 NAME="attachrace"
 RID_OLD=$(bash "$AGENTCTL" start "$NAME" --agent fake --cwd "$WORKROOT/worktree" --policy-file "$POLICY" --mission-stdin <<<"old")
 EVIDENCE=$(bash -c 'source "$1"; set +e; agentctl_with_name_lock "$2" _attach_check "$2" "$3"' _ "$AGENTCTL" "$NAME" "$RID_OLD")
-OLD_SESSION_ID=${EVIDENCE%%$'\t'*}
-OLD_PANE=${EVIDENCE#*$'\t'}
+OLD_SOCKET=$(echo "$EVIDENCE" | jq -r '.tmux_socket_path')
+OLD_SESSION_ID=$(echo "$EVIDENCE" | jq -r '.session_id')
+OLD_PANE=$(echo "$EVIDENCE" | jq -r '.pane_id')
 
 bash "$AGENTCTL" stop "$NAME" --runtime-id "$RID_OLD" >/dev/null
 bash "$AGENTCTL" cleanup "$NAME" --runtime-id "$RID_OLD" >/dev/null
@@ -43,8 +44,8 @@ RID_NEW=$(bash "$AGENTCTL" start "$NAME" --agent fake --cwd "$WORKROOT/worktree"
 NEW_SESSION="agentctl-$NAME"
 
 set +e
-bash -c 'source "$1"; set +e; agentctl_attach_fenced "$2" "$3" "$4"' _ \
-  "$AGENTCTL" "$OLD_SESSION_ID" "$OLD_PANE" "$RID_OLD" >"$WORKROOT/stale.out" 2>"$WORKROOT/stale.err"
+bash -c 'source "$1"; set +e; AGENTCTL_TMUX_SOCKET_PATH="$2"; agentctl_attach_fenced "$3" "$4" "$5"' _ \
+  "$AGENTCTL" "$OLD_SOCKET" "$OLD_SESSION_ID" "$OLD_PANE" "$RID_OLD" >"$WORKROOT/stale.out" 2>"$WORKROOT/stale.err"
 RC=$?
 set -u
 CLIENTS=$(tmux list-clients -t "$NEW_SESSION" 2>/dev/null | wc -l)

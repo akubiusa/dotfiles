@@ -86,7 +86,7 @@ agentctl_policy_dispatcher_main() {
 
   # nonce 付き Codex sentinel は ambient AGENTCTL_* の有無に関係なく session_id を
   # binding する。Bash tool 経路では hook subprocess が env を継承する場合がある一方、
-  # 後続 `codex queue` は app-server session_id を必要とするため、sentinel 成功時に
+  # 後続turnのpolicy enforcementはstable session_id bindingを使うため、sentinel成功時に
   # session binding が必ず存在することを publication invariant にする。
   if [ -n "$sentinel_runtime_id" ]; then
     if ! agentctl_policy_dispatcher_bind_codex_sentinel "$input" "$sentinel_runtime_id" "$sentinel_nonce"; then
@@ -97,7 +97,7 @@ agentctl_policy_dispatcher_main() {
   elif [ -n "$session_id" ]; then
     if agentctl_policy_dispatcher_resolve_codex_session "$input"; then
       # sentinel 後の interactive Codex は ambient AGENTCTL_* が残っていても binding を
-      # 優先する。これにより operation-file read と queue が同じ session generation を使う。
+      # 優先する。これにより operation-file read と通常tool callが同じsession generationを使う。
       context_source="codex_session"
     else
       local resolve_rc=$?

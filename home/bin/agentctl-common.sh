@@ -104,112 +104,6 @@ agentctl_codex_hook_remove_runtime_bindings() {
   done
 }
 
-# Codex app-server session binding が現在の tmux generation にまだ所有されているかを
-# state の socket/session/marker/pane/PID evidence で再照合する。persistent app-server は
-# TUI pane 終了後も生き得るため、state/registry一致だけでは queue 宛先として不十分。
-agentctl_codex_runtime_generation_is_live() {
-  local state="$1" expected_runtime_id="$2"
-  local schema name backend runtime_id status session socket pane pane_pid pane_pid_start
-  schema=$(printf '%s\n' "$state" | jq -r '.schema_version // empty' 2>/dev/null) || return 1
-  name=$(printf '%s\n' "$state" | jq -r '.name // empty' 2>/dev/null) || return 1
-  backend=$(printf '%s\n' "$state" | jq -r '.backend // empty' 2>/dev/null) || return 1
-  runtime_id=$(printf '%s\n' "$state" | jq -r '.runtime_id // empty' 2>/dev/null) || return 1
-  status=$(printf '%s\n' "$state" | jq -r '.status // empty' 2>/dev/null) || return 1
-  session=$(printf '%s\n' "$state" | jq -r '.tmux_session // empty' 2>/dev/null) || return 1
-  socket=$(printf '%s\n' "$state" | jq -r '.tmux_socket_path // empty' 2>/dev/null) || return 1
-  pane=$(printf '%s\n' "$state" | jq -r '.pane_id // empty' 2>/dev/null) || return 1
-  pane_pid=$(printf '%s\n' "$state" | jq -r '.pane_pid // empty' 2>/dev/null) || return 1
-  pane_pid_start=$(printf '%s\n' "$state" | jq -r '.pane_pid_start // empty' 2>/dev/null) || return 1
-
-  [ "$schema" = "$AGENTCTL_SCHEMA_VERSION" ] || return 1
-  [ "$backend" = "codex" ] || return 1
-  [ "$runtime_id" = "$expected_runtime_id" ] || return 1
-  [ "$status" = "running" ] || return 1
-  [ -n "$name" ] && [ "$session" = "$(agentctl_tmux_session "$name")" ] || return 1
-  [[ "$socket" == /* ]] && [ -S "$socket" ] || return 1
-  [[ "$pane" =~ ^%[0-9]+$ ]] || return 1
-  [[ "$pane_pid" =~ ^[0-9]+$ ]] && [ -n "$pane_pid_start" ] || return 1
-
-  local AGENTCTL_TMUX_SOCKET_PATH="$socket"
-  agentctl_tmux_has_session "$session" || return 1
-
-  local current_pane pane_dead current_pid current_start marker_owner marker_name marker_backend marker_runtime marker_schema
-  current_pane=$(agentctl_tmux_pane_id "$session") || return 1
-  [ "$current_pane" = "$pane" ] || return 1
-  pane_dead=$(agentctl_tmux_pane_dead "$pane") || return 1
-  [ "$pane_dead" = "0" ] || return 1
-
-  marker_owner=$(agentctl_tmux_get_marker "$pane" owner) || return 1
-  marker_name=$(agentctl_tmux_get_marker "$pane" name) || return 1
-  marker_backend=$(agentctl_tmux_get_marker "$pane" backend) || return 1
-  marker_runtime=$(agentctl_tmux_get_marker "$pane" runtime_id) || return 1
-  marker_schema=$(agentctl_tmux_get_marker "$pane" schema_version) || return 1
-  [ "$marker_owner" = "agentctl" ] || return 1
-  [ "$marker_name" = "$name" ] || return 1
-  [ "$marker_backend" = "codex" ] || return 1
-  [ "$marker_runtime" = "$runtime_id" ] || return 1
-  [ "$marker_schema" = "$AGENTCTL_SCHEMA_VERSION" ] || return 1
-
-  current_pid=$(agentctl_tmux_pane_pid "$pane") || return 1
-  [ "$current_pid" = "$pane_pid" ] || return 1
-  [ -d "/proc/$pane_pid" ] || return 1
-  current_start=$(agentctl_pid_start_token "$pane_pid")
-  [ -n "$current_start" ] && [ "$current_start" = "$pane_pid_start" ] || return 1
-}
-
-# 使い方: agentctl_codex_hook_session_id_for_runtime <runtime_id> <runtime_dir>
-# 標準出力: current generation に一意に bind 済みの Codex session_id。
-# queue transport は tmux pane ではなく app-server session を直接指定するため、
-# registry の runtime_id だけを信用せず state.json の generation/name/cwd/policy
-# identity と binding 全体を再照合する。一致が 0 件/複数件/filename hash 不一致なら
-# fail closed で何も返さない。
-agentctl_codex_hook_session_id_for_runtime() {
-  local runtime_id="$1" runtime_dir="$2" state_file state
-  state_file="$runtime_dir/state.json"
-  [ -f "$state_file" ] || return 1
-  state=$(cat "$state_file" 2>/dev/null) || return 1
-
-  local schema name backend state_runtime_id cwd policy_snapshot policy_digest status
-  schema=$(echo "$state" | jq -r '.schema_version // empty' 2>/dev/null) || return 1
-  name=$(echo "$state" | jq -r '.name // empty' 2>/dev/null) || return 1
-  backend=$(echo "$state" | jq -r '.backend // empty' 2>/dev/null) || return 1
-  state_runtime_id=$(echo "$state" | jq -r '.runtime_id // empty' 2>/dev/null) || return 1
-  cwd=$(echo "$state" | jq -r '.cwd // empty' 2>/dev/null) || return 1
-  policy_snapshot=$(echo "$state" | jq -r '.policy_snapshot_path // empty' 2>/dev/null) || return 1
-  policy_digest=$(echo "$state" | jq -r '.policy_digest // empty' 2>/dev/null) || return 1
-  status=$(echo "$state" | jq -r '.status // empty' 2>/dev/null) || return 1
-
-  [ "$schema" = "$AGENTCTL_SCHEMA_VERSION" ] || return 1
-  [ "$backend" = "codex" ] || return 1
-  [ "$state_runtime_id" = "$runtime_id" ] || return 1
-  [ "$status" = "running" ] || return 1
-  [ -n "$name" ] && [ -n "$cwd" ] && [ -n "$policy_snapshot" ] && [ -n "$policy_digest" ] || return 1
-  agentctl_codex_runtime_generation_is_live "$state" "$runtime_id" || return 1
-
-  local sessions_dir file binding sid expected found="" count=0
-  sessions_dir=$(agentctl_codex_hook_sessions_dir)
-  for file in "$sessions_dir"/*.json; do
-    [ -f "$file" ] || continue
-    binding=$(cat "$file" 2>/dev/null) || return 1
-    if echo "$binding" | jq -e \
-      --argjson schema "$AGENTCTL_SCHEMA_VERSION" \
-      --arg rid "$runtime_id" --arg name "$name" --arg dir "$runtime_dir" \
-      --arg cwd "$cwd" --arg policy "$policy_snapshot" --arg digest "$policy_digest" \
-      '.schema_version == $schema and .runtime_id == $rid and .name == $name and .backend == "codex"
-       and .runtime_dir == $dir and .cwd == $cwd and .policy_snapshot == $policy
-       and .policy_digest == $digest and (.session_id | type == "string" and length > 0)' \
-      >/dev/null 2>&1; then
-      sid=$(echo "$binding" | jq -r '.session_id') || return 1
-      expected=$(agentctl_codex_hook_session_file "$sid")
-      [ "$file" = "$expected" ] || return 1
-      count=$((count + 1))
-      found="$sid"
-    fi
-  done
-  [ "$count" -eq 1 ] || return 1
-  printf '%s' "$found"
-}
-
 # 使い方: agentctl_validate_name <name>
 # --name はディレクトリ名 (agentctl_runtime_dir)・tmux session 名
 # (agentctl_tmux_session)・lock ファイル名 (agentctl_with_name_lock) に
@@ -379,7 +273,7 @@ agentctl_wait_backend_ready() {
 # 待つ。fake backend は tee sink がバイト受信をそのまま観測するだけで
 # submit 概念が無いため、byte-exact assertion を壊さないよう何もしない。
 agentctl_submit_paste() {
-  local backend="$1" pane="$2" submit_marker="${3:-}"
+  local backend="$1" pane="$2" submit_marker="${3:-}" submit_action="${4:-submit}"
   [ "$backend" = "fake" ] && return 0
   local timeout="${AGENTCTL_SUBMIT_SETTLE_TIMEOUT_SECONDS:-20}"
 
@@ -388,10 +282,16 @@ agentctl_submit_paste() {
       || agentctl_die --code 5 "backend 'codex' submit marker is required (acceptance unknown; do not resend automatically)"
     agentctl_wait_screen_contains "$pane" "$submit_marker" "$timeout" \
       || agentctl_die --code 5 "backend 'codex' pasted bootstrap marker did not appear within ${timeout}s (acceptance unknown; do not resend automatically)"
-    agentctl_tmux send-keys -t "$pane" Enter
+    case "$submit_action" in
+      submit) agentctl_tmux send-keys -t "$pane" Enter ;;
+      queue) agentctl_tmux send-keys -t "$pane" Tab ;;
+      *) agentctl_die --code 5 "unsupported Codex submit action: $submit_action" ;;
+    esac
     return 0
   fi
 
+  [ "$submit_action" = "submit" ] \
+    || agentctl_die --code 5 "backend '$backend' does not support submit action '$submit_action'"
   local quiet_duration="${AGENTCTL_SUBMIT_SETTLE_QUIET_SECONDS:-2}"
   # timeout 時は screen が静止しなかっただけで、Enter 未送信/送信済みのどちらも
   # あり得る (paste 自体は byte として届いている可能性がある)。acceptance を
@@ -596,7 +496,7 @@ agentctl_log_operation_event() {
 #
 # 届け終えた後、本文を含まないメタデータだけを events.jsonl (0600) に記録する。
 # agentctl_submit_paste は screen-settle timeout で die するが、die した時点の
-# acceptance は「失敗」と断定できない (Enter が届いたか不明) ため、die の前に
+# acceptance は「失敗」と断定できない (Enter/Tab が届いたか不明) ため、die の前に
 # サブシェルで実行して exit code/stderr を捕まえ、"failed"/"unknown" として
 # 記録してから同じメッセージで die し直す (real backend の paste/submit 挙動
 # 自体はサブシェル化しても変わらない)。
@@ -604,11 +504,12 @@ agentctl_log_operation_event() {
 agentctl_deliver_body() {
   local backend="$1" pane="$2" dir="$3" body_path="$4" runtime_id="$5" operation="$6"
   local bufname="agentctl-deliver-$$"
-  local transport="tui-paste"
+  local transport="tui-paste" submit_action="submit"
   case "$backend" in
     codex)
       if [ "$operation" = "steer" ]; then
-        transport="codex-queue"
+        transport="codex-tui-queue"
+        submit_action="queue"
       else
         transport="codex-bootstrap-file"
       fi
@@ -638,7 +539,7 @@ agentctl_deliver_body() {
   local prep_err submit_marker=""
   prep_err=$(mktemp)
   if [ "$backend" = "codex" ]; then
-    local op_file sha bootstrap_message codex_session_id
+    local op_file sha bootstrap_message
     if ! op_file=$(agentctl_backend_codex_prepare_operation_file "$dir" "$body_path" 2>"$prep_err"); then
       agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "failed" "unknown"
       cat "$prep_err" >&2
@@ -653,46 +554,6 @@ agentctl_deliver_body() {
       return 5
     fi
     bootstrap_message=$(agentctl_backend_codex_bootstrap_message "$op_file" "$sha")
-
-    if [ "$operation" = "steer" ]; then
-      if ! codex_session_id=$(agentctl_codex_hook_session_id_for_runtime "$runtime_id" "$dir"); then
-        echo "agentctl: current Codex runtime has no unique validated session binding for queue transport" >>"$prep_err"
-        agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "failed" "unknown"
-        cat "$prep_err" >&2
-        rm -f "$prep_err"
-        return 5
-      fi
-
-      # operation file 準備中にも pane は独立に終了し得る。app-server delivery の直前に
-      # binding + tmux generation をもう一度照合し、最初に解決した session_id と同一で
-      # なければ pre-delivery failure として queue 自体を呼ばない。
-      local codex_session_id_revalidated
-      if ! codex_session_id_revalidated=$(agentctl_codex_hook_session_id_for_runtime "$runtime_id" "$dir") \
-        || [ "$codex_session_id_revalidated" != "$codex_session_id" ]; then
-        echo "agentctl: Codex runtime generation stopped or binding changed before queue delivery" >>"$prep_err"
-        agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "failed" "unknown"
-        cat "$prep_err" >&2
-        rm -f "$prep_err"
-        return 5
-      fi
-
-      # codex queue は app-server へ follow-up を積む delivery point。CLI が non-zero
-      # でも server 側が受理済みかを安全に断定できないため、paste 後 timeout と
-      # 同様に acceptance=unknown として自動再送を禁止する。
-      if agentctl_backend_codex_queue "$codex_session_id_revalidated" "$bootstrap_message" 2>>"$prep_err"; then
-        agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "submitted" "unknown"
-        rm -f "$prep_err"
-        # shellcheck disable=SC2034
-        AGENTCTL_DELIVER_RESULT="submitted"
-        return 0
-      fi
-      agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "failed" "unknown"
-      cat "$prep_err" >&2
-      rm -f "$prep_err"
-      # shellcheck disable=SC2034
-      AGENTCTL_DELIVER_RESULT="unknown"
-      return 1
-    fi
 
     if ! printf '%s' "$bootstrap_message" \
       | agentctl_tmux load-buffer -b "$bufname" - 2>>"$prep_err"; then
@@ -729,7 +590,7 @@ agentctl_deliver_body() {
 
   local submit_err
   submit_err=$(mktemp)
-  if ( agentctl_submit_paste "$backend" "$pane" "$submit_marker" ) 2>"$submit_err"; then
+  if ( agentctl_submit_paste "$backend" "$pane" "$submit_marker" "$submit_action" ) 2>"$submit_err"; then
     agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "submitted" "unknown"
     rm -f "$submit_err"
     # shellcheck disable=SC2034

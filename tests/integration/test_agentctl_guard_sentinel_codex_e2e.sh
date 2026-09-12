@@ -157,7 +157,7 @@ done
 [ "$MARKER_SEEN" -eq 1 ] && pass "a distinct follow-up turn executes an ordinary allowed Bash command after guard sentinel verification" \
   || fail "did not observe the derived shell-output digest; the follow-up command may have been denied or not executed"
 
-# `codex queue` が busy turn への steering ではなく本当に次 turn を作ったことを、
+# TUI-native Tab queue が busy turn への steering ではなく本当に次turnを作ったことを、
 # persisted rollout の user bootstrap turn_id で機械的に証明する。session_id は
 # sentinel が current runtime_id に bind した registry entry から取得し、同じ
 # rollout 内の operation-file bootstrap 2 件 (initial mission / steer) が別 turn_id

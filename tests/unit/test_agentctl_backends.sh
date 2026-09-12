@@ -110,6 +110,9 @@ fi
 
 # --- codex backend: preflight fail-closed 検証 -----------------------------------------------------------
 
+EXPECTED_CODEX_CMD="exec codex -c 'tui.keymap.composer.queue=\"tab\"' -c 'tui.keymap.composer.submit=\"enter\"'"
+EXPECTED_CODEX_CMD_RO="exec codex -s read-only -c 'tui.keymap.composer.queue=\"tab\"' -c 'tui.keymap.composer.submit=\"enter\"'"
+
 MISSING_HOME="$WORKROOT/no-codex-home"
 mkdir -p "$MISSING_HOME"
 OUT=$(HOME="$MISSING_HOME" bash -c '
@@ -152,9 +155,9 @@ OUT=$(HOME="$CODEX_HOME" bash -c '
   agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
 ')
 RC=$?
-[ "$RC" -eq 0 ] && [ "$OUT" = "exec codex" ] \
-  && pass "codex backend succeeds when hooks.json + matching deployed dispatcher present" \
-  || fail "expected 'exec codex' when preflight satisfied, got rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && [ "$OUT" = "$EXPECTED_CODEX_CMD" ] \
+  && pass "codex backend succeeds with fixed TUI queue/submit keymap when guard preflight is satisfied" \
+  || fail "expected fixed-keymap Codex command when preflight satisfied, got rc=$RC out=$OUT"
 
 # managed registration は実 Codex shell tool path と一致する matcher を要求する。
 cp "$CODEX_HOME/.codex/hooks.json" "$CODEX_HOME/.codex/hooks.json.good"
@@ -189,9 +192,9 @@ OUT_RO=$(HOME="$CODEX_HOME" bash -c '
   source "'"$REPO_ROOT"'/home/bin/agentctl-backend-codex.sh"
   agentctl_backend_codex_command "'"$POLICY_SNAPSHOT_RO"'" "'"$DIR"'"
 ')
-[ "$OUT_RO" = "exec codex -s read-only" ] \
-  && pass "local_write=false forces codex -s read-only sandbox (mechanical read-only)" \
-  || fail "expected 'exec codex -s read-only' for local_write=false, got: $OUT_RO"
+[ "$OUT_RO" = "$EXPECTED_CODEX_CMD_RO" ] \
+  && pass "local_write=false forces codex read-only sandbox while preserving fixed TUI queue/submit keymap" \
+  || fail "expected read-only fixed-keymap Codex command for local_write=false, got: $OUT_RO"
 
 STALE_HOME="$WORKROOT/codex-home-stale"
 mkdir -p "$STALE_HOME/.codex/hooks"
@@ -226,9 +229,9 @@ OUT=$(HOME="$PROD_HOME" bash -c '
   agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
 ')
 RC=$?
-[ "$RC" -eq 0 ] && [ "$OUT" = "exec codex" ] \
-  && pass "codex backend succeeds with a correctly deployed dispatcher in a simulated production layout (AGENTCTL_LIBDIR=\$HOME/bin, no repo checkout reachable)" \
-  || fail "expected 'exec codex' in simulated production layout, got rc=$RC out=$OUT"
+[ "$RC" -eq 0 ] && [ "$OUT" = "$EXPECTED_CODEX_CMD" ] \
+  && pass "codex backend keeps the fixed TUI queue/submit keymap in a simulated production layout" \
+  || fail "unexpected Codex command in simulated production layout: rc=$RC out=$OUT"
 
 echo "# stale" >"$PROD_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
 OUT=$(HOME="$PROD_HOME" bash -c '

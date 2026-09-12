@@ -1188,121 +1188,60 @@ else
 fi
 
 
-# Codex steer は busy TUI への Enter が active turn steering にならないよう、
-# sentinel で確立した session_id に `codex queue` で別 follow-up を積む。
-# 本文は argv に載せず operation file に保持し、queue argv は path+sha bootstrap のみ。
-QUEUE_HOME="$WORKROOT/codex-queue-home"
-QUEUE_DIR="$WORKROOT/deliver-codex-queue"
-QUEUE_BODY="$WORKROOT/deliver-codex-queue-body.txt"
-QUEUE_ARGS="$WORKROOT/codex-queue-args.txt"
-QUEUE_SID="01a00000-1111-2222-3333-444444444444"
-QUEUE_RID="queue-runtime-id"
-QUEUE_NAME="queue-runtime"
-QUEUE_CWD="$WORKROOT/queue-cwd"
-QUEUE_POLICY="$QUEUE_DIR/policy.snapshot.queue.json"
-mkdir -p "$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions" "$QUEUE_DIR" "$QUEUE_CWD"
-printf 'queue 日本語 payload\nsecond line\n' >"$QUEUE_BODY"
-valid_policy >"$QUEUE_POLICY"
-QUEUE_POLICY_DIGEST="sha256:$(jq -S -c . "$QUEUE_POLICY" | sha256sum | awk '{print $1}')"
-jq -n --arg name "$QUEUE_NAME" --arg rid "$QUEUE_RID" --arg cwd "$QUEUE_CWD" \
-  --arg policy "$QUEUE_POLICY" --arg digest "$QUEUE_POLICY_DIGEST" \
-  '{schema_version:1,name:$name,backend:"codex",runtime_id:$rid,cwd:$cwd,tmux_session:"unused-for-queue",
-    pane_id:"%queue",pane_pid:1,pane_pid_start:"1",started_at:"2026-09-11T00:00:00Z",
-    policy_snapshot_path:$policy,policy_digest:$digest,status:"running"}' >"$QUEUE_DIR/state.json"
-QUEUE_KEY=$(printf '%s' "$QUEUE_SID" | sha256sum | awk '{print $1}')
-jq -n --arg sid "$QUEUE_SID" --arg rid "$QUEUE_RID" --arg name "$QUEUE_NAME" --arg dir "$QUEUE_DIR" \
-  --arg cwd "$QUEUE_CWD" --arg policy "$QUEUE_POLICY" --arg digest "$QUEUE_POLICY_DIGEST" \
-  '{schema_version:1,session_id:$sid,runtime_id:$rid,name:$name,backend:"codex",runtime_dir:$dir,
-    policy_snapshot:$policy,policy_digest:$digest,cwd:$cwd}' \
-  >"$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions/$QUEUE_KEY.json"
-cat >"$WORKROOT/bin/codex" <<'STUBCODEX'
-#!/bin/bash
-printf '%s\n' "$@" >"$AGENTCTL_TEST_CODEX_QUEUE_ARGS"
-printf 'call\n' >>"${AGENTCTL_TEST_CODEX_QUEUE_CALLS:-/dev/null}"
-[ "${AGENTCTL_TEST_CODEX_QUEUE_FAIL:-0}" = "1" ] && exit 93
-exit 0
-STUBCODEX
-chmod +x "$WORKROOT/bin/codex"
-if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
+# Codex steer は persistent app-server threadへ直接queueせず、exact tmux paneの
+# composerへbootstrapをpasteしてTUI-native queue action (Tab) を送る。これにより
+# pane終了後のstale threadへ配送する経路を持たない。ここではtmux transportをstubし、
+# steerがqueue actionを選び、本文をargv/eventへ漏らさずcodex-tui-queueとして記録することを検証する。
+TUI_QUEUE_DIR="$WORKROOT/deliver-codex-tui-queue"
+TUI_QUEUE_BODY="$WORKROOT/deliver-codex-tui-queue-body.txt"
+TUI_QUEUE_TMUX_LOG="$WORKROOT/deliver-codex-tui-queue-tmux.log"
+TUI_QUEUE_SUBMIT_LOG="$WORKROOT/deliver-codex-tui-queue-submit.log"
+mkdir -p "$TUI_QUEUE_DIR"
+printf 'queue 日本語 payload\nsecond line\n' >"$TUI_QUEUE_BODY"
+if AGENTCTL_TEST_TMUX_LOG="$TUI_QUEUE_TMUX_LOG" AGENTCTL_TEST_SUBMIT_LOG="$TUI_QUEUE_SUBMIT_LOG" bash -c "
   source '$REPO_ROOT/home/bin/agentctl-common.sh'
   source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
-  agentctl_codex_runtime_generation_is_live() { return 0; }
-  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
-"; then
-  if grep -qx -- '--thread' "$QUEUE_ARGS" \
-    && grep -qx -- "$QUEUE_SID" "$QUEUE_ARGS" \
-    && grep -qx -- '--message' "$QUEUE_ARGS" \
-    && ! grep -qF 'queue 日本語 payload' "$QUEUE_ARGS"; then
-    pass "Codex steer uses codex queue for the bound session and keeps the steer body out of argv"
+  agentctl_tmux() {
+    printf '%s\\n' \"\$*\" >>\"\$AGENTCTL_TEST_TMUX_LOG\"
+    [ \"\${1:-}\" != load-buffer ] || cat >/dev/null
+    return 0
+  }
+  agentctl_submit_paste() {
+    printf '%s\\t%s\\t%s\\t%s\\n' \"\$1\" \"\$2\" \"\$3\" \"\$4\" >\"\$AGENTCTL_TEST_SUBMIT_LOG\"
+    return 0
+  }
+  agentctl_deliver_body codex '%queue-pane' '$TUI_QUEUE_DIR' '$TUI_QUEUE_BODY' 'queue-runtime-id' steer
+" >/dev/null; then
+  IFS=$'\t' read -r tq_backend tq_pane tq_marker tq_action <"$TUI_QUEUE_SUBMIT_LOG"
+  TUI_QUEUE_EVENT=$(tail -1 "$TUI_QUEUE_DIR/events.jsonl")
+  if [ "$tq_backend" = codex ] && [ "$tq_pane" = '%queue-pane' ] && [ "$tq_action" = queue ] \
+    && [[ "$tq_marker" == codex-op-*.txt ]] \
+    && grep -q 'paste-buffer .* -t %queue-pane' "$TUI_QUEUE_TMUX_LOG" \
+    && echo "$TUI_QUEUE_EVENT" | jq -e '.transport == "codex-tui-queue" and .result.submission == "submitted" and .result.acceptance == "unknown"' >/dev/null \
+    && ! echo "$TUI_QUEUE_EVENT" | grep -qF 'queue 日本語 payload'; then
+    pass "Codex steer targets the exact TUI pane with native queue action and keeps payload out of event metadata"
   else
-    fail "Codex steer queue argv contract mismatch: $(tr '\n' ' ' <"$QUEUE_ARGS" 2>/dev/null)"
+    fail "Codex TUI queue transport contract mismatch"
   fi
 else
-  fail "Codex steer should use codex queue instead of TUI paste for a bound session"
+  fail "Codex steer TUI-native queue transport unexpectedly failed"
 fi
 
-# queue transport は validated session binding が欠落した状態では delivery 前に
-# fail closed (5) し、別 session へ推測配送しない。
-QUEUE_BINDING="$QUEUE_HOME/.local/state/agentctl/codex-hook-bindings/sessions/$QUEUE_KEY.json"
-mv "$QUEUE_BINDING" "$QUEUE_BINDING.saved"
-if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
+# Codex submit helperはsession-local keymap契約に合わせ、queue actionではTab、通常submitではEnterを送る。
+TUI_QUEUE_KEY_LOG="$WORKROOT/codex-tui-queue-key.log"
+if AGENTCTL_TEST_KEY_LOG="$TUI_QUEUE_KEY_LOG" bash -c "
   source '$REPO_ROOT/home/bin/agentctl-common.sh'
-  source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
-  agentctl_codex_runtime_generation_is_live() { return 0; }
-  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
-" >/dev/null 2>&1; then
-  fail "Codex steer without a validated session binding should fail before delivery"
+  agentctl_wait_screen_contains() { return 0; }
+  agentctl_tmux() { printf '%s\\n' \"\$*\" >>\"\$AGENTCTL_TEST_KEY_LOG\"; }
+  agentctl_submit_paste codex '%queue-pane' marker queue
+  agentctl_submit_paste codex '%submit-pane' marker submit
+"; then
+  grep -qx 'send-keys -t %queue-pane Tab' "$TUI_QUEUE_KEY_LOG" \
+    && grep -qx 'send-keys -t %submit-pane Enter' "$TUI_QUEUE_KEY_LOG" \
+    && pass "Codex TUI queue uses Tab while ordinary Codex submit remains Enter" \
+    || fail "Codex TUI queue/submit key contract mismatch: $(tr '\n' ';' <"$TUI_QUEUE_KEY_LOG")"
 else
-  rc=$?
-  [ "$rc" -eq 5 ]     && pass "Codex steer without a validated session binding fails closed before delivery (exit 5)"     || fail "Codex steer without a validated session binding exited $rc, expected 5"
-fi
-mv "$QUEUE_BINDING.saved" "$QUEUE_BINDING"
-
-# binding解決後〜delivery直前にgenerationが失効した場合、2回目の再検証でfail closedし、
-# codex queueを一度も呼ばない。ここではliveness helper自体は別unitで実tmux検証済みなので、
-# resolverの1回目だけ成功・2回目失敗を決定的に注入する。
-QUEUE_RACE_CALLS="$WORKROOT/codex-queue-race-calls.txt"
-: >"$QUEUE_RACE_CALLS"
-if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" AGENTCTL_TEST_CODEX_QUEUE_CALLS="$QUEUE_RACE_CALLS" bash -c "
-  source '$REPO_ROOT/home/bin/agentctl-common.sh'
-  source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
-  agentctl_codex_hook_session_id_for_runtime() {
-    [ ! -e '$WORKROOT/codex-queue-resolved-once' ] || return 1
-    : >'$WORKROOT/codex-queue-resolved-once'
-    printf '%s' '$QUEUE_SID'
-  }
-  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
-" >/dev/null 2>&1; then
-  queue_race_rc=0
-else
-  queue_race_rc=$?
-fi
-if [ "$queue_race_rc" -eq 5 ] && [ ! -s "$QUEUE_RACE_CALLS" ]; then
-  pass "Codex steer revalidates generation immediately before queue and refuses a stale binding without delivery"
-else
-  fail "Codex steer stale-binding race contract mismatch (rc=$queue_race_rc queue_calls=$(wc -l <"$QUEUE_RACE_CALLS"))"
-fi
-
-# codex queue 自体が non-zero の場合、server 側受理の有無は断定できない。
-# 1 回だけ試行し result=unknown 相当 (return 1) にして自動再送しない。
-QUEUE_CALLS="$WORKROOT/codex-queue-calls.txt"
-: >"$QUEUE_CALLS"
-if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" AGENTCTL_TEST_CODEX_QUEUE_CALLS="$QUEUE_CALLS" \
-  AGENTCTL_TEST_CODEX_QUEUE_FAIL=1 bash -c "
-    source '$REPO_ROOT/home/bin/agentctl-common.sh'
-    source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
-  agentctl_codex_runtime_generation_is_live() { return 0; }
-    agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
-  " >/dev/null 2>&1; then
-  queue_fail_rc=0
-else
-  queue_fail_rc=$?
-fi
-queue_calls=$(wc -l <"$QUEUE_CALLS")
-if [ "$queue_fail_rc" -eq 1 ] && [ "$queue_calls" -eq 1 ]; then
-  pass "Codex queue failure remains acceptance=unknown and is not auto-retried"
-else
-  fail "Codex queue failure contract mismatch (rc=$queue_fail_rc calls=$queue_calls; expected rc=1 calls=1)"
+  fail "Codex TUI queue/submit helper unexpectedly failed"
 fi
 
 # --- state dir path にスペースを含む場合の policy snapshot path/digest 受け渡し -----------

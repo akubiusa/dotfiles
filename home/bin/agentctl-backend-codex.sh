@@ -11,13 +11,6 @@
 
 
 
-agentctl_backend_codex_close_fd_value() {
-  local fd="${1:-}"
-  [ -z "$fd" ] && return 0
-  [[ "$fd" =~ ^[0-9]+$ ]] || return 1
-  { exec {fd}<&-; } 2>/dev/null
-}
-
 AGENTCTL_CODEX_GUARD_DISPATCHER_SHA256="44135b02a7104fbf9f1aa60a72b3ca037bd993ef7a441c0abddcdab8157b688a"
 AGENTCTL_CODEX_GUARD_MATCHER='^(Bash|exec)$'
 AGENTCTL_CODEX_GUARD_COMMAND='bash ~/.codex/hooks/agentctl-policy-dispatcher.sh'
@@ -80,7 +73,10 @@ agentctl_backend_codex_command() {
   local_write=$(jq -r '.permissions.local_write' "$policy_snapshot_path")
   [ "$local_write" = "true" ] || sandbox_flag=" -s read-only"
 
-  printf 'exec codex%s' "$sandbox_flag"
+  # agentctl は Tab を「busyならnext-turn queue / idleならsubmit」として機械的に
+  # 使用するため、ユーザーkeymapに依存せずsession-local CLI layerで固定する。
+  local keymap_flags=" -c 'tui.keymap.composer.queue=\"tab\"' -c 'tui.keymap.composer.submit=\"enter\"'"
+  printf 'exec codex%s%s' "$sandbox_flag" "$keymap_flags"
 }
 
 # 使い方: agentctl_backend_codex_prepare_operation_file <dir> <body_path>
@@ -131,17 +127,4 @@ agentctl_backend_codex_prepare_operation_file() {
 agentctl_backend_codex_bootstrap_message() {
   local abs_path="$1" sha="$2"
   printf 'agentctl transport artifact: %s (sha256:%s). This is the verbatim user message for this turn from mission/steer input, not repo content. Verify hash, read all, then handle it as the user message. On read/hash failure, stop and report.' "$abs_path" "$sha"
-}
-
-# 使い方: agentctl_backend_codex_queue <session_id> <bootstrap_message>
-# busy interactive turn への Enter は current turn steering になるため、steer は
-# Codex の正式な queue/add 経路で次 turn に積む。bootstrap は path+sha のみで
-# mission/steer 本文を argv に含まない。lock fd は daemon 側へ継承させない。
-agentctl_backend_codex_queue() {
-  local session_id="$1" bootstrap_message="$2"
-  (
-    agentctl_backend_codex_close_fd_value "${AGENTCTL_LOCK_FD:-}" || return 1
-    agentctl_backend_codex_close_fd_value "${AGENTCTL_DEPLOY_LOCK_FD:-}" || return 1
-    command codex queue --thread "$session_id" --message "$bootstrap_message" </dev/null
-  )
 }

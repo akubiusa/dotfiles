@@ -156,8 +156,8 @@ CODEX_SENTINEL_PAYLOAD=$(jq -n --arg sid "$CODEX_SESSION_ID" --arg cwd "$REPO" -
   '{session_id:$sid,cwd:$cwd,tool_name:"exec",tool_input:$ti}')
 
 # Bash-tool 固定時は hook subprocess に ambient AGENTCTL_* が届く場合がある。
-# その場合も one-shot sentinel は session_id を binding し、後続 codex queue が
-# app-server session を解決できるようにする。nonce で確立した session context を
+# その場合も one-shot sentinel は session_id を binding し、後続turnのpolicy hookが
+# 同じinteractive sessionを解決できるようにする。nonce で確立した session context を
 # ownership 根拠にするため、TMUX_PANE 不在でも sentinel evidence を作れる。
 OUT=$(printf '%s\n' "$CODEX_SENTINEL_PAYLOAD" | HOME="$CODEX_TEST_HOME" \
   AGENTCTL_POLICY_SNAPSHOT="$CODEX_POLICY" AGENTCTL_RUNTIME_ID="$CODEX_RID" AGENTCTL_POLICY_DIGEST="$CODEX_POLICY_DIGEST" \

@@ -197,12 +197,17 @@ agentctl_policy_dispatcher_main() {
   fi
 
   local decision
-  decision=$(agentctl_classify_shell_command_string "$policy_json" --env "$inherited_env_csv" "$command_string")
+  if ! decision=$(agentctl_classify_shell_command_string "$policy_json" --env "$inherited_env_csv" "$command_string"); then
+    agentctl_policy_dispatcher_emit_deny "agentctl policy classifier failed to execute; denying by default (fail closed)"
+    exit 0
+  fi
   case "$decision" in
-    deny|unknown_privileged)
-      agentctl_policy_dispatcher_emit_deny "agentctl policy denied this operation (classification: $decision)"
+    allow|not_privileged)
+      : # classifier が明示した既知の安全 decision だけ既定 allow を尊重する。
       ;;
-    *) : ;; # allow / not_privileged は no-op (既定 allow を尊重する)
+    *)
+      agentctl_policy_dispatcher_emit_deny "agentctl policy denied this operation (classification: ${decision:-<empty>})"
+      ;;
   esac
   exit 0
 }

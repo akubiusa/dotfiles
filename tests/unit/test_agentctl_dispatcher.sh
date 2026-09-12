@@ -442,6 +442,40 @@ OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL
 [ -z "$OUT" ] && pass "not_privileged command -> no-op" \
   || fail "expected no-op for not_privileged command, got: $OUT"
 
+# classifier 自体の障害/未知出力は既定 allow に落としてはいけない。dispatcher を
+# source して classifier 関数だけ差し替え、fail-closed decision を直接検証する。
+run_dispatcher_with_classifier_stub() {
+  local stub_body="$1" command="$2"
+  (
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/home/bin/agentctl-common.sh"
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/home/bin/agentctl-classify.sh"
+    # shellcheck source=/dev/null
+    source "$DISPATCHER"
+    eval "agentctl_classify_shell_command_string() { $stub_body; }"
+    jq -n --arg cmd "$command" '{tool_name:"Bash",tool_input:{command:$cmd}}' | agentctl_policy_dispatcher_main
+  )
+}
+
+OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$POLICY_DIGEST" \
+  run_dispatcher_with_classifier_stub 'return 1' "git -C $REPO commit -m msg")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "classifier nonzero exit -> deny (fail closed)" \
+  || fail "classifier nonzero exit failed open: $OUT"
+
+OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$POLICY_DIGEST" \
+  run_dispatcher_with_classifier_stub 'printf %s ""; return 0' "git -C $REPO commit -m msg")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "classifier empty output -> deny (fail closed)" \
+  || fail "classifier empty output failed open: $OUT"
+
+OUT=$(AGENTCTL_POLICY_SNAPSHOT="$POLICY_FILE" AGENTCTL_RUNTIME_ID="rt1" AGENTCTL_POLICY_DIGEST="$POLICY_DIGEST" \
+  run_dispatcher_with_classifier_stub 'echo future_classification; return 0' "git -C $REPO commit -m msg")
+echo "$OUT" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
+  && pass "classifier unknown output -> deny (fail closed)" \
+  || fail "classifier unknown output failed open: $OUT"
+
 # --- 実 process env に継承された GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_* override -----------------------------------------------------------
 # (.tool_input.command 自体には現れない、hook process が backend プロセスから
 # 継承した override) も fail closed で deny することを検証する。

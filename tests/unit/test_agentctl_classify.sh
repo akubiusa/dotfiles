@@ -116,6 +116,8 @@ check "unknown_privileged: eval wrapping gh pr merge" unknown_privileged "$POLIC
 # --- production deploy 検証 -----------------------------------------------------------
 
 check "allowed: exact deploy_argv match" allow "$POLICY" -- /abs/deploy --target pine
+check "denied: production deploy with leading env assignment cannot alter approved execution context" deny "$POLICY" -- DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine
+check "denied: production deploy through env wrapper cannot alter approved execution context" deny "$POLICY" -- env DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine
 check "not_privileged: unknown executable" not_privileged "$POLICY" -- /abs/other --target pine
 check "unknown_privileged: bash -c wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- bash -c "/abs/deploy --target pine"
 check "unknown_privileged: eval wrapping a production deploy_argv executable" unknown_privileged "$POLICY" -- eval "/abs/deploy --target pine"
@@ -192,6 +194,8 @@ check_str "denied: raw string GIT_DIR env prefix before git push" deny "$POLICY"
 check_str "unknown_privileged: raw string env prefix before gh pr merge" unknown_privileged "$POLICY" "X=1 gh pr merge --repo acme/widgets --squash"
 check_str "denied: raw string same production executable with unapproved target" deny "$POLICY" "/abs/deploy --target production"
 check_str "allowed: raw string exact production deploy_argv match" allow "$POLICY" "/abs/deploy --target pine"
+check_str "denied: raw production deploy with env assignment prefix" deny "$POLICY" "DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine"
+check_str "denied: raw production deploy through env wrapper" deny "$POLICY" "env DEPLOY_CONFIG=/tmp/other /abs/deploy --target pine"
 
 # --- clearly non-privileged 検証 -----------------------------------------------------------
 

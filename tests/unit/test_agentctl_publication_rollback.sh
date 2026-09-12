@@ -54,6 +54,28 @@ else
   fail "sentinel rollback failed to restore predecessor state"
 fi
 
+# release token の respawn-pane 自体が nonzero の場合も、backend が部分的に起動済みかも
+# しれないため未検証 generation を rollback して exit 5 にする。
+RESPAWN_ROLLBACK_MARKER="$WORKROOT/respawn-rollback"
+agentctl_tmux() {
+  [ "${1:-}" = "respawn-pane" ] && return 1
+  return 0
+}
+_rollback_failed_guard_generation() {
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >"$RESPAWN_ROLLBACK_MARKER"
+  return 0
+}
+set +e
+( _respawn_backend_or_rollback codex pane-test "$WORKROOT/cwd" 'exec codex' "$WORKROOT/policy.json" sha256:test "$WORKROOT/manifest.json" session-test rt-test runtime-test "" ) \
+  >/dev/null 2>"$WORKROOT/respawn-fail.err"
+RC=$?
+set -u
+if [ "$RC" -eq 5 ] && [ "$(cat "$RESPAWN_ROLLBACK_MARKER" 2>/dev/null)" = $'codex\tsession-test\trt-test\truntime-test' ]; then
+  pass "respawn failure rolls back the unverified generation before exit"
+else
+  fail "respawn failure did not rollback correctly (rc=$RC marker=$(cat "$RESPAWN_ROLLBACK_MARKER" 2>/dev/null || true))"
+fi
+
 # respawn 後の backend-ready failure は sentinel 未検証 backend を残さず rollback する。
 READY_ROLLBACK_MARKER="$WORKROOT/ready-rollback"
 agentctl_wait_backend_ready() { agentctl_die --code 5 "forced backend-ready failure"; }

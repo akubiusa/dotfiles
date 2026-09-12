@@ -188,6 +188,22 @@ _prepare_codex_guard_pending_or_rollback() {
   printf '%s' "$nonce"
 }
 
+# release token (respawn-pane) 自体の失敗も、tmux server 側で backend 起動が部分的に
+# 成立した可能性を否定できない。sentinel 未検証 generation は必ず kill/restore してから失敗する。
+_respawn_backend_or_rollback() {
+  local backend="$1" pane="$2" cwd="$3" backend_cmd="$4" policy_snapshot_path="$5" policy_digest="$6" manifest_path="$7"
+  local session="$8" name="$9" runtime_id="${10}" predecessor_state_json="${11}"
+  if ! agentctl_tmux respawn-pane -k -t "$pane" -c "$cwd" -- env \
+    "AGENTCTL_RUNTIME_ID=$runtime_id" \
+    "AGENTCTL_POLICY_SNAPSHOT=$policy_snapshot_path" \
+    "AGENTCTL_POLICY_DIGEST=$policy_digest" \
+    "AGENTCTL_MISSION_MANIFEST=$manifest_path" \
+    bash -c "$backend_cmd"; then
+    _rollback_failed_guard_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json"
+    agentctl_die --code 5 "failed to respawn backend '$backend'; unverified generation rolled back"
+  fi
+}
+
 # 新規 generation を publish する (start / resume 共通)。
 # spec の runtime publication barrier (starting state -> blocked bootstrap ->
 # owner marker -> release token) をここに一本化する。stdout に runtime_id を返す。
@@ -310,12 +326,9 @@ _publish_generation() {
   # 7. release token: pane を respawn し、bootstrap holder を実 backend command に置き換える。
   #    これが一度きりの publication 完了アクションである。runtime_id/policy snapshot は
   #    backend guard (Codex dispatcher 等) が読む env として渡す。
-  agentctl_tmux respawn-pane -k -t "$pane" -c "$cwd" -- env \
-    "AGENTCTL_RUNTIME_ID=$runtime_id" \
-    "AGENTCTL_POLICY_SNAPSHOT=$policy_snapshot_path" \
-    "AGENTCTL_POLICY_DIGEST=$policy_digest" \
-    "AGENTCTL_MISSION_MANIFEST=$manifest_path" \
-    bash -c "$backend_cmd"
+  _respawn_backend_or_rollback "$backend" "$pane" "$cwd" "$backend_cmd" \
+    "$policy_snapshot_path" "$policy_digest" "$manifest_path" \
+    "$session" "$name" "$runtime_id" "$predecessor_state_json"
 
   # 7a. 実 backend の readline が armed になるまで待つ (fake は即 return)。
   #     起動直後に paste+Enter すると Enter だけ失われ、後続 steer の paste+

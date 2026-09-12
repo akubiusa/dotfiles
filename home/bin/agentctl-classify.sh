@@ -421,9 +421,9 @@ agentctl_classify_canonicalize_path() {
   realpath -e -- "$1" 2>/dev/null || echo "$1"
 }
 
-# 使い方: agentctl_classify_production <policy_json> <argv...>
+# 使い方: agentctl_classify_production <policy_json> <had_env_prefix:0|1> <argv...>
 agentctl_classify_production() {
-  local policy_json="$1"; shift
+  local policy_json="$1" had_env_prefix="$2"; shift 2
   local args=("$@")
   local exec0="${args[0]:-}"
   local exec0_canonical=""
@@ -459,6 +459,12 @@ agentctl_classify_production() {
         [ "$cand_arg" = "${args[$idx]:-}" ] || { rest_match=0; break; }
       done
       [ "$rest_match" -eq 1 ] || continue
+      # production allowlist は argv だけでなく execution context も canonical に保つ。
+      # assignment prefix / env wrapper は deploy executable が任意 env で target/config を
+      # 切り替え得るため、exact argv match でも fail closed にする。
+      if [ "$had_env_prefix" -eq 1 ]; then
+        echo "deny"; return 0
+      fi
       local perm_val
       perm_val=$(echo "$policy_json" | jq -r --arg k "$perm_key" '.permissions[$k] // false')
       [ "$perm_val" = "true" ] && echo "allow" || echo "deny"
@@ -617,7 +623,7 @@ agentctl_classify_command() {
           git|gh|__ambiguous_privileged__) echo "unknown_privileged"; return 0 ;;
         esac
       done
-      agentctl_classify_production "$policy_json" "${argv[@]}"
+      agentctl_classify_production "$policy_json" "$had_env_prefix" "${argv[@]}"
       return 0
       ;;
   esac

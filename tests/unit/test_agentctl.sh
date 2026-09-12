@@ -1,7 +1,8 @@
 #!/bin/bash
 # agentctl のユニットテスト。isolated XDG_STATE_HOME と fake backend/tmux server を使う。
 # 実 Claude/Codex backend と remote/production E2E は別テストで扱う。
-# shellcheck disable=SC2015,SC2329,SC2016,SC2181
+# shellcheck disable=SC2015,SC2329,SC2016,SC2181,SC2317
+# SC2317: trap/mock 経由で間接実行する関数本体を旧ShellCheckが到達不能と誤検知する。
 # SC2015: `check && pass "..." || fail "..."` は本テストの意図通り (pass 失敗時のみ fail に落ちる想定)。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 # SC2016: stub 用の single-quoted `bash -c '...'` 内の `$i` は、外側シェルではなく

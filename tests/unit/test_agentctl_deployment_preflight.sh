@@ -1,5 +1,6 @@
 #!/bin/bash
-# shellcheck disable=SC2015,SC2329
+# shellcheck disable=SC2015,SC2329,SC2317
+# SC2317: trap/mock 経由で間接実行する関数本体を旧ShellCheckが到達不能と誤検知する。
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 # agentctl-deployment-preflight の read-only 判定テスト。

@@ -730,8 +730,9 @@ cmd_attach() {
   AGENTCTL_TMUX_SOCKET_PATH=$(echo "$attach_evidence" | jq -r '.tmux_socket_path // empty')
   session_id=$(echo "$attach_evidence" | jq -r '.session_id // empty')
   pane=$(echo "$attach_evidence" | jq -r '.pane_id // empty')
-  [[ "$AGENTCTL_TMUX_SOCKET_PATH" == /* ]] && [ -n "$session_id" ] && [ -n "$pane" ] \
-    || agentctl_die --code 4 "failed to resolve exact tmux identity for runtime '$name'"
+  if [[ "$AGENTCTL_TMUX_SOCKET_PATH" != /* ]] || [ -z "$session_id" ] || [ -z "$pane" ]; then
+    agentctl_die --code 4 "failed to resolve exact tmux identity for runtime '$name'"
+  fi
   agentctl_attach_fenced "$session_id" "$pane" "$runtime_id"
 }
 

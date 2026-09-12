@@ -1,5 +1,6 @@
 #!/bin/bash
-# shellcheck disable=SC2015,SC2329
+# shellcheck disable=SC2015,SC2329,SC2317,SC2218
+# SC2218/SC2317: source済みproduction関数をtest mockで後から差し替えるため旧ShellCheckが順序/到達性を誤検知する。
 # sentinel verification failure 時の generation rollback 順序を検証する。
 set -uo pipefail
 

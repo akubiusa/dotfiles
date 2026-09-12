@@ -1,5 +1,6 @@
 #!/bin/bash
-# shellcheck disable=SC2015,SC2329
+# shellcheck disable=SC2015,SC2329,SC2317
+# SC2317: trap/mock 経由で間接実行する関数本体を旧ShellCheckが到達不能と誤検知する。
 # SC2015: `check && pass || fail` は本テストの意図通り。
 # SC2329: cleanup_all は trap 経由の間接呼び出しのため未使用と誤検知される。
 #
@@ -334,7 +335,7 @@ RECONCILE_E_AFTER_INTERRUPT=$(reconcile_of "$NAME_E")
 echo -n "post-interrupt-check" >"$WORKROOT/steer-post-interrupt-e.txt"
 bash "$AGENTCTL" steer --name "$NAME_E" --runtime-id "$RID_E" --file "$WORKROOT/steer-post-interrupt-e.txt" >/dev/null
 sleep 0.3
-[ "$(cat "$(sink_path "$NAME_E")" 2>/dev/null | grep -c "post-interrupt-check")" -ge 1 ] \
+[ "$(grep -c "post-interrupt-check" "$(sink_path "$NAME_E")" 2>/dev/null)" -ge 1 ] \
   && pass "steer still works after interrupt" || fail "steer after interrupt failed"
 
 LOGS_E_AFTER=$(bash "$AGENTCTL" logs --name "$NAME_E" --lines 100)

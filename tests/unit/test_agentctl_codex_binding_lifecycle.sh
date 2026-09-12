@@ -1,6 +1,7 @@
 #!/bin/bash
 # Codex runtime の stop/complete が persistent app-server binding を失効させることを検証する。
-# shellcheck disable=SC1090,SC1091,SC2329
+# shellcheck disable=SC1090,SC1091,SC2329,SC2317
+# SC2317: trap/mock 経由で間接実行する関数本体を旧ShellCheckが到達不能と誤検知する。
 set -uo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 WORKROOT=$(mktemp -d)

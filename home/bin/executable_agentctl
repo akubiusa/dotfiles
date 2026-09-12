@@ -819,7 +819,7 @@ _stop_locked() {
   local AGENTCTL_TMUX_SOCKET_PATH
   AGENTCTL_TMUX_SOCKET_PATH=$(agentctl_state_tmux_socket_path "$state_json") \
     || agentctl_die --code 4 "runtime '$name' has invalid tmux socket ownership evidence"
-  if [ "$reconcile" = "running" ] || [ "$reconcile" = "starting" ]; then
+  if [ "$reconcile" = "running" ] || [ "$reconcile" = "starting" ] || [ "$reconcile" = "exited" ]; then
     agentctl_tmux kill-session -t "$session" 2>/dev/null \
       || agentctl_die --code 5 "failed to stop owned tmux session for runtime '$name'"
   fi

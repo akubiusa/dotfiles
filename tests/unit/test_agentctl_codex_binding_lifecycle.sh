@@ -30,6 +30,18 @@ else
   fail "stop did not revoke binding/update state"
 fi
 rm -f "$REMOVE_MARKER" "$WRITE_MARKER"
+KILL_MARKER="$WORKROOT/killed"
+agentctl_reconcile(){ echo exited; }
+agentctl_tmux(){ if [ "${1:-}" = kill-session ]; then printf '%s\n' "$*" >"$KILL_MARKER"; fi; return 0; }
+_stop_locked "$NAME" "$RID" >/dev/null
+if [ -s "$KILL_MARKER" ] && [ "$(cat "$REMOVE_MARKER" 2>/dev/null)" = "$RID" ] && [ "$(jq -r '.status' "$WRITE_MARKER" 2>/dev/null)" = stopped ]; then
+  pass "stop removes an exited owner tmux session before revoking binding and terminalizing state"
+else
+  fail "stop left an exited owner tmux session behind"
+fi
+rm -f "$REMOVE_MARKER" "$WRITE_MARKER" "$KILL_MARKER"
+agentctl_reconcile(){ echo running; }
+agentctl_tmux(){ [ "${1:-}" = kill-session ] && return 0; return 0; }
 _complete_locked "$NAME" "$RID" >/dev/null
 if [ "$(cat "$REMOVE_MARKER" 2>/dev/null)" = "$RID" ] && [ "$(jq -r '.status' "$WRITE_MARKER" 2>/dev/null)" = completed ]; then
   pass "complete revokes Codex session binding and marks state completed after tmux termination"

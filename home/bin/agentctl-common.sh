@@ -104,6 +104,59 @@ agentctl_codex_hook_remove_runtime_bindings() {
   done
 }
 
+# Codex app-server session binding が現在の tmux generation にまだ所有されているかを
+# state の socket/session/marker/pane/PID evidence で再照合する。persistent app-server は
+# TUI pane 終了後も生き得るため、state/registry一致だけでは queue 宛先として不十分。
+agentctl_codex_runtime_generation_is_live() {
+  local state="$1" expected_runtime_id="$2"
+  local schema name backend runtime_id status session socket pane pane_pid pane_pid_start
+  schema=$(printf '%s\n' "$state" | jq -r '.schema_version // empty' 2>/dev/null) || return 1
+  name=$(printf '%s\n' "$state" | jq -r '.name // empty' 2>/dev/null) || return 1
+  backend=$(printf '%s\n' "$state" | jq -r '.backend // empty' 2>/dev/null) || return 1
+  runtime_id=$(printf '%s\n' "$state" | jq -r '.runtime_id // empty' 2>/dev/null) || return 1
+  status=$(printf '%s\n' "$state" | jq -r '.status // empty' 2>/dev/null) || return 1
+  session=$(printf '%s\n' "$state" | jq -r '.tmux_session // empty' 2>/dev/null) || return 1
+  socket=$(printf '%s\n' "$state" | jq -r '.tmux_socket_path // empty' 2>/dev/null) || return 1
+  pane=$(printf '%s\n' "$state" | jq -r '.pane_id // empty' 2>/dev/null) || return 1
+  pane_pid=$(printf '%s\n' "$state" | jq -r '.pane_pid // empty' 2>/dev/null) || return 1
+  pane_pid_start=$(printf '%s\n' "$state" | jq -r '.pane_pid_start // empty' 2>/dev/null) || return 1
+
+  [ "$schema" = "$AGENTCTL_SCHEMA_VERSION" ] || return 1
+  [ "$backend" = "codex" ] || return 1
+  [ "$runtime_id" = "$expected_runtime_id" ] || return 1
+  [ "$status" = "running" ] || return 1
+  [ -n "$name" ] && [ "$session" = "$(agentctl_tmux_session "$name")" ] || return 1
+  [[ "$socket" == /* ]] && [ -S "$socket" ] || return 1
+  [[ "$pane" =~ ^%[0-9]+$ ]] || return 1
+  [[ "$pane_pid" =~ ^[0-9]+$ ]] && [ -n "$pane_pid_start" ] || return 1
+
+  local AGENTCTL_TMUX_SOCKET_PATH="$socket"
+  agentctl_tmux_has_session "$session" || return 1
+
+  local current_pane pane_dead current_pid current_start marker_owner marker_name marker_backend marker_runtime marker_schema
+  current_pane=$(agentctl_tmux_pane_id "$session") || return 1
+  [ "$current_pane" = "$pane" ] || return 1
+  pane_dead=$(agentctl_tmux_pane_dead "$pane") || return 1
+  [ "$pane_dead" = "0" ] || return 1
+
+  marker_owner=$(agentctl_tmux_get_marker "$pane" owner) || return 1
+  marker_name=$(agentctl_tmux_get_marker "$pane" name) || return 1
+  marker_backend=$(agentctl_tmux_get_marker "$pane" backend) || return 1
+  marker_runtime=$(agentctl_tmux_get_marker "$pane" runtime_id) || return 1
+  marker_schema=$(agentctl_tmux_get_marker "$pane" schema_version) || return 1
+  [ "$marker_owner" = "agentctl" ] || return 1
+  [ "$marker_name" = "$name" ] || return 1
+  [ "$marker_backend" = "codex" ] || return 1
+  [ "$marker_runtime" = "$runtime_id" ] || return 1
+  [ "$marker_schema" = "$AGENTCTL_SCHEMA_VERSION" ] || return 1
+
+  current_pid=$(agentctl_tmux_pane_pid "$pane") || return 1
+  [ "$current_pid" = "$pane_pid" ] || return 1
+  [ -d "/proc/$pane_pid" ] || return 1
+  current_start=$(agentctl_pid_start_token "$pane_pid")
+  [ -n "$current_start" ] && [ "$current_start" = "$pane_pid_start" ] || return 1
+}
+
 # 使い方: agentctl_codex_hook_session_id_for_runtime <runtime_id> <runtime_dir>
 # 標準出力: current generation に一意に bind 済みの Codex session_id。
 # queue transport は tmux pane ではなく app-server session を直接指定するため、
@@ -131,6 +184,7 @@ agentctl_codex_hook_session_id_for_runtime() {
   [ "$state_runtime_id" = "$runtime_id" ] || return 1
   [ "$status" = "running" ] || return 1
   [ -n "$name" ] && [ -n "$cwd" ] && [ -n "$policy_snapshot" ] && [ -n "$policy_digest" ] || return 1
+  agentctl_codex_runtime_generation_is_live "$state" "$runtime_id" || return 1
 
   local sessions_dir file binding sid expected found="" count=0
   sessions_dir=$(agentctl_codex_hook_sessions_dir)
@@ -609,10 +663,23 @@ agentctl_deliver_body() {
         return 5
       fi
 
+      # operation file 準備中にも pane は独立に終了し得る。app-server delivery の直前に
+      # binding + tmux generation をもう一度照合し、最初に解決した session_id と同一で
+      # なければ pre-delivery failure として queue 自体を呼ばない。
+      local codex_session_id_revalidated
+      if ! codex_session_id_revalidated=$(agentctl_codex_hook_session_id_for_runtime "$runtime_id" "$dir") \
+        || [ "$codex_session_id_revalidated" != "$codex_session_id" ]; then
+        echo "agentctl: Codex runtime generation stopped or binding changed before queue delivery" >>"$prep_err"
+        agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "failed" "unknown"
+        cat "$prep_err" >&2
+        rm -f "$prep_err"
+        return 5
+      fi
+
       # codex queue は app-server へ follow-up を積む delivery point。CLI が non-zero
       # でも server 側が受理済みかを安全に断定できないため、paste 後 timeout と
       # 同様に acceptance=unknown として自動再送を禁止する。
-      if agentctl_backend_codex_queue "$codex_session_id" "$bootstrap_message" 2>>"$prep_err"; then
+      if agentctl_backend_codex_queue "$codex_session_id_revalidated" "$bootstrap_message" 2>>"$prep_err"; then
         agentctl_log_operation_event "$dir" "$operation_id" "$runtime_id" "$operation" "$transport" "$body_sha" "submitted" "unknown"
         rm -f "$prep_err"
         # shellcheck disable=SC2034

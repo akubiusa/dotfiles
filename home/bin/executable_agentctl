@@ -147,13 +147,15 @@ _start_locked() {
   _publish_generation "$name" "$cwd" "$backend" "$policy_snapshot_path" "$policy_digest" "" "start"
 }
 
-# guard sentinel 検証に失敗した generation を rollback する。owned session の
-# termination が成功するまでは binding/state を残し、live backend を unguarded にしない。
-_rollback_failed_guard_generation() {
-  local backend="$1" session="$2" name="$3" runtime_id="$4" predecessor_state_json="$5"
+# runningになる前のgenerationを失敗時に回収する。session作成を試みる前なら
+# stateだけを復元し、作成を試みた後なら同名sessionが存在するときだけ先にkillする。
+# kill失敗時はbinding/stateを残してfail closedにできるよう nonzero を返す。
+_rollback_unverified_generation() {
+  local backend="$1" session="$2" name="$3" runtime_id="$4" predecessor_state_json="$5" session_attempted="${6:-1}"
 
-  agentctl_tmux kill-session -t "$session" 2>/dev/null \
-    || agentctl_die --code 5 "guard sentinel verification failed and owned tmux session could not be terminated; preserving runtime state/bindings for '$name'"
+  if [ "$session_attempted" -eq 1 ] && agentctl_tmux_has_session "$session"; then
+    agentctl_tmux kill-session -t "$session" 2>/dev/null || return 1
+  fi
 
   [ "$backend" != "codex" ] || agentctl_codex_hook_remove_runtime_bindings "$runtime_id"
   if [ -n "$predecessor_state_json" ]; then
@@ -161,6 +163,28 @@ _rollback_failed_guard_generation() {
   else
     rm -f "$(agentctl_state_file "$name")"
   fi
+}
+
+# starting state作成後〜marker cross-check完了までの予期しないexit/signal用。
+# partial markerのsessionをconflictとして永久に残さず、同じrollback契約へ収束させる。
+_agentctl_incomplete_publication_exit_trap() {
+  local rc="$1"
+  trap - EXIT INT TERM HUP
+  [ "${publication_incomplete:-0}" -eq 1 ] || exit "$rc"
+  if ! _rollback_unverified_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json" "${publication_session_attempted:-0}"; then
+    echo "agentctl: incomplete publication failed and owned tmux session could not be terminated; preserving runtime state for '$name'" >&2
+    exit 5
+  fi
+  [ "$rc" -ne 0 ] || rc=5
+  exit "$rc"
+}
+
+# guard sentinel 検証に失敗した generation を rollback する。owned session の
+# termination が成功するまでは binding/state を残し、live backend を unguarded にしない。
+_rollback_failed_guard_generation() {
+  local backend="$1" session="$2" name="$3" runtime_id="$4" predecessor_state_json="$5"
+  _rollback_unverified_generation "$backend" "$session" "$name" "$runtime_id" "$predecessor_state_json" 1 \
+    || agentctl_die --code 5 "guard sentinel verification failed and owned tmux session could not be terminated; preserving runtime state/bindings for '$name'"
 }
 
 # real backend を respawn した後は sentinel 検証完了まで unverified generation として扱う。
@@ -272,7 +296,15 @@ _publish_generation() {
       || agentctl_die --code 5 "codex backend guard preflight failed"
   fi
 
-  # 2. starting state を publish 前に書く。
+  # 2. starting state 以降、owner marker の相互照合が完了するまでは不完全
+  # publication。explicit exit / set -e failure / signalのいずれでも自動rollbackする。
+  local publication_incomplete=1 publication_session_attempted=0
+  trap '_agentctl_incomplete_publication_exit_trap "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  # starting state を publish 前に書く。
   jq -n \
     --argjson schema_version "$AGENTCTL_SCHEMA_VERSION" \
     --arg name "$name" --arg backend "$backend" --arg runtime_id "$runtime_id" \
@@ -294,6 +326,7 @@ _publish_generation() {
   # release token (respawn-pane) が届かない launcher crash では bootstrap 自身が
   # bounded timeout で終了し、未所有 live process を無期限に残さない。
   local bootstrap_timeout="${AGENTCTL_TEST_BOOTSTRAP_TIMEOUT_SECONDS:-300}"
+  publication_session_attempted=1
   agentctl_tmux new-session -d -s "$session" -c "$cwd" -- \
     bash -c "trap '' TERM INT; sleep $bootstrap_timeout"
   agentctl_tmux set-option -t "$session" remain-on-exit on >/dev/null
@@ -304,8 +337,6 @@ _publish_generation() {
   local tmux_socket_path starting_state_json
   tmux_socket_path=$(agentctl_tmux_socket_path "$session")
   if [[ "$tmux_socket_path" != /* ]] || [ ! -S "$tmux_socket_path" ]; then
-    agentctl_tmux kill-session -t "$session" 2>/dev/null || true
-    rm -f "$(agentctl_state_file "$name")"
     agentctl_die --code 5 "failed to resolve owned tmux server socket after session creation"
   fi
   starting_state_json=$(agentctl_read_state "$name") || agentctl_die --code 5 "starting state disappeared during tmux publication"
@@ -338,6 +369,8 @@ _publish_generation() {
   if [ "$check_owner" != "agentctl" ] || [ "$check_runtime_id" != "$runtime_id" ]; then
     agentctl_die --code 4 "marker cross-check failed after publication"
   fi
+  publication_incomplete=0
+  trap - EXIT INT TERM HUP
 
   # 7. release token: pane を respawn し、bootstrap holder を実 backend command に置き換える。
   #    これが一度きりの publication 完了アクションである。runtime_id/policy snapshot は

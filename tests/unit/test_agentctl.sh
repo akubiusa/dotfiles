@@ -807,18 +807,17 @@ fi
 tmux kill-session -t "agentctl-$NAME_CONFLICT" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_CONFLICT"
 
-# --- blocked bootstrap self-terminates on bounded timeout 検証 -----------------------------------------------------------
+# --- incomplete publication bootstrap rollback 検証 -----------------------------------------------------------
 
 NAME_TIMEOUT="rtTimeout"
 AGENTCTL_TEST_BOOTSTRAP_TIMEOUT_SECONDS=1 AGENTCTL_TEST_FAULT_STAGE="pre_marker" \
   bash "$AGENTCTL" start --name "$NAME_TIMEOUT" --cwd "$WORKROOT/worktree" --backend fake --policy-file "$POLICY_OK" --mission-stdin <<<"mt" >/dev/null 2>/dev/null || true
-sleep 2
-if [ "$(tmux display-message -p -t "agentctl-$NAME_TIMEOUT" '#{pane_dead}' 2>/dev/null)" = "1" ]; then
-  pass "blocked bootstrap self-terminates after bounded timeout"
+if [ ! -e "$WORKROOT/state/agentctl/runtimes/$NAME_TIMEOUT/state.json" ] \
+  && ! tmux has-session -t "=agentctl-$NAME_TIMEOUT" >/dev/null 2>&1; then
+  pass "recoverable pre-marker launcher failure rolls back blocked bootstrap immediately"
 else
-  fail "blocked bootstrap did not self-terminate after bounded timeout"
+  fail "recoverable pre-marker launcher failure left blocked bootstrap/state behind"
 fi
-tmux kill-session -t "agentctl-$NAME_TIMEOUT" >/dev/null 2>&1 || true
 rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_TIMEOUT"
 
 # --- steer --stdin does not leak temp file on rejection path 検証 -----------------------------------------------------------
@@ -868,6 +867,11 @@ for stage in pre_tmux pre_marker post_marker_pre_release; do
     fail "fault stage $stage: real backend was exec'd before release token"
   else
     pass "fault stage $stage: real backend not started before release"
+  fi
+  if [ ! -e "$WORKROOT/state/agentctl/runtimes/$NAME_F/state.json" ]     && ! tmux has-session -t "=agentctl-$NAME_F" >/dev/null 2>&1; then
+    pass "fault stage $stage: unverified publication state/session rolled back automatically"
+  else
+    fail "fault stage $stage left unverified state/session behind"
   fi
   tmux kill-session -t "agentctl-$NAME_F" >/dev/null 2>&1 || true
   rm -rf "$WORKROOT/state/agentctl/runtimes/$NAME_F"
@@ -1222,6 +1226,7 @@ chmod +x "$WORKROOT/bin/codex"
 if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
   source '$REPO_ROOT/home/bin/agentctl-common.sh'
   source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_codex_runtime_generation_is_live() { return 0; }
   agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
 "; then
   if grep -qx -- '--thread' "$QUEUE_ARGS" \
@@ -1243,6 +1248,7 @@ mv "$QUEUE_BINDING" "$QUEUE_BINDING.saved"
 if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" bash -c "
   source '$REPO_ROOT/home/bin/agentctl-common.sh'
   source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_codex_runtime_generation_is_live() { return 0; }
   agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
 " >/dev/null 2>&1; then
   fail "Codex steer without a validated session binding should fail before delivery"
@@ -1252,6 +1258,31 @@ else
 fi
 mv "$QUEUE_BINDING.saved" "$QUEUE_BINDING"
 
+# binding解決後〜delivery直前にgenerationが失効した場合、2回目の再検証でfail closedし、
+# codex queueを一度も呼ばない。ここではliveness helper自体は別unitで実tmux検証済みなので、
+# resolverの1回目だけ成功・2回目失敗を決定的に注入する。
+QUEUE_RACE_CALLS="$WORKROOT/codex-queue-race-calls.txt"
+: >"$QUEUE_RACE_CALLS"
+if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" AGENTCTL_TEST_CODEX_QUEUE_CALLS="$QUEUE_RACE_CALLS" bash -c "
+  source '$REPO_ROOT/home/bin/agentctl-common.sh'
+  source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_codex_hook_session_id_for_runtime() {
+    [ ! -e '$WORKROOT/codex-queue-resolved-once' ] || return 1
+    : >'$WORKROOT/codex-queue-resolved-once'
+    printf '%s' '$QUEUE_SID'
+  }
+  agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
+" >/dev/null 2>&1; then
+  queue_race_rc=0
+else
+  queue_race_rc=$?
+fi
+if [ "$queue_race_rc" -eq 5 ] && [ ! -s "$QUEUE_RACE_CALLS" ]; then
+  pass "Codex steer revalidates generation immediately before queue and refuses a stale binding without delivery"
+else
+  fail "Codex steer stale-binding race contract mismatch (rc=$queue_race_rc queue_calls=$(wc -l <"$QUEUE_RACE_CALLS"))"
+fi
+
 # codex queue 自体が non-zero の場合、server 側受理の有無は断定できない。
 # 1 回だけ試行し result=unknown 相当 (return 1) にして自動再送しない。
 QUEUE_CALLS="$WORKROOT/codex-queue-calls.txt"
@@ -1260,6 +1291,7 @@ if HOME="$QUEUE_HOME" AGENTCTL_TEST_CODEX_QUEUE_ARGS="$QUEUE_ARGS" AGENTCTL_TEST
   AGENTCTL_TEST_CODEX_QUEUE_FAIL=1 bash -c "
     source '$REPO_ROOT/home/bin/agentctl-common.sh'
     source '$REPO_ROOT/home/bin/agentctl-backend-codex.sh'
+  agentctl_codex_runtime_generation_is_live() { return 0; }
     agentctl_deliver_body codex nonexistent-pane '$QUEUE_DIR' '$QUEUE_BODY' '$QUEUE_RID' steer
   " >/dev/null 2>&1; then
   queue_fail_rc=0

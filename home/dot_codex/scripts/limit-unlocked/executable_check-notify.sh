@@ -183,15 +183,15 @@ resolve_rollout_path() {
 }
 
 # rollout jsonl の直近のイベントを見て、リミット到達中かどうかと再開予定時刻(epoch)を
-# 判定する。標準出力: "<status:0|1|2>\t<reset_epoch>\t<reset_text>"
+# 判定する。標準出力: "<status:0|1|2>\t<reset_epoch>\t<reset_text>\t<turn_id>"
 # status: 0 = リミットなし、1 = リミット到達中、2 = 判定不能(jsonl の走査対象範囲を
 # jq が解析できなかった等)。2 を 0 と区別せず返すと、解析エラーを「解除」と誤判定して
 # しまうため、呼び出し元(detect_limited_sessions)は 2 を resolve 失敗と同様に扱う
 check_limit_status() {
     local jsonl="$1" tail_lines last_task_complete last_task_complete_line jq_exit is_err text completed_at
-    local token_line later_token_line reset_epoch date_text
+    local token_line later_token_line reset_epoch date_text turn_id
 
-    [ -f "$jsonl" ] || { printf '0\t-\t-\n'; return; }
+    [ -f "$jsonl" ] || { printf '0\t-\t-\t-\n'; return; }
 
     # jsonl は会話全体で大きくなりうるが直近のイベントが分かればよいため、
     # 末尾のみを走査対象にして cron の定期実行での毎回フルパースを避ける
@@ -200,17 +200,17 @@ check_limit_status() {
     last_task_complete=$(echo "$tail_lines" | jq -c 'select(.type == "event_msg" and .payload.type == "task_complete") | {event: ., line: input_line_number}' 2>/dev/null)
     jq_exit=$?
     if [ "$jq_exit" -ne 0 ]; then
-        printf '2\t-\t-\n'
+        printf '2\t-\t-\t-\n'
         return
     fi
     last_task_complete=$(echo "$last_task_complete" | tail -1)
-    [ -n "$last_task_complete" ] || { printf '0\t-\t-\n'; return; }
+    [ -n "$last_task_complete" ] || { printf '0\t-\t-\t-\n'; return; }
     last_task_complete_line=$(echo "$last_task_complete" | jq -r '.line' 2>/dev/null)
     last_task_complete=$(echo "$last_task_complete" | jq -c '.event' 2>/dev/null)
 
     is_err=$(echo "$last_task_complete" | jq -r '(.payload.error != null) and (.payload.error.codex_error_info == "usage_limit_exceeded")' 2>/dev/null)
     if [ "$is_err" != "true" ]; then
-        printf '0\t-\t-\n'
+        printf '0\t-\t-\t-\n'
         return
     fi
 
@@ -220,6 +220,10 @@ check_limit_status() {
     # 通知文言としての可読性は保ったまま、区切り文字だけを空白に置き換える
     text=$(echo "$text" | tr '\t\n' '  ')
     completed_at=$(echo "$last_task_complete" | jq -r '.payload.completed_at // empty' 2>/dev/null)
+    # resume 重複排除キーとして使う(下記 resume_key_for を参照)。text と同様、
+    # タブ区切りの状態ファイルへそのまま埋め込むとレコード構造が壊れるためサニタイズする
+    turn_id=$(echo "$last_task_complete" | jq -r '.payload.turn_id // empty' 2>/dev/null)
+    turn_id=$(printf '%s' "$turn_id" | tr '\t\n' '  ')
 
     later_token_line=$(echo "$tail_lines" | jq -c --argjson task_complete_line "$last_task_complete_line" 'select(input_line_number > $task_complete_line and .type == "event_msg" and .payload.type == "token_count")' 2>/dev/null | tail -1)
     if [ -n "$later_token_line" ] && [ "$(echo "$later_token_line" | jq -r '
@@ -234,7 +238,7 @@ check_limit_status() {
             and all($windows[]; (.used_percent? | type) == "number" and .used_percent < 100)
           end
     ' 2>/dev/null)" = "true" ]; then
-        printf '0\t-\t-\n'
+        printf '0\t-\t-\t-\n'
         return
     fi
 
@@ -274,7 +278,7 @@ check_limit_status() {
         fi
     fi
 
-    printf '1\t%s\t%s\n' "${reset_epoch:--}" "$text"
+    printf '1\t%s\t%s\t%s\n' "${reset_epoch:--}" "$text" "${turn_id:--}"
 }
 
 # resolve_rollout_path の特定失敗(または check_limit_status の判定不能)が
@@ -322,18 +326,18 @@ carry_forward_previous_entry() {
     fi
     set_resolve_failure_count "$session" "$failure_count"
 
-    awk -F'\t' -v s="$session" '$1 == s { print $1"\t"$2"\t"$3"\t"$4"\t0"; exit }' "$STATE_FILE" >> "$NEW_STATE_FILE"
+    awk -F'\t' -v s="$session" '$1 == s { print $1"\t"$2"\t"$3"\t"$4"\t0\t"$6; exit }' "$STATE_FILE" >> "$NEW_STATE_FILE"
 }
 
 # 現在リミット中の tmux セッション一覧を検出し、$NEW_STATE_FILE に書き出す。
-# 各行は "<session>\t<cwd>\t<reset_epoch>\t<reset_text>\t<confirmed:0|1>" の形式。
+# 各行は "<session>\t<cwd>\t<reset_epoch>\t<reset_text>\t<confirmed:0|1>\t<turn_id>" の形式。
 # confirmed=1 は今回のポーリングで実際に is_limited=1 と確認できたことを示し、
 # confirmed=0 は特定失敗・判定不能により前回の記録を引き継いだだけであることを示す
 # (呼び出し元は confirmed=1 の場合のみ resume_session を試みる)。
 # tmux セッション一覧の取得自体に失敗した場合は終了コード 1 を返し、
 # $NEW_STATE_FILE を書き換えない(呼び出し元は前回の STATE_FILE をそのまま使う)
 detect_limited_sessions() {
-    local sessions list_exit jsonl status_line status reset_epoch reset_text cwd session
+    local sessions list_exit jsonl status_line status reset_epoch reset_text turn_id cwd session
 
     sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null)
     list_exit=$?
@@ -356,7 +360,7 @@ detect_limited_sessions() {
         fi
 
         status_line=$(check_limit_status "$jsonl")
-        IFS=$'\t' read -r status reset_epoch reset_text <<< "$status_line"
+        IFS=$'\t' read -r status reset_epoch reset_text turn_id <<< "$status_line"
         if [ "$status" = "2" ]; then
             # jq がこのポーリングの走査対象範囲を解析できなかった(判定不能)。
             # 「リミットなし」と誤判定すると解除通知が誤って飛んでしまうため、
@@ -368,7 +372,7 @@ detect_limited_sessions() {
         set_resolve_failure_count "$session" 0
 
         cwd=$(tmux display-message -t "${session}:" -p '#{pane_current_path}' 2>/dev/null || echo "unknown")
-        printf '%s\t%s\t%s\t%s\t1\n' "$session" "$cwd" "$reset_epoch" "$reset_text" >> "$NEW_STATE_FILE"
+        printf '%s\t%s\t%s\t%s\t1\t%s\n' "$session" "$cwd" "$reset_epoch" "$reset_text" "$turn_id" >> "$NEW_STATE_FILE"
     done
 
     sort -u "$NEW_STATE_FILE" -o "$NEW_STATE_FILE"
@@ -430,8 +434,8 @@ record_notified_for() {
     mv "$tmp_file" "$file"
 }
 
-# 同一の再開予定(reset_epoch)に対して resume_session を再送していないかを
-# reset_epoch 単位で記録するファイルのパス。Codex の check_limit_status は
+# resume_session を同一キー(resume_key_for の結果、通常は turn_id)に対して
+# 再送していないかを記録するファイルのパス。Codex の check_limit_status は
 # event_msg/task_complete のみを見ており、送信した再開メッセージ自体は
 # task_complete を発生させないため、ターン完了までは最後の task_complete が
 # usage_limit_exceeded のまま残り続ける。この記録がないと、ターン完了までの間
@@ -505,6 +509,17 @@ resume_session() {
     tmux send-keys -t "${session}:" Enter
 }
 
+# resume の重複排除キーを決定する。turn_id は task_complete イベントごとに一意なため、
+# これをキーにすると reset_epoch の推定が外れて resume に失敗した場合でも、
+# 次に発生する新しい turn_id を「別の失敗」として検知し再試行できる。
+# turn_id が取得できない(空/"-")場合のみ、従来通り reset_epoch にフォールバックする
+resume_key_for() {
+    local reset_epoch="$1" turn_id="$2" key
+    key="${turn_id:--}"
+    [ "$key" != "-" ] || key="$reset_epoch"
+    printf '%s\n' "$key"
+}
+
 # セッション名が対象ファイルに存在するか確認する
 session_recorded_in() {
     local session="$1" file="$2"
@@ -529,7 +544,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         now=$(date +%s)
 
         # 新規にリミットへ到達したセッションを通知する
-        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed; do
+        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed turn_id; do
             [ -n "$session" ] || continue
             if ! already_notified_for "$session" "$reset_epoch"; then
                 echo "Limit detected: $session ($cwd)"
@@ -548,16 +563,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             # confirmed=1(このポーリングで実際にリミット中と確認できた)場合のみ
             # 再開を試みる。confirmed=0 の引き継ぎ行は未検証のため対象にしない
             if [ "$confirmed" = "1" ] && [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
-                if ! already_resumed_for "$session" "$reset_epoch"; then
+                resume_key=$(resume_key_for "$reset_epoch" "$turn_id")
+                if ! already_resumed_for "$session" "$resume_key"; then
                     echo "Resuming: $session ($cwd)"
                     resume_session "$session"
-                    record_resumed_for "$session" "$reset_epoch"
+                    record_resumed_for "$session" "$resume_key"
                 fi
             fi
         done < "$NEW_STATE_FILE"
 
         # リミットが解除された(前回は記録されていたが今回は検出されなかった)セッションを通知する
-        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed; do
+        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed turn_id; do
             [ -n "$session" ] || continue
             session_recorded_in "$session" "$NEW_STATE_FILE" && continue # まだリミット中
 

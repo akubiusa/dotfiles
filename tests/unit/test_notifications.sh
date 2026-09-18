@@ -116,7 +116,7 @@ RESULT=$(
     check_limit_status "'"$FIXTURE_JSONL"'"
   '
 )
-IFS=$'\t' read -r is_limited reset_epoch reset_text <<< "$RESULT"
+IFS=$'\t' read -r is_limited reset_epoch reset_text turn_id <<< "$RESULT"
 
 if [[ "$is_limited" != "1" ]]; then
   echo "❌ check_limit_status did not detect a usage_limit_exceeded task_complete (got: '$RESULT')"
@@ -139,6 +139,13 @@ else
   echo "✅ check_limit_status carried through the error message text"
 fi
 
+if [[ "$turn_id" != "t1" ]]; then
+  echo "❌ check_limit_status did not carry through the task_complete turn_id (got: '$turn_id')"
+  FAILED=1
+else
+  echo "✅ check_limit_status carried through the task_complete turn_id"
+fi
+
 echo "Testing Codex check_limit_status treats error:null task_complete as not limited..."
 FIXTURE_JSONL_OK="$TEST_HOME/fixture-rollout-ok.jsonl"
 cat > "$FIXTURE_JSONL_OK" <<'EOF'
@@ -152,7 +159,7 @@ RESULT_OK=$(
   '
 )
 
-if [[ "$RESULT_OK" != $'0\t-\t-' ]]; then
+if [[ "$RESULT_OK" != $'0\t-\t-\t-' ]]; then
   echo "❌ check_limit_status incorrectly reported a limited state for an error:null task_complete (got: '$RESULT_OK')"
   FAILED=1
 else
@@ -173,7 +180,7 @@ RESULT_STALE_LIMIT=$(
   '
 )
 
-if [[ "$RESULT_STALE_LIMIT" != $'0\t-\t-' ]]; then
+if [[ "$RESULT_STALE_LIMIT" != $'0\t-\t-\t-' ]]; then
   echo "❌ check_limit_status did not clear a stale usage_limit_exceeded state (got: '$RESULT_STALE_LIMIT')"
   FAILED=1
 else
@@ -523,7 +530,7 @@ RESULT_BROKEN=$(
   '
 )
 
-if [[ "$RESULT_BROKEN" != $'2\t-\t-' ]]; then
+if [[ "$RESULT_BROKEN" != $'2\t-\t-\t-' ]]; then
   echo "❌ check_limit_status did not report status=2 for an unparseable jsonl window (got: '$RESULT_BROKEN')"
   FAILED=1
 else
@@ -545,7 +552,7 @@ RESULT_SECONDARY=$(
     check_limit_status "'"$FIXTURE_JSONL_SECONDARY"'"
   '
 )
-IFS=$'\t' read -r _ reset_epoch_secondary _ <<< "$RESULT_SECONDARY"
+IFS=$'\t' read -r _ reset_epoch_secondary _ _ <<< "$RESULT_SECONDARY"
 
 if [[ "$reset_epoch_secondary" != "2222222222" ]]; then
   echo "❌ check_limit_status did not prefer the secondary window's resets_at even though only secondary is at 100% used_percent (got: '$reset_epoch_secondary')"
@@ -659,6 +666,100 @@ else
 fi
 rm -rf "$TEST_HOME"
 
+echo "Testing Codex resume_key_for prefers turn_id and falls back to reset_epoch only when turn_id is missing..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_KEY=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resume_key_for "1700000000" "turn-a"
+    resume_key_for "1700000000" "-"
+    resume_key_for "1700000000" ""
+  '
+)
+EXPECTED_RESUME_KEY=$'turn-a\n1700000000\n1700000000'
+if [[ "$RESULT_RESUME_KEY" != "$EXPECTED_RESUME_KEY" ]]; then
+  echo "❌ resume_key_for did not prefer turn_id / fall back to reset_epoch as expected (got: '$RESULT_RESUME_KEY')"
+  FAILED=1
+else
+  echo "✅ resume_key_for prefers turn_id and falls back to reset_epoch only when turn_id is missing"
+fi
+
+RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    record_resumed_for "sess-2" "$(resume_key_for "1700000000" "-")"
+    already_resumed_for "sess-2" "1700000000" && echo "fallback-key-matches-reset-epoch"
+  '
+)
+if [[ "$RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP" != "fallback-key-matches-reset-epoch" ]]; then
+  echo "❌ resume_key_for's reset_epoch fallback did not round-trip through already_resumed_for/record_resumed_for (got: '$RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP')"
+  FAILED=1
+else
+  echo "✅ resume_key_for's reset_epoch fallback round-trips through already_resumed_for/record_resumed_for"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex already_resumed_for / record_resumed_for dedup resume attempts per turn_id, so a new failing turn after a failed resume is retried..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_DEDUP_BY_TURN=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    # reset_epoch の推定値は同じだが、resume 前後で turn_id が異なる2つの失敗turnを想定する
+    already_resumed_for "sess-1" "turn-a" && echo "unexpected-already-resumed-turn-a"
+    record_resumed_for "sess-1" "turn-a"
+    already_resumed_for "sess-1" "turn-a" && echo "resumed-for-same-turn"
+    already_resumed_for "sess-1" "turn-b" || echo "not-resumed-for-new-turn-after-failed-resume"
+  '
+)
+EXPECTED_RESUME_DEDUP_BY_TURN=$'resumed-for-same-turn\nnot-resumed-for-new-turn-after-failed-resume'
+if [[ "$RESULT_RESUME_DEDUP_BY_TURN" != "$EXPECTED_RESUME_DEDUP_BY_TURN" ]]; then
+  echo "❌ already_resumed_for/record_resumed_for did not correctly dedup resume attempts per turn_id (got: '$RESULT_RESUME_DEDUP_BY_TURN')"
+  FAILED=1
+else
+  echo "✅ already_resumed_for/record_resumed_for correctly dedup resume attempts per turn_id, allowing retry after a new failing turn"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex detect_limited_sessions writes a 6-field NEW_STATE_FILE whose confirmed field parses standalone (not concatenated with turn_id)..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN_DIR=$(mktemp -d)
+FIXTURE_JSONL_CONFIRMED_FIELD="$TEST_HOME/fixture-rollout-confirmed-field.jsonl"
+cat > "$FIXTURE_JSONL_CONFIRMED_FIELD" <<'EOF'
+{"timestamp":"2026-08-08T05:00:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-confirmed-check","last_agent_message":null,"error":{"message":"usage limit hit","codex_error_info":"usage_limit_exceeded"},"started_at":1,"completed_at":2,"duration_ms":1000}}
+EOF
+
+cat > "$TEST_BIN_DIR/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+  list-sessions) echo "sess-confirmed-check" ;;
+  display-message) echo "/tmp/proj" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+STATE_FILE_CONFIRMED_FIELD="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_CONFIRMED_FIELD="${STATE_FILE_CONFIRMED_FIELD}.new"
+touch "$STATE_FILE_CONFIRMED_FIELD"
+
+RESULT_CONFIRMED_FIELD=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" \
+  STATE_FILE="$STATE_FILE_CONFIRMED_FIELD" NEW_STATE_FILE="$NEW_STATE_FILE_CONFIRMED_FIELD" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path() { printf "%s\n" "'"$FIXTURE_JSONL_CONFIRMED_FIELD"'"; }
+    detect_limited_sessions
+    IFS=$'"'"'\t'"'"' read -r session cwd reset_epoch reset_text confirmed turn_id < "$NEW_STATE_FILE"
+    printf "confirmed=[%s] turn_id=[%s]\n" "$confirmed" "$turn_id"
+  '
+)
+if [[ "$RESULT_CONFIRMED_FIELD" != "confirmed=[1] turn_id=[turn-confirmed-check]" ]]; then
+  echo "❌ detect_limited_sessions' NEW_STATE_FILE did not parse as 6 independent fields (got: '$RESULT_CONFIRMED_FIELD')"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions' NEW_STATE_FILE parses confirmed/turn_id as independent fields"
+fi
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 echo "Testing Codex already_resumed_for / record_resumed_for dedup resume_session for the same reset_epoch..."
 TEST_HOME=$(mktemp -d)
 RESULT_RESUME_DEDUP=$(
@@ -740,6 +841,29 @@ if [[ -n "$RESULT_STALE" ]]; then
   FAILED=1
 else
   echo "✅ carry_forward_previous_entry stopped carrying a session forward after the consecutive-failure threshold was reached"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex carry_forward_previous_entry preserves the turn_id column (6th field) when carrying a session forward..."
+TEST_HOME=$(mktemp -d)
+STATE_FILE_TURN_ID="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_TURN_ID="${STATE_FILE_TURN_ID}.new"
+printf 'carried-sess\t/tmp/proj\t1111111111\tsome text\t1\tturn-carried\n' > "$STATE_FILE_TURN_ID"
+: > "$NEW_STATE_FILE_TURN_ID"
+
+RESULT_CARRIED_TURN_ID=$(
+  HOME="$TEST_HOME" STATE_FILE="$STATE_FILE_TURN_ID" NEW_STATE_FILE="$NEW_STATE_FILE_TURN_ID" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    carry_forward_previous_entry "carried-sess"
+    IFS=$'"'"'\t'"'"' read -r session cwd reset_epoch reset_text confirmed turn_id < "$NEW_STATE_FILE"
+    printf "confirmed=[%s] turn_id=[%s]\n" "$confirmed" "$turn_id"
+  '
+)
+if [[ "$RESULT_CARRIED_TURN_ID" != "confirmed=[0] turn_id=[turn-carried]" ]]; then
+  echo "❌ carry_forward_previous_entry did not correctly carry the turn_id column forward (got: '$RESULT_CARRIED_TURN_ID')"
+  FAILED=1
+else
+  echo "✅ carry_forward_previous_entry correctly carries the turn_id column forward"
 fi
 rm -rf "$TEST_HOME"
 

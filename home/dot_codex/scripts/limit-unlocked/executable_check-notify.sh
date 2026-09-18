@@ -42,40 +42,30 @@ collect_descendant_pids() {
     '
 }
 
-# tmux セッション名から、対応する codex プロセス群が書き込んでいる rollout jsonl の
-# パスを特定する。Codex には Claude Code の sessions/<pid>.json のような
-# pid→セッション対応表が存在しないため、pane の pid とその子孫すべての
-# オープン fd を走査し、rollout-*.jsonl を指しているものを集めた上で、
-# 親セッションの rollout を subagent の rollout より優先し、同種の候補内では
-# 最終更新時刻が最も新しいもの(実際に追記され続けている rollout)を選ぶ。
-# fd ごとに readlink -f を fork する方式は procfs 上のソケット・パイプ等の
-# 無関係な fd も含めて全数チェックしてしまい低速なため、find -lname による
-# シンボリックリンク先パターンマッチ 1 回にまとめている
-resolve_rollout_path() {
-    local session="$1" pane_pid home_real fd_dirs=() pid best_path best_mtime best_is_subagent
+# fd_dirs (/proc/<pid>/fd の並び) の中から rollout-*.jsonl を指す fd を集め、最有力候補を
+# 1 つ選ぶ。require_cwd が非空の場合、ファイル内容にその文字列を含まない候補は除外する
+# (複数セッション分の rollout を同時に保持する daemon 経由の探索で、無関係なセッションを
+# 誤って選ばないための絞り込み。session_meta.cwd は daemon 経由だと実際の pane cwd を
+# 反映しないため使えず、ツール呼び出しの本文中に cwd 文字列が現れることを頼りにしている)。
+# 候補が複数残った場合は、親セッションの rollout を subagent の rollout より優先し、
+# 同種の候補内では最終更新時刻が最も新しいもの(実際に追記され続けている rollout)を選ぶ。
+# fd ごとに readlink -f を fork する方式は procfs 上のソケット・パイプ等の無関係な fd も
+# 含めて全数チェックしてしまい低速なため、find -lname によるシンボリックリンク先パターン
+# マッチ 1 回にまとめている。標準出力: 選ばれたパス(候補がなければ何も出力しない)
+select_best_rollout() {
+    local home_real="$1" require_cwd="$2"
+    shift 2
+    local fd_dirs=("$@")
     local target mtime thread_source is_subagent
+    local best_path="" best_mtime=-1 best_is_subagent=1
 
-    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
-    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
-    # ため、末尾に ":" を付けてセッション名指定であることを明示する
-    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
-    [ -n "$pane_pid" ] || return 1
+    [ "${#fd_dirs[@]}" -gt 0 ] || return 0
 
-    # readlink -f はシンボリックリンクを最後まで解決した絶対パスを返すため、$HOME 自体に
-    # シンボリックリンク成分が含まれる環境ではそのまま比較すると常に不一致になる。
-    # 比較対象も同じ readlink -f で正規化しておく
-    home_real=$(readlink -f "$HOME" 2>/dev/null) || home_real="$HOME"
-
-    for pid in $(collect_descendant_pids "$pane_pid"); do
-        [ -d "/proc/$pid/fd" ] && fd_dirs+=("/proc/$pid/fd")
-    done
-    [ "${#fd_dirs[@]}" -gt 0 ] || return 1
-
-    best_path=""
-    best_mtime=-1
-    best_is_subagent=1
     while IFS= read -r target; do
         [ -n "$target" ] || continue
+        if [ -n "$require_cwd" ] && ! grep -qF -- "$require_cwd" "$target" 2>/dev/null; then
+            continue
+        fi
         mtime=$(stat -c %Y "$target" 2>/dev/null) || continue
 
         # multi-agent 実行では親と subagent の rollout が同時に開かれる。subagent が
@@ -95,6 +85,82 @@ resolve_rollout_path() {
         fi
     done < <(find "${fd_dirs[@]}" -lname "${home_real}/.codex/sessions/*/*/*/rollout-*.jsonl" -printf '%l\n' 2>/dev/null)
 
+    [ -n "$best_path" ] && echo "$best_path"
+    return 0
+}
+
+# ペインの子孫 pid の中に、共有 app-server daemon へ接続する codex クライアント
+# (`codex --remote ...`) が存在するかを調べる。claude など codex 以外のセッションまで
+# daemon フォールバックの対象にしてしまうと、pane の cwd がたまたま他セッションの
+# rollout 内容と一致しただけで誤って rollout を紐付けてしまうため、フォールバックの
+# 発動条件をこのチェックで絞り込む
+has_remote_codex_client() {
+    local pid comm cmdline
+    for pid in "$@"; do
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+        [ "$comm" = "codex" ] || continue
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+        case "$cmdline" in
+            *--remote*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# tmux セッション名から、対応する codex プロセス群が書き込んでいる rollout jsonl の
+# パスを特定する。Codex には Claude Code の sessions/<pid>.json のような
+# pid→セッション対応表が存在しないため、まず pane の pid とその子孫すべてのオープン fd を
+# 走査する(90-ai-alias.sh の codex() ラッパーが直接起動したセッションはここで見つかる)。
+#
+# ただし同ラッパーは共有 app-server daemon (codex app-server --remote-control) が稼働中だと
+# `codex --remote unix://` で接続する(TUI は daemon への薄いクライアントになる)ため、
+# その場合は rollout fd がペインの子孫プロセスではなく daemon プロセス側に開かれ、
+# 子孫 fd 走査だけでは見つからない。この場合は daemon プロセスの fd を対象に、
+# ペインの cwd を含む rollout だけに絞って select_best_rollout を再実行する
+# (daemon は複数セッション分の rollout を同時に保持しうるため cwd 絞り込みが必須)。
+resolve_rollout_path() {
+    local session="$1" pane_pid pane_cwd home_real fd_dirs=() daemon_fd_dirs=() pid best_path
+    local descendant_pids=()
+
+    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
+    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
+    # ため、末尾に ":" を付けてセッション名指定であることを明示する
+    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
+    [ -n "$pane_pid" ] || return 1
+    pane_cwd=$(tmux display-message -t "${session}:" -p '#{pane_current_path}' 2>/dev/null)
+
+    # readlink -f はシンボリックリンクを最後まで解決した絶対パスを返すため、$HOME 自体に
+    # シンボリックリンク成分が含まれる環境ではそのまま比較すると常に不一致になる。
+    # 比較対象も同じ readlink -f で正規化しておく
+    home_real=$(readlink -f "$HOME" 2>/dev/null) || home_real="$HOME"
+
+    mapfile -t descendant_pids < <(collect_descendant_pids "$pane_pid")
+    for pid in "${descendant_pids[@]}"; do
+        [ -d "/proc/$pid/fd" ] && fd_dirs+=("/proc/$pid/fd")
+    done
+    if [ "${#fd_dirs[@]}" -gt 0 ]; then
+        best_path=$(select_best_rollout "$home_real" "" "${fd_dirs[@]}")
+        if [ -n "$best_path" ]; then
+            echo "$best_path"
+            return 0
+        fi
+    fi
+
+    # ペインに codex --remote クライアントがいないなら daemon フォールバックの対象外
+    # (claude セッションなど、そもそも codex と無関係なペインを除外する)
+    has_remote_codex_client "${descendant_pids[@]}" || return 1
+
+    # ponytail: cwd 文字列の部分一致というヒューリスティクスであり、同一ディレクトリで
+    # 複数の tmux セッションを同時に --remote 接続している場合は誤選択しうる。
+    # 必要になれば daemon 側の JSON-RPC でセッション⇔接続の対応を直接問い合わせる方式に
+    # upgrade する
+    [ -n "$pane_cwd" ] || return 1
+    for pid in $(pgrep -f 'app-server --remote-control' 2>/dev/null); do
+        [ -d "/proc/$pid/fd" ] && daemon_fd_dirs+=("/proc/$pid/fd")
+    done
+    [ "${#daemon_fd_dirs[@]}" -gt 0 ] || return 1
+
+    best_path=$(select_best_rollout "$home_real" "$pane_cwd" "${daemon_fd_dirs[@]}")
     [ -n "$best_path" ] || return 1
     echo "$best_path"
 }

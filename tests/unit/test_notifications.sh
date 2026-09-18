@@ -278,6 +278,161 @@ fi
 
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
+echo "Testing Codex resolve_rollout_path falls back to the shared app-server daemon's fd when the pane's own codex --remote client holds no rollout fd..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+PANE_CWD="/fake/project/path"
+DAEMON_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-daemon.jsonl"
+printf '%s\n%s\n' \
+  '{"type":"session_meta","payload":{"id":"daemon-thread","session_id":"daemon-thread","source":"cli","thread_source":"user"}}' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"note\",\"text\":\"working in $PANE_CWD\"}}" \
+  > "$DAEMON_ROLLOUT"
+
+# daemon プロセス: rollout fd を保持するが pane の子孫ではない
+# (`codex()` ラッパーが接続する共有 app-server --remote-control daemon を模す)
+bash -c "exec 3<'$DAEMON_ROLLOUT'; sleep 60" &
+DAEMON_PID=$!
+
+cat > "$TEST_BIN_DIR/codex" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/codex"
+
+# pane プロセス: codex --remote クライアントを子に持つが、そのクライアント自身は
+# rollout fd を一切開かない(daemon に接続するだけの薄いクライアントを模す)
+cat > "$TEST_BIN_DIR/pane-launcher.sh" <<EOF
+#!/bin/bash
+"$TEST_BIN_DIR/codex" --remote unix:// --yolo &
+wait
+EOF
+chmod +x "$TEST_BIN_DIR/pane-launcher.sh"
+"$TEST_BIN_DIR/pane-launcher.sh" &
+PANE_PID=$!
+sleep 0.3
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$DAEMON_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *pane_current_path*) echo "$PANE_CWD"; exit 0 ;;
+    esac
+  done
+  echo "$PANE_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path "dummy-session"
+  '
+)
+
+kill "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+wait "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+
+if [[ "$RESULT" != "$DAEMON_ROLLOUT" ]]; then
+  echo "❌ resolve_rollout_path did not fall back to the daemon's rollout fd (got: '$RESULT', want: '$DAEMON_ROLLOUT')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path fell back to the shared app-server daemon's rollout fd, filtered by pane cwd"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
+echo "Testing Codex resolve_rollout_path does not fall back to the daemon for a non-codex pane, even if its cwd happens to match daemon rollout content..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+PANE_CWD="/fake/project/path"
+DAEMON_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-daemon.jsonl"
+printf '%s\n%s\n' \
+  '{"type":"session_meta","payload":{"id":"daemon-thread","session_id":"daemon-thread","source":"cli","thread_source":"user"}}' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"note\",\"text\":\"working in $PANE_CWD\"}}" \
+  > "$DAEMON_ROLLOUT"
+
+bash -c "exec 3<'$DAEMON_ROLLOUT'; sleep 60" &
+DAEMON_PID=$!
+
+cat > "$TEST_BIN_DIR/claude" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/claude"
+
+# pane プロセス: codex ではない別 CLI (claude) のセッションを模す。
+# cwd が daemon の rollout 内容とたまたま一致していても、daemon フォールバックの
+# 対象になってはならない
+cat > "$TEST_BIN_DIR/pane-launcher.sh" <<EOF
+#!/bin/bash
+"$TEST_BIN_DIR/claude" --permission-mode auto &
+wait
+EOF
+chmod +x "$TEST_BIN_DIR/pane-launcher.sh"
+"$TEST_BIN_DIR/pane-launcher.sh" &
+PANE_PID=$!
+sleep 0.3
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$DAEMON_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *pane_current_path*) echo "$PANE_CWD"; exit 0 ;;
+    esac
+  done
+  echo "$PANE_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT_NON_CODEX=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    if resolve_rollout_path "dummy-session"; then
+      :
+    else
+      printf "%s\n" not-resolved
+    fi
+  '
+)
+
+kill "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+wait "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+
+if [[ "$RESULT_NON_CODEX" != "not-resolved" ]]; then
+  echo "❌ resolve_rollout_path wrongly matched a non-codex pane to the daemon's rollout via cwd content (got: '$RESULT_NON_CODEX')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path correctly refused to resolve a non-codex pane against the daemon's rollouts"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 echo "Testing Codex check_limit_status reports status=2 (undetermined) when jq fails to parse the scanned window..."
 TEST_HOME=$(mktemp -d)
 FIXTURE_JSONL_BROKEN="$TEST_HOME/fixture-rollout-broken.jsonl"

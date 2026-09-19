@@ -20,7 +20,8 @@
       "Bash(git config user.name:*)",
       "Bash(git config user.email:*)",
       "Bash(git config --global user.name:*)",
-      "Bash(git config --global user.email:*)"
+      "Bash(git config --global user.email:*)",
+      "EnterPlanMode"
     ]
   },
   "hooks": {

@@ -666,6 +666,24 @@ else
 fi
 rm -rf "$TEST_HOME"
 
+echo "Testing Codex resume_due delays resume until RESUME_DELAY_SECONDS after reset_epoch..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_DUE=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resume_due "1700000000" "1700000000" && echo "unexpected-due-at-reset-epoch"
+    resume_due "1700000000" "1700000059" && echo "unexpected-due-before-delay-elapsed"
+    resume_due "1700000000" "1700000060" && echo "due-once-delay-elapsed"
+  '
+)
+if [[ "$RESULT_RESUME_DUE" != "due-once-delay-elapsed" ]]; then
+  echo "❌ resume_due did not wait RESUME_DELAY_SECONDS after reset_epoch (got: '$RESULT_RESUME_DUE')"
+  FAILED=1
+else
+  echo "✅ resume_due waits RESUME_DELAY_SECONDS after reset_epoch before allowing resume"
+fi
+rm -rf "$TEST_HOME"
+
 echo "Testing Codex resume_key_for prefers turn_id and falls back to reset_epoch only when turn_id is missing..."
 TEST_HOME=$(mktemp -d)
 RESULT_RESUME_KEY=$(

@@ -4,8 +4,11 @@
 # 対象ツール:
 # - Claude Code (native install)
 # - GitHub Copilot CLI
-# - OpenAI Codex CLI (npm)
 # - Chrome MCP Router / Chrome DevTools MCP (npm)
+#
+# Codex CLI は各マシンの standalone installer が自前で自動更新するため対象外
+# (このスクリプトが npm 経由で更新を試みると、実際に使われている standalone
+# バイナリとは無関係な npm グローバルパッケージを作ってしまう)
 
 set -euo pipefail
 
@@ -179,32 +182,6 @@ update_copilot() {
     return 1
 }
 
-# Codex CLI の更新
-update_codex() {
-    if ! command -v codex >/dev/null 2>&1; then
-        log "⏭️  Codex CLI not installed, skipping"
-        return 0
-    fi
-
-    if is_running codex; then
-        log "⏭️  Codex CLI is running, skipping update"
-        return 0
-    fi
-
-    if ! command -v npm >/dev/null 2>&1; then
-        log "⚠️  npm not found, skipping Codex CLI update"
-        return 1
-    fi
-
-    log "🔄 Updating Codex CLI..."
-    if npm install -g @openai/codex@latest 2>&1 | tee -a "$LOG_FILE"; then
-        log "✅ Codex CLI updated successfully"
-    else
-        log "❌ Codex CLI update failed"
-        return 1
-    fi
-}
-
 # 新しい release の MCP initialize を確認する。
 smoke_test_chrome_mcp() {
     local release_dir="$1"
@@ -312,13 +289,13 @@ main() {
             --quick) quick=1 ;;
             --only)
                 if [[ -z "${2:-}" ]]; then
-                    echo "❌ --only requires a target name (claude|copilot|codex|chrome-mcp-router)" >&2
+                    echo "❌ --only requires a target name (claude|copilot|chrome-mcp-router)" >&2
                     exit 1
                 fi
                 case "$2" in
-                    claude|copilot|codex|chrome-mcp-router) ;;
+                    claude|copilot|chrome-mcp-router) ;;
                     *)
-                        echo "❌ Unknown update target: $2 (claude|copilot|codex|chrome-mcp-router)" >&2
+                        echo "❌ Unknown update target: $2 (claude|copilot|chrome-mcp-router)" >&2
                         exit 1
                         ;;
                 esac
@@ -363,7 +340,6 @@ main() {
         case "$only_agent" in
             claude)  update_claude  || exit_code=1 ;;
             copilot) update_copilot || exit_code=1 ;;
-            codex)   update_codex   || exit_code=1 ;;
             chrome-mcp-router) update_chrome_mcp_router || exit_code=1 ;;
             *) log "⏭️  No update function for: ${only_agent}" ;;
         esac
@@ -371,7 +347,6 @@ main() {
         # 各エージェントを個別に更新 (1 つ失敗しても続行)
         update_claude   || exit_code=1
         update_copilot  || exit_code=1
-        update_codex    || exit_code=1
     fi
 
     # タイムスタンプ更新 (成功時のみ)

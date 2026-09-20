@@ -76,7 +76,7 @@ _codex_is_direct_invocation() {
 }
 
 codex() {
-  [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only codex
+  # Codex CLI 自体は standalone installer が自前で自動更新するため update-ai-agents.sh の対象外
   ~/.local/share/chezmoi/update.sh
 
   if _codex_is_direct_invocation "$@"; then

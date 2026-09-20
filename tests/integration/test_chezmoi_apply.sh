@@ -124,6 +124,11 @@ if ! grep -Fq 'mise activate bash --shims' "$HOME/.profile"; then
   exit 1
 fi
 
+if [ ! -f "$HOME/.bash_env" ] || ! grep -Fq 'mise env -s bash' "$HOME/.bash_env"; then
+  echo "❌ .bash_env does not initialize mise environments"
+  exit 1
+fi
+
 if ! grep -Fq ". \"\$HOME/.profile\"" "$HOME/.bash_profile"; then
   echo "❌ .bash_profile does not load .profile"
   exit 1
@@ -152,6 +157,25 @@ if [ "$BASHRC_LOCAL_BIN_COUNT" -ne 1 ]; then
   exit 1
 fi
 echo "✅ ~/.local/bin PATH setup is idempotent"
+
+FAKE_MISE="$HOME/.local/bin/mise"
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise/shims"
+cat > "$FAKE_MISE" <<'FAKE_MISE'
+#!/bin/sh
+case "$*" in
+  "activate bash --shims") printf 'export PATH="%s/.local/share/mise/shims:$PATH"\n' "$HOME" ;;
+  "env -s bash") printf 'export MISE_CODEX_ENV=enabled\n' ;;
+esac
+FAKE_MISE
+chmod +x "$FAKE_MISE"
+# shellcheck disable=SC2016
+NON_INTERACTIVE_ENV=$(env -i HOME="$HOME" PATH="/usr/bin:/bin" BASH_ENV="$HOME/.bash_env" bash -c 'printf "%s\n" "$MISE_CODEX_ENV"; printf "%s\n" "$PATH"')
+if ! grep -Fxq 'enabled' <<< "$NON_INTERACTIVE_ENV" \
+  || ! grep -Fq "$HOME/.local/share/mise/shims" <<< "$NON_INTERACTIVE_ENV"; then
+  echo "❌ non-interactive Bash does not load mise environment"
+  exit 1
+fi
+echo "✅ non-interactive Bash loads mise environment"
 
 TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
 if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
@@ -471,6 +495,7 @@ if ! grep -Fq 'web_search = "live"' "$CODEX_CONFIG" \
   || ! grep -Fq 'hooks = true' "$CODEX_CONFIG" \
   || grep -Fq 'codex_hooks =' "$CODEX_CONFIG" \
   || ! grep -Fq 'remote_control = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'BASH_ENV = "'"$HOME"'/.bash_env"' "$CODEX_CONFIG" \
   || ! grep -Fq 'trust_level = "trusted"' "$CODEX_CONFIG" \
   || ! grep -Fq 'trusted_hash = "sha256:test"' "$CODEX_CONFIG" \
   || ! grep -Fq 'gpt_5_4 = "gpt-5.6"' "$CODEX_CONFIG"; then

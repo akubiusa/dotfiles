@@ -98,6 +98,8 @@ macOS と Windows は現在サポートされていません。
 
 `mise.lock` は現時点では使用しません。CLI は config 自体で exact version に固定してバージョン再現性を確保し、Renovate の更新 PR で CI の CLI smoke test を通してから更新します。将来、download URL や checksum まで固定する必要が生じた場合は lockfile の導入を別途検討します。
 
+非対話の Bash と Codex の shell tool では、管理対象の `~/.bash_env` を通じて `mise env` を読み込みます。これにより、TUI を使わない `codex exec` でもカレントディレクトリに対応した `mise` のツールと環境変数を利用できます。
+
 ## セキュリティに関する注意事項
 
 `curl | bash` 方式には以下のリスクがあります:

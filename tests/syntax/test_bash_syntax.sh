@@ -22,7 +22,7 @@ done < <(find . -type f \( -name "*.sh" -o -name "executable_*" \) \
   -print0)
 
 # 主要な設定ファイルも bash として構文チェック
-for config in home/dot_bashrc home/dot_bash_profile; do
+for config in home/dot_bash_env home/dot_bashrc home/dot_bash_profile; do
   if [ -f "$config" ]; then
     if ! bash -n "$config"; then
       echo "❌ Syntax error: $config"

@@ -14,6 +14,7 @@
 {{- $config = $config | setValueAtPath "features.unified_exec" true -}}
 {{- $config = $config | setValueAtPath "features.shell_snapshot" true -}}
 {{- $config = $config | setValueAtPath "features.default_mode_request_user_input" true -}}
+{{- $config = $config | setValueAtPath "shell_environment_policy.set.BASH_ENV" (printf "%s/.bash_env" .chezmoi.homeDir) -}}
 {{- /* Codex hook trust is keyed by source path + event/group/handler index. Pin only
       the two managed global PreToolUse identities so a targeted hooks.json deploy does
       not stop real agentctl Codex runtimes at the interactive Hook Review screen. */ -}}

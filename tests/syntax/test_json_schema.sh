@@ -70,6 +70,7 @@ assert config["model_reasoning_effort"] == "medium"
 assert config["features"]["hooks"] is True
 assert config["features"]["remote_control"] is True
 assert "codex_hooks" not in config["features"]
+assert config["shell_environment_policy"]["set"]["BASH_ENV"].endswith("/.bash_env")
 assert config["projects"]["/tmp/codex-runtime-state"]["trust_level"] == "trusted"
 assert config["hooks"]["state"]["/tmp/codex-runtime-hook"]["trusted_hash"] == "sha256:test"
 state = config["hooks"]["state"]

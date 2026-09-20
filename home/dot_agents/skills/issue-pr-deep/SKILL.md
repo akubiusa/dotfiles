@@ -13,7 +13,7 @@ description: 非自明な GitHub Issue を仕様・計画・実装・深いレ�
 6. 最終ゲートは fail-closed で、HEAD、index、worktree の tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する。全 substep はこの同じ snapshot を使い、各 substep の直後に比較する。tracked、staged、untracked、evidence のいずれかが変われば、最終ゲート全体を最初からやり直す。
    1. 最新の全検証を実行し、失敗したら停止する。
    2. 直後にシークレット確認を実行し、検出したら停止する。
-   3. `$deep-review` をローカル差分に実行する。50 以上、P1、P2 の未解決指摘があれば停止する。
+   3. `$deep-review --fix` をローカル差分に実行する。50 以上、P1、P2 の未解決指摘があれば停止する(deep-review では未解決の merge-blocker 指摘が残る場合に停止する)。
    4. diff、status、evidence を確認する。未記録の検証、未追跡ファイル、意図しない差分があれば停止する。
    5. final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する。commit と PR 作成はこの reviewed snapshot だけを使う。
    6. 差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す。

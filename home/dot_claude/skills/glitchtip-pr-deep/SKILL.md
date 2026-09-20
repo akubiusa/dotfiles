@@ -262,7 +262,7 @@ before creating the PR:
    collected so far.
 2. Re-confirm the working tree still matches `S` while progressing
    through, in order: fresh full verification → secret check → Phase 13's
-   `/deep-review` → diff/status/evidence check → a final check immediately
+   `/deep-review --fix` → diff/status/evidence check → a final check immediately
    before commit/PR.
 3. If anything changes partway through this sequence, restart the whole
    gate from scratch rather than patching around the drift.
@@ -274,8 +274,10 @@ proceed to Phase 13 with a known-failing verification.
 
 ## Phase 13: Deep Review
 
-Run `/deep-review` (no arguments — local diff mode) per `rules/workflow.md`
-ADR-003. Fix every finding scored ≥ 50 before Phase 14.
+Run `/deep-review --fix` (local diff mode; fix mode edits the working tree and
+does not commit) per `rules/workflow.md` ADR-003. Resolve every unresolved
+merge-blocker finding before Phase 14. Plain `/deep-review` is review-only and
+never blocks, so do not use it for this gate.
 
 ## Phase 14: Create PR
 

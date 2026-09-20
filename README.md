@@ -316,14 +316,20 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 
 # ローカル diff をレビューする（引数なし）
 /deep-review
+
+# 自動修正モード（自分の PR またはローカル diff のみ）
+/deep-review --fix
+
 ```
 
 ### 特徴
 
 - **外部依存なし**: `code-review@claude-plugins-official` や `pr-review-toolkit@claude-plugins-official` を一切使用しない
-- **独自パイプライン**: 独立したサブエージェントを並列起動して観点別にレビューし、確信度スコア 0-100 でフィルタリング（スコア 50 未満は除外）
+- **独自パイプライン**: 独立したサブエージェントを並列起動して観点別に候補を出し、別のサブエージェントが各候補を検証する。検証結果は マージ前必須 / 後続対応 / 未検証 / 対象外 の 4 分類で ledger に記録する（確信度は内部用で、スコアによる除外はしない）
 - **PR/ローカル diff 両対応**: 引数ありで PR モード、引数なしでローカル diff モード
-- **自動修正（自分の PR のみ）**: スコア 50 以上の指摘を自動修正 → コミット → push → PR 本文更新
+- **既定は review モード**: コミット・push・PR 本文更新・作業ツリー変更を行わず、フックもブロックしない。書き込みは ledger と PR モードの開発者向けコメントのみ
+- **`--fix` モード（自分の PR またはローカル diff のみ）**: 検証済みの マージ前必須 指摘だけを自動修正する。PR モードではコミット → push を行い、ローカル diff モードでは作業ツリーのみ編集してコミットしない
+- **開発者向け PR コメント**: `~/.agents/skills/deep-review/scripts/` の `render-comment.sh` で生成し、`validate-comment.sh` で検証してから投稿する（`ledger.sh` が指摘の状態を管理する）
 - **偽陽性抑制**: 各エージェントに「無視すべきもの」を明示して精度を確保
 
 ### レビュー観点
@@ -364,7 +370,7 @@ applies_to: all        # all | pr-only（省略時は all）
 
 `~/.claude/hooks/deep-review-immediate-fix.sh`（PostToolUse）と
 `~/.claude/hooks/deep-review-require-fixes.sh`（Stop）が設定されており、
-スコア 50 以上の指摘が未対応の場合は Claude の処理を一時ブロックして対応を促す。
+fix モードの ledger に未解決の マージ前必須 指摘が残っている場合だけ Claude の処理を一時ブロックして対応を促す（review モードでは一切ブロックしない）。`lite-review` は従来どおりスコアに基づいてブロックする。
 
 また、`~/.claude/hooks/detect-leaked-toolcall.sh`（Stop / SubagentStop）は、Claude Code の既知の不具合によりツールコールの XML マークアップがプレーンテキストとして最終アシスタントメッセージに漏れ出していないかを検出し、検出時は自己模倣による再発を防ぐよう促すメッセージでブロックする。
 

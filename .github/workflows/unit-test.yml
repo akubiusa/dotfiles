@@ -46,6 +46,16 @@ jobs:
         background: true
         run: bash tests/unit/test_hooks.sh
 
+      - name: Run deep-review ledger unit test
+        id: run-deep-review-ledger-unit-test
+        background: true
+        run: bash tests/unit/test_deep_review_ledger.sh
+
+      - name: Run deep-review comment unit test
+        id: run-deep-review-comment-unit-test
+        background: true
+        run: bash tests/unit/test_deep_review_comment.sh
+
       - name: Run powerline daemon launch unit test
         id: run-powerline-daemon-launch-unit-test
         background: true
@@ -69,6 +79,8 @@ jobs:
           - run-chrome-mcp-unit-test
           - run-notification-unit-test
           - run-hooks-unit-test
+          - run-deep-review-ledger-unit-test
+          - run-deep-review-comment-unit-test
           - run-powerline-daemon-launch-unit-test
           - run-pr-monitor-unit-test
           - run-trilium-validation-unit-test

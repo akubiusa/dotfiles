@@ -9,8 +9,8 @@ FAILED=0
 
 # テスト対象のフックスクリプト
 HOOKS=(
-  "home/dot_claude/hooks/executable_code-review-immediate-fix.sh"
-  "home/dot_claude/hooks/executable_require-code-review-fixes.sh"
+  "home/dot_claude/hooks/executable_deep-review-immediate-fix.sh"
+  "home/dot_claude/hooks/executable_deep-review-require-fixes.sh"
   "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
   "home/dot_claude/hooks/executable_git-config-guard.sh"
   "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
@@ -676,6 +676,98 @@ assert_rtk_asked "worktree cwd: ask-matched git command still prompts but keeps 
   "$RTK_ASK_CMD" "$WORKTREE_CWD" "$RTK_ASK_CMD"
 
 rm -rf "$RTK_FAKE_BIN_DIR"
+
+echo "Testing deep-review / lite-review hooks..."
+DR_HOME=$(mktemp -d)
+DR_IMMEDIATE="$PWD/home/dot_claude/hooks/executable_deep-review-immediate-fix.sh"
+DR_STOP="$PWD/home/dot_claude/hooks/executable_deep-review-require-fixes.sh"
+DR_LEDGER="$PWD/home/dot_agents/skills/deep-review/scripts/executable_ledger.sh"
+DR_DATA="$DR_HOME/.claude/data"
+
+dr_ledger() { DEEP_REVIEW_DATA_DIR="$DR_DATA" bash "$DR_LEDGER" "$@"; }
+dr_finding() {
+  jq -nc --arg k "$1" '{key: $k, path: "a.kt", line: 1, reviewer: "b", title: "t", class: "merge-blocker", confidence: 90, verified: true}'
+}
+dr_immediate_input() {
+  jq -nc --arg s "$1" --arg sk "$2" --arg r "${3:-}" \
+    '{tool_name: "Skill", tool_input: {skill: $sk}, session_id: $s, tool_response: $r}'
+}
+# 引数: 期待 (block / pass)、説明、フック、入力 JSON
+assert_dr_hook() {
+  local expect="$1" msg="$2" hook="$3" input="$4" out
+  out=$(HOME="$DR_HOME" bash "$hook" <<<"$input" 2>"$DR_HOME/stderr.${hook##*/}") || true
+  if [[ "$expect" == "block" ]] && jq -e '.decision == "block"' <<<"$out" >/dev/null 2>&1; then
+    echo "✅ $msg"
+  elif [[ "$expect" == "pass" ]] && ! jq -e '.decision == "block"' <<<"$out" >/dev/null 2>&1; then
+    echo "✅ $msg"
+  else
+    echo "❌ $msg (expected $expect, got: $out)"
+    FAILED=1
+  fi
+}
+# immediate-fix (PostToolUse) と require-fixes (Stop) の両方に同じ期待を適用する
+assert_dr_both() {
+  local expect="$1" msg="$2" sid="$3"
+  assert_dr_hook "$expect" "immediate-fix: $msg" "$DR_IMMEDIATE" "$(dr_immediate_input "$sid" deep-review)"
+  assert_dr_hook "$expect" "require-fixes: $msg" "$DR_STOP" "$(jq -nc --arg s "$sid" '{session_id: $s}')"
+}
+
+dr_ledger init s-review review pr o/r 1 true abc >/dev/null
+dr_ledger add s-review "$(dr_finding k1)" >/dev/null
+assert_dr_both pass "review-mode ledger with open blocker does not block" s-review
+
+dr_ledger init s-fix fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-fix "$(dr_finding k1)" >/dev/null
+assert_dr_both block "fix-mode ledger with open blocker blocks" s-fix
+dr_ledger set-status s-fix 1 fixed abc verified >/dev/null
+assert_dr_both pass "fix-mode ledger with all resolved does not block" s-fix
+
+assert_dr_both pass "no ledger does not block" s-none
+
+# 旧 state (deep-review, Score ベース) のみが残っている場合は無視する
+jq -nc --argjson t "$(date +%s)" '{session_id: "s-old", skill: "deep-review", timestamp: $t, high_score_count: 3, max_score: 90}' \
+  > "$DR_DATA/deep-review-state-s-old.json"
+assert_dr_both pass "legacy deep-review state alone does not block" s-old
+
+dr_ledger init s-mismatch fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-mismatch "$(dr_finding k1)" >/dev/null
+jq '.session_id = "other"' "$DR_DATA/deep-review-ledger-s-mismatch.json" > "$DR_DATA/tmp.json" \
+  && mv "$DR_DATA/tmp.json" "$DR_DATA/deep-review-ledger-s-mismatch.json"
+assert_dr_both pass "session_id mismatch does not block" s-mismatch
+
+dr_ledger init s-schema fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-schema "$(dr_finding k1)" >/dev/null
+jq '.schema_version = 2' "$DR_DATA/deep-review-ledger-s-schema.json" > "$DR_DATA/tmp.json" \
+  && mv "$DR_DATA/tmp.json" "$DR_DATA/deep-review-ledger-s-schema.json"
+assert_dr_both pass "schema_version 2 does not block" s-schema
+
+dr_ledger init s-stale fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-stale "$(dr_finding k1)" >/dev/null
+jq '.updated_at = 0' "$DR_DATA/deep-review-ledger-s-stale.json" > "$DR_DATA/tmp.json" \
+  && mv "$DR_DATA/tmp.json" "$DR_DATA/deep-review-ledger-s-stale.json"
+assert_dr_both pass "ledger older than 24h does not block" s-stale
+
+printf '{broken' > "$DR_DATA/deep-review-ledger-s-corrupt.json"
+assert_dr_both pass "corrupted ledger does not block" s-corrupt
+for hook in "$DR_IMMEDIATE" "$DR_STOP"; do
+  if grep -q 'WARNING: corrupted deep-review ledger' "$DR_HOME/stderr.${hook##*/}"; then
+    echo "✅ ${hook##*/}: corrupted ledger warns on stderr"
+  else
+    echo "❌ ${hook##*/}: corrupted ledger did not warn on stderr"
+    FAILED=1
+  fi
+done
+
+assert_dr_hook pass "deep-review with only 'Score: 90' in tool_response does not block" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-score deep-review 'Score: 90')"
+
+# lite-review は従来どおり Score 抽出 + 旧 state で判定する
+assert_dr_hook block "lite-review immediate-fix still blocks on Score >= 50" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review 'Score: 90')"
+assert_dr_hook block "lite-review Stop still blocks via legacy state" \
+  "$DR_STOP" '{"session_id":"s-lite"}'
+
+rm -rf "$DR_HOME"
 
 if [ $FAILED -eq 0 ]; then
   echo "✅ All hook tests passed"

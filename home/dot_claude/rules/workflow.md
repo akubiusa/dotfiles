@@ -19,11 +19,11 @@ Rules and checklists for the full development workflow.
 
 **Explicit decline handling**: If the user explicitly declines to address the Stop hook's unresolved-review-thread warning for a specific PR, run `bash ~/.claude/hooks/mark-review-declined.sh <PR_NUMBER>` before ending the turn. This suppresses re-warning for that PR within the current session only (it does not persist across sessions) and is distinct from the blanket `SKIP_REVIEW_CHECK=1` escape, which skips all checks every time.
 
-## ADR-003: deep-review score ≥ 50 findings must be fixed before PR creation
+## ADR-003: Unresolved merge-blocker findings from `/deep-review --fix` must be resolved before PR creation
 
-**Decision**: `/deep-review` must pass (no score ≥ 50 findings) before creating a PR.  
+**Decision**: `/deep-review --fix` must leave no unresolved merge-blocker findings before creating a PR.  
 **Rationale**: Catches correctness bugs, security issues, and CLAUDE.md violations early.  
-**Implementation**: PostToolUse and Stop hooks enforce this automatically.
+**Implementation**: In fix mode, PostToolUse and Stop hooks block while the fix-mode ledger has open merge-blocker findings.
 
 ---
 
@@ -47,7 +47,7 @@ Rules and checklists for the full development workflow.
 1. User has requested PR creation.
 2. No sensitive information.
 3. No conflict risk.
-4. Run `/deep-review` (local diff mode) — fix all score ≥ 50 findings.
+4. Run `/deep-review --fix` (local diff mode) — resolve all merge-blocker findings.
 
 ## Post-PR checklist
 

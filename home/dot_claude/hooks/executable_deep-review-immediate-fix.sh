@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # PostToolUse hook: deep-review / lite-review スキル実行後に指摘事項の対応を促す。
-# スコア 50 以上の指摘が残っている場合に Claude の処理をブロックする。
-# 副作用として findings を ~/.claude/data/deep-review-state.json に書き出す。
-# これにより Stop hook (deep-review-require-fixes.sh) がトランスクリプトを
-# パースせずステートファイルから確実に判定できる。
+# deep-review: ledger を読み、fix モードで未解決の merge-blocker があればブロックする。
+# lite-review: スコア 50 以上の指摘が残っている場合にブロックし、
+# 副作用として findings を ~/.claude/data/deep-review-state-*.json に書き出す
+# (Stop hook の deep-review-require-fixes.sh がステートファイルから判定する)。
 
 STATE_DIR="$HOME/.claude/data"
 
@@ -25,6 +25,35 @@ fi
 
 # セッション ID を取得する
 SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.session_id // ""' 2>/dev/null)
+
+# deep-review は ledger (ledger.sh が書き込む) を直接読んで判定する。
+# fix モードで open な merge-blocker が残っている場合のみブロックする。
+# ledger なし・schema 不一致・session 不一致・TTL 超過・破損はいずれも非ブロック (fail-open)。
+if [[ "$SKILL" == "deep-review" ]]; then
+    [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]] || exit 0
+    LEDGER="${DEEP_REVIEW_DATA_DIR:-$STATE_DIR}/deep-review-ledger-${SESSION_ID}.json"
+    [[ -f "$LEDGER" ]] || exit 0
+    if ! COUNT=$(jq -r --arg s "$SESSION_ID" '
+        if .schema_version == 1 and .session_id == $s and (now - .updated_at) <= 86400 and .mode == "fix"
+        then [.findings[] | select(.class == "merge-blocker" and .status == "open")] | length
+        else 0 end' "$LEDGER" 2>/dev/null); then
+        echo "WARNING: corrupted deep-review ledger: $LEDGER" >&2
+        exit 0
+    fi
+    if [[ "$COUNT" -gt 0 ]]; then
+        REASON="🔔 deep-review (fix モード) で ${COUNT} 件の未解決のマージ前必須指摘が残っています。
+
+対応手順:
+1. ledger の open な merge-blocker 指摘をすべて確認する
+2. 各指摘を修正して検証し、ledger.sh で status を fixed / false_positive / deferred に更新する
+3. 修正内容をコミット・プッシュする
+4. PR 本文を更新する
+
+対応漏れは禁止されています。"
+        jq -n --arg reason "$REASON" '{"decision":"block","reason":$reason}'
+    fi
+    exit 0
+fi
 
 # セッション ID が英数字・ハイフン・アンダースコアのみで構成されているか検証する。
 # 空文字、または `/` や `..` を含む不正な値をファイルパスへ直接展開すると

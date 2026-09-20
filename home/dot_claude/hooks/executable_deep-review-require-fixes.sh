@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # Stop hook: セッション終了時に deep-review / lite-review の未対応指摘が残っていないか検証する。
-# トランスクリプトのテキストパースには頼らず、PostToolUse フックが書き出した
-# ステートファイル (~/.claude/data/deep-review-state.json) を優先参照する。
-# ステートファイルが存在しない場合はブロックしない（セッション内でどちらも未実行）。
+# deep-review は ledger (ledger.sh が書き込む) を直接読んで判定する。
+# lite-review のみ、PostToolUse フックが書き出した旧ステートファイル
+# (~/.claude/data/deep-review-state-*.json) で判定する。
+# ledger もステートファイルも存在しない場合はブロックしない（セッション内でどちらも未実行）。
 
 STATE_DIR="$HOME/.claude/data"
 
@@ -23,6 +24,33 @@ else
     STATE_FILE="$STATE_DIR/deep-review-state.json"
 fi
 
+# deep-review は ledger を直接読んで判定する。fix モードで open な merge-blocker が残っている場合のみブロックする。
+# ledger なし・schema/session 不一致・TTL 超過・破損は非ブロック。
+if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    LEDGER="${DEEP_REVIEW_DATA_DIR:-$STATE_DIR}/deep-review-ledger-${SESSION_ID}.json"
+    if [[ -f "$LEDGER" ]]; then
+        if COUNT=$(jq -r --arg s "$SESSION_ID" '
+            if .schema_version == 1 and .session_id == $s and (now - .updated_at) <= 86400 and .mode == "fix"
+            then [.findings[] | select(.class == "merge-blocker" and .status == "open")] | length
+            else 0 end' "$LEDGER" 2>/dev/null); then
+            if [[ "$COUNT" -gt 0 ]]; then
+                REASON="⚠️ deep-review (fix モード) で ${COUNT} 件の未解決のマージ前必須指摘が残っています。
+
+対応手順:
+1. ledger の open な merge-blocker 指摘をすべて確認する
+2. 各指摘を修正して検証し、ledger.sh で status を fixed / false_positive / deferred に更新する
+3. 修正内容をコミット・プッシュする
+4. PR 本文を更新する"
+                jq -n --arg reason "$REASON" '{"decision":"block","reason":$reason}'
+                exit 0
+            fi
+        else
+            echo "WARNING: corrupted deep-review ledger: $LEDGER" >&2
+        fi
+    fi
+fi
+
+# 以降は lite-review 用の旧ステートファイル判定。
 # ステートファイルが存在しない → このセッションで deep-review / lite-review 未実行 → ブロックしない
 if [[ ! -f "$STATE_FILE" ]]; then
     exit 0
@@ -33,8 +61,13 @@ STATE_SESSION=$(jq -r '.session_id // ""' "$STATE_FILE" 2>/dev/null)
 STATE_TIMESTAMP=$(jq -r '.timestamp // 0' "$STATE_FILE" 2>/dev/null)
 HIGH_SCORE_COUNT=$(jq -r '.high_score_count // 0' "$STATE_FILE" 2>/dev/null)
 MAX_SCORE=$(jq -r '.max_score // 0' "$STATE_FILE" 2>/dev/null)
-# 旧形式ファイル（skill フィールドなし）との後方互換のため deep-review にフォールバックする
+# skill フィールドが無い旧形式ファイルは lite-review ではないものとして扱い、下のガードで無視する
 STATE_SKILL=$(jq -r '.skill // "deep-review"' "$STATE_FILE" 2>/dev/null)
+
+# 旧判定を使うのは lite-review のみ。deep-review と skill フィールドなしの旧形式ステートは無視する
+if [[ "$STATE_SKILL" != "lite-review" ]]; then
+    exit 0
+fi
 
 # ステートファイルの有効期限（24時間）
 STATE_TTL=86400

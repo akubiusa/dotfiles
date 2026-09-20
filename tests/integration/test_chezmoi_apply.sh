@@ -214,6 +214,13 @@ if [ ! -x "$HOME/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh" ]
   exit 1
 fi
 
+if [ ! -x "$HOME/.agents/skills/deep-review/scripts/ledger.sh" ] \
+  || [ ! -x "$HOME/.agents/skills/deep-review/scripts/render-comment.sh" ] \
+  || [ ! -x "$HOME/.agents/skills/deep-review/scripts/validate-comment.sh" ]; then
+  echo "❌ deep-review helper scripts not generated or not executable"
+  exit 1
+fi
+
 echo "✅ Codex files generated successfully"
 
 # PR 後フローの skill 契約が chezmoi 展開後も保持されることを確認する。
@@ -602,8 +609,8 @@ echo "✅ Idempotency test passed"
 # シンボリックリンクの整合性確認 (Claude Code フックのシンボリックリンク)
 HOOKS_DIR="$HOME/.claude/hooks"
 SYMLINKS=(
-  "code-review-immediate-fix.sh"
-  "require-code-review-fixes.sh"
+  "deep-review-immediate-fix.sh"
+  "deep-review-require-fixes.sh"
   "require-review-thread-fixes.sh"
 )
 

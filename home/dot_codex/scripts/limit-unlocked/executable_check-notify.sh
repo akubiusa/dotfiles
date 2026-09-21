@@ -509,6 +509,16 @@ resume_session() {
     tmux send-keys -t "${session}:" Enter
 }
 
+# reset_epoch 到達直後は解除がまだ反映されていないことがあるため、
+# 一定時間 (RESUME_DELAY_SECONDS) 経過してから再開する
+RESUME_DELAY_SECONDS=60
+
+# reset_epoch から RESUME_DELAY_SECONDS 経過しているか判定する
+resume_due() {
+    local reset_epoch="$1" now="$2"
+    [ "$now" -ge "$((reset_epoch + RESUME_DELAY_SECONDS))" ]
+}
+
 # resume の重複排除キーを決定する。turn_id は task_complete イベントごとに一意なため、
 # これをキーにすると reset_epoch の推定が外れて resume に失敗した場合でも、
 # 次に発生する新しい turn_id を「別の失敗」として検知し再試行できる。
@@ -562,7 +572,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
             # confirmed=1(このポーリングで実際にリミット中と確認できた)場合のみ
             # 再開を試みる。confirmed=0 の引き継ぎ行は未検証のため対象にしない
-            if [ "$confirmed" = "1" ] && [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
+            if [ "$confirmed" = "1" ] && [[ "$reset_epoch" =~ ^[0-9]+$ ]] && resume_due "$reset_epoch" "$now"; then
                 resume_key=$(resume_key_for "$reset_epoch" "$turn_id")
                 if ! already_resumed_for "$session" "$resume_key"; then
                     echo "Resuming: $session ($cwd)"

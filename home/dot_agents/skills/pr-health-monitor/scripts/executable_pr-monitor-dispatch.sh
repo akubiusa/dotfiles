@@ -46,9 +46,9 @@ EVENT=$(jq -r '
         .events | to_entries[] | select(.key != "close" and (.value | deliverable)) | .key
     end
 ' <<< "$STATE" | head -n 1)
-[[ "$EVENT" =~ ^(close|ci_failure|conflict|copilot_review)$ ]] || exit 0
+[[ "$EVENT" =~ ^(close|ci_failure|conflict|copilot_review|review_feedback)$ ]] || exit 0
 EVENT_ID=$(jq -r --arg event "$EVENT" 'if $event == "close" then .events.close.id // "close:1" else .events[$event].id // ($event + ":1") end' <<< "$STATE")
-[[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ ]] || exit 0
+[[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review|review_feedback):[1-9][0-9]*$ ]] || exit 0
 PROMPT="\$resume-pr-monitor $PR_URL --event-id $EVENT_ID"
 
 if ! "$STATE_HELPER" claim-delivery --pr-url "$PR_URL" --event-id "$EVENT_ID" --pane "$PANE" --session-id "$SESSION_ID"; then

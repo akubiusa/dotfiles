@@ -81,16 +81,16 @@ For features spanning 5+ files or with security-critical paths:
 
 ## Handling Idle Notifications from Background Sub-Agents
 
-The `Agent` tool runs sub-agents in the background by default and notifies the parent session when one completes. If a sub-agent stops taking actions without calling `SendMessage` to report completion, the harness may deliver an **idle** notification instead of a **completed** one. Treat these as distinct: an idle notification means the sub-agent went quiet without finishing, not that it's done.
+The `Agent` tool runs sub-agents in the background by default and returns their final message to the parent session when they stop, including when they become idle. Read that message to determine whether the task is complete; an idle notification alone does not mean the task is unfinished.
 
 This applies whenever a background-mode sub-agent (the `Agent` tool's default, or explicit `run_in_background: true`) sends an idle notification. It does not apply to sync-mode (`run_in_background: false`) dispatches, since those block the calling turn until the sub-agent returns.
 
 **Follow-up procedure:**
 
-1. On receiving an idle notification, immediately send that sub-agent one `SendMessage` nudge that explicitly names `SendMessage` as the required mechanism for reporting — e.g. "You must call `SendMessage` to report your result or current status; plain text output alone is not visible to the caller." A generic "please continue or report status" nudge that does not name `SendMessage` is insufficient — it was tried in practice and did not resolve repeated idling (see the incident behind this rule's "Proactive complement" section below).
-2. If no `completed` notification arrives within a timeout (default 15
-   minutes since the nudge; a calling skill may define its own threshold —
-   that takes precedence over this default), set up a `CronCreate`
+1. If the returned message shows the task is incomplete or its status is unclear, send the sub-agent one `SendMessage` nudge asking it to continue or clarify its status. Do not nudge a sub-agent whose returned message already reports completion.
+2. If no completion message arrives within a timeout (default 15 minutes
+   since the nudge; a calling skill may define its own threshold — that
+   takes precedence over this default), set up a `CronCreate`
    check-in (default: every 15 minutes) if one isn't already running, to
    track outstanding sub-agents. This timeout is purely elapsed wall-clock
    time since the nudge was sent — it applies identically whether the
@@ -118,12 +118,4 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
   sub-agent progress (a state file like `STATE.md`, or the `Todo`/`Task`
   tools) may reuse that instead of inventing a new one.
 
-**Proactive complement — instruct every background-mode sub-agent to report before going idle:**
-
-Named/teammate sub-agents (dispatched via the `Agent` tool with a `name` parameter, meant to be resumed later via `SendMessage`) have no automatic "completed" notification the way a *sync-mode* `Agent` call does — the only way the team-lead learns of their status is if the sub-agent itself calls `SendMessage` before going idle. The same gap applies to anonymous one-shot `Agent` calls dispatched in background mode (the `Agent` tool's default): in practice, background-mode reviewer sub-agents dispatched without a `name` (e.g. `deep-review`'s Step 5 parallel reviewers) have also repeatedly gone idle without calling `SendMessage`, instead of returning a result automatically, when their initial prompt did not explicitly require it. So whenever dispatching **any** background-mode sub-agent — named/teammate or anonymous one-shot alike — always append an explicit instruction to its prompt along these lines: "Before you stop taking actions for any reason (completion, being blocked, uncertainty, or anything else), you MUST call SendMessage to report your result or status to the parent session (use `to: "team-lead"` for named/teammate sub-agents, or the caller's default target for anonymous one-shot calls). Never go idle without reporting — plain text output alone is not visible to the caller." This does not apply to **sync-mode** (`run_in_background: false`) dispatches, since those already block the calling turn until the sub-agent returns its result directly. It also does not apply to sub-agents whose completion is instead tracked via a shared state-tracking mechanism (a state file such as `STATE.md`, or the `Todo`/`Task` tools) that the parent session polls directly — mirroring the existing reactive-procedure carve-out noted above — since in that case the parent doesn't rely on the sub-agent's own `SendMessage` call to learn of completion.
-
-This is a preventive measure, not a replacement for the reactive follow-up
-procedure above: a sub-agent that stalls before it can even reason about
-stopping (e.g. blocked at a permission gate before its first tool call)
-can't act on an instruction in its own prompt either, so the nudge/timeout/
-re-dispatch path above remains the safety net for that case.
+An explicit `SendMessage` is still useful for progress updates or when a sub-agent needs a response before it can continue. It is not required as a final report when the sub-agent stops; use the message returned on completion or idle, and follow the recovery procedure above if that message shows incomplete or unclear status.

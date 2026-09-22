@@ -246,17 +246,22 @@ cleanup() {
 }
 
 # shellcheck disable=SC2016
-COPILOT_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
+FEEDBACK_QUERY='query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviews(first: 100) { nodes { author { login __typename } state submittedAt } }
+      comments(first: 1) { totalCount }
+      reviews(first: 1, states: [COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED]) { totalCount }
+      reviewThreads(first: 100, after: $cursor) {
+        nodes { comments(first: 1) { totalCount } }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   }
 }'
 
 TERMINAL=false
 observe_once() {
-    local pr_json checks_json copilot_count failed_check_count run_url pr_state
+    local pr_json checks_json feedback_json feedback_count feedback_page cursor failed_check_count run_url pr_state first_feedback_page
 
     TERMINAL=false
     if ! pr_json=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json state,mergeable,mergeStateStatus,url 2>> "$LOG_FILE"); then
@@ -292,14 +297,37 @@ observe_once() {
         state transition --event ci --value ok
     fi
 
-    if ! copilot_count=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" -f query="$COPILOT_QUERY" --jq '[.data.repository.pullRequest.reviews.nodes[] | select(.author.__typename == "Bot" and (.author.login | ascii_downcase | contains("copilot")) and (.state == "COMMENTED" or .state == "APPROVED" or .state == "CHANGES_REQUESTED") and .submittedAt != null)] | length' 2>> "$LOG_FILE"); then
-        return 1
-    fi
-    [[ "$copilot_count" =~ ^[0-9]+$ ]] || return 1
-    if [[ "$copilot_count" -gt 0 ]]; then
-        state transition --event copilot --value detected
+    feedback_count=0
+    cursor=""
+    first_feedback_page=true
+    while :; do
+        if [[ -n "$cursor" ]]; then
+            if ! feedback_json=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" -f cursor="$cursor" -f query="$FEEDBACK_QUERY" 2>> "$LOG_FILE"); then
+                return 1
+            fi
+        elif ! feedback_json=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" -f query="$FEEDBACK_QUERY" 2>> "$LOG_FILE"); then
+            return 1
+        fi
+        if ! feedback_page=$(jq -er '
+            .data.repository.pullRequest as $pr |
+            [($pr.comments.totalCount // 0), ($pr.reviews.totalCount // 0), ([ $pr.reviewThreads.nodes[].comments.totalCount ] | add // 0), ($pr.reviewThreads.pageInfo.hasNextPage | if . then 1 else 0 end), ($pr.reviewThreads.pageInfo.endCursor // "")] | @tsv
+        ' <<< "$feedback_json"); then
+            return 1
+        fi
+        IFS=$'\t' read -r issue_comment_count review_count thread_comment_count has_next cursor <<< "$feedback_page"
+        [[ "$issue_comment_count" =~ ^[0-9]+$ && "$review_count" =~ ^[0-9]+$ && "$thread_comment_count" =~ ^[0-9]+$ && "$has_next" =~ ^[01]$ ]] || return 1
+        if [[ "$first_feedback_page" == true ]]; then
+            feedback_count=$((feedback_count + issue_comment_count + review_count))
+            first_feedback_page=false
+        fi
+        feedback_count=$((feedback_count + thread_comment_count))
+        [[ "$has_next" == 1 ]] || break
+        [[ -n "$cursor" ]] || return 1
+    done
+    if [[ "$feedback_count" =~ ^[0-9]+$ ]]; then
+        state transition --event review-feedback --value "$feedback_count"
     else
-        state transition --event copilot --value none
+        return 1
     fi
 }
 

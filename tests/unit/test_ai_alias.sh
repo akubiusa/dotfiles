@@ -130,8 +130,8 @@ CODEX_OVERRIDE_DIR="$TEST_ROOT/codex-override"
   cd "$CODEX_WORKDIR"
   HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex resume session-123
 )
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <--cd> <$CODEX_WORKDIR> <resume> <session-123>" ]] || {
-  echo "❌ running daemon did not route Codex TUI through unix remote"
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--cd> <$CODEX_WORKDIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume retained a permission override or did not preserve the working directory"
   cat "$CODEX_LOG"
   exit 1
 }
@@ -149,16 +149,16 @@ CODEX_OVERRIDE_DIR="$TEST_ROOT/codex-override"
 
 : > "$CODEX_LOG"
 HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex --cd "$CODEX_OVERRIDE_DIR" resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <--cd> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
-  echo "❌ explicit --cd was not preserved"
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--cd> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume with explicit --cd retained a permission override or changed the directory"
   cat "$CODEX_LOG"
   exit 1
 }
 
 : > "$CODEX_LOG"
 HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex -C "$CODEX_OVERRIDE_DIR" resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <-C> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
-  echo "❌ explicit -C was not preserved"
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <-C> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume with explicit -C retained a permission override or changed the directory"
   cat "$CODEX_LOG"
   exit 1
 }

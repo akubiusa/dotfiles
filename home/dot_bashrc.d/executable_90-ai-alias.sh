@@ -87,6 +87,14 @@ _codex_has_cd() {
   return 1
 }
 
+_codex_is_resume_invocation() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "resume" ]] && return 0
+  done
+  return 1
+}
+
 codex() {
   # Codex CLI 自体は standalone installer が自前で自動更新するため update-ai-agents.sh の対象外
   ~/.local/share/chezmoi/update.sh
@@ -94,7 +102,14 @@ codex() {
   if _codex_is_direct_invocation "$@"; then
     command codex --yolo "$@"
   elif _codex_app_server_running; then
-    if _codex_has_cd "$@"; then
+    if _codex_is_resume_invocation "$@"; then
+      # リモートタスクの resume では --yolo などの明示的な権限上書きが拒否される。
+      if _codex_has_cd "$@"; then
+        command codex --remote unix:// "$@"
+      else
+        command codex --remote unix:// --cd "$PWD" "$@"
+      fi
+    elif _codex_has_cd "$@"; then
       command codex --remote unix:// --yolo "$@"
     else
       command codex --remote unix:// --yolo --cd "$PWD" "$@"

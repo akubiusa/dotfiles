@@ -75,6 +75,18 @@ _codex_is_direct_invocation() {
   esac
 }
 
+_codex_has_cd() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "--" ]] && return 1
+    case "$arg" in
+      --cd|-C|--cd=*|-C?*)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
 codex() {
   # Codex CLI 自体は standalone installer が自前で自動更新するため update-ai-agents.sh の対象外
   ~/.local/share/chezmoi/update.sh
@@ -82,7 +94,11 @@ codex() {
   if _codex_is_direct_invocation "$@"; then
     command codex --yolo "$@"
   elif _codex_app_server_running; then
-    command codex --remote unix:// --yolo "$@"
+    if _codex_has_cd "$@"; then
+      command codex --remote unix:// --yolo "$@"
+    else
+      command codex --remote unix:// --yolo --cd "$PWD" "$@"
+    fi
   else
     command codex --yolo "$@"
   fi

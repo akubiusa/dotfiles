@@ -10,7 +10,7 @@ description: PR monitor の状態を再観測して、lease を取得した pend
 ## Reconcile してから処理する
 
 1. `gh pr view` で canonical `PR_URL` を解決する。番号のみでは `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
-2. 最初に `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh once --pr-url "$PR_URL"` を実行する。この command は PR state、checks/conflict、Copilot review を fresh GitHub response から観測し、不足している close、CI failure（run URL を含む）、conflict、Copilot event を state lock 下で enqueue する。API 取得に失敗したら action を実行せず停止する。
+2. 最初に `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh once --pr-url "$PR_URL"` を実行する。この command は PR state、checks/conflict、会話コメント、レビュー、レビューコメントを actor を問わず fresh GitHub response から観測し、不足している close、CI failure（run URL を含む）、conflict、review feedback event を state lock 下で enqueue する。API 取得に失敗したら action を実行せず停止する。
 3. `--event-id <type:generation>` が与えられた場合は、その ID と完全に一致する event だけを対象にする。`watch-pr.sh once` によって同種の新しい generation が作られ、指定 ID が一致しなくなった場合は何も処理せず停止する。event を列挙する通常の resume では、各 action/event について新しいランダム lease ID で `claim --lease-id <ID> --lease-seconds 300` を取得する。指定 ID を処理する場合は `claim --event-id <type:generation> --lease-id <ID> --lease-seconds 300` を使う。claim が exit 3 なら、別の resume が所有しているか event は既に処理済み・stale なので skip する。
 4. 長時間 action の前には同じ lease ID で 60 秒ごとに `renew --lease-id <ID> --lease-seconds 300` を実行する heartbeat を開始し、action の終了後に停止する。renew が exit 3 なら ownership を失ったため action を開始・継続せず、結果を報告する。heartbeat は lease を取得した resume だけが実行する。
 5. action が成功した場合だけ同じ lease ID で `ack` を実行する。失敗、再検証不一致、またはユーザー判断待ちは同じ lease ID で `release` を実行して pending に戻す。lease のない `ack` は行わない。ack/release 後は heartbeat を停止する。
@@ -18,7 +18,8 @@ description: PR monitor の状態を再観測して、lease を取得した pend
 ## Event ごとの action
 
 - `close.cleanup`: fresh PR state が state の terminal value (`MERGED`/`CLOSED`) と一致する場合だけ `$pr-cleanup <PR_URL>` を実行する。
-- `copilot_review`: fresh GraphQL query で Copilot review を確認してから `$handle-pr-reviews <PR_URL>` を実行する。
+- `review_feedback`: fresh GraphQL query で review feedback の存在を再確認し、`$handle-pr-reviews <PR_URL>` を実行する。この skill は author を含むすべての actor の未解決レビューとコメントを処理する。
+- `copilot_review`: 既存 state との互換用 event。fresh GraphQL query でレビューを再確認し、`$handle-pr-reviews <PR_URL>` を実行する。
 - `ci_failure`: event の `run_url` を使う。空または stale なら `gh pr checks "$PR_URL" --json name,bucket,link` から failed/cancelled check の link を解決し、`gh run view <RUN_ID> --log-failed` で確認する。失敗が継続中なら event は pending のままにする。
 - `conflict`: fresh `mergeable`/`mergeStateStatus` が conflict を示す間は event を pending のままにする。rebase、merge、force push は実行しない。
 

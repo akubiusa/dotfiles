@@ -245,7 +245,7 @@ if ! grep -Fq 'watch-pr.sh watch --pr-url' "$PR_HEALTH_SKILL" \
   exit 1
 fi
 
-if ! grep -Fq 'watcher は PR state、checks、conflict、Copilot review を poll' "$PR_CLOSE_SKILL" \
+if ! grep -Fq 'watcher は PR state、checks、conflict、actor を問わない review feedback を poll' "$PR_CLOSE_SKILL" \
   || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_CLOSE_SKILL" \
   || ! grep -Fq 'durable state に保存しない' "$PR_CLOSE_SKILL" \
   || ! grep -Fq 'CLOSED' "$PR_CLOSE_SKILL"; then

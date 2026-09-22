@@ -62,6 +62,6 @@ PR 作成直後に monitor を開始する。PR 作成前の preflight は非変
 
 ## 境界
 
-- watcher は 30 秒間隔（`PR_MONITOR_INTERVAL` でテスト時のみ変更可能）で PR state、checks、Copilot review を poll し、連続 5 回の API failure で停止する。
-- `MERGED`/`CLOSED`、CI failure、conflict、Copilot review は transition ごとに一度だけ記録する。action processor は event lease を取得し、成功後にだけ acknowledge するため、session をまたいでも未処理状態を失わない。
+- watcher は 30 秒間隔（`PR_MONITOR_INTERVAL` でテスト時のみ変更可能）で PR state、checks、会話コメント、レビュー、レビューコメントを actor を問わず poll し、連続 5 回の API failure で停止する。
+- `MERGED`/`CLOSED`、CI failure、conflict、review feedback は transition ごとに一度だけ記録する。検出した review feedback は `$handle-pr-reviews` に配送する。action processor は event lease を取得し、成功後にだけ acknowledge するため、session をまたいでも未処理状態を失わない。
 - local state は GlitchTip callback authority を持たない。GlitchTip Resolve は user が明示的に要求した verified flow でのみ、issue、permalink、PR body を再照合して実行する。

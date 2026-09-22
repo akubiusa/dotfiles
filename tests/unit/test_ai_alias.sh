@@ -108,7 +108,9 @@ mkdir -p "$CODEX_HOME/.local/share/chezmoi" "$CODEX_BIN"
 printf '#!/bin/bash\nexit 0\n' > "$CODEX_HOME/.local/share/chezmoi/update.sh"
 cat > "$CODEX_BIN/codex" <<'EOF'
 #!/bin/bash
-printf 'codex:%s\n' "$*" >> "$CODEX_LOG"
+printf 'codex' >> "$CODEX_LOG"
+printf ' <%s>' "$@" >> "$CODEX_LOG"
+printf '\n' >> "$CODEX_LOG"
 if [[ "$*" == "app-server daemon version" ]]; then
   if [[ "${FAKE_CODEX_DAEMON_STATUS:-running}" == "running" ]]; then
     printf '{"status":"running"}\n'
@@ -119,26 +121,51 @@ fi
 EOF
 chmod +x "$CODEX_HOME/.local/share/chezmoi/update.sh" "$CODEX_BIN/codex"
 export CODEX_LOG
+CODEX_WORKDIR="$TEST_ROOT/codex workdir"
+mkdir -p "$CODEX_WORKDIR"
+CODEX_OVERRIDE_DIR="$TEST_ROOT/codex-override"
 
 : > "$CODEX_LOG"
-HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--remote unix:// --yolo resume session-123" ]] || {
+(
+  cd "$CODEX_WORKDIR"
+  HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex resume session-123
+)
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <--cd> <$CODEX_WORKDIR> <resume> <session-123>" ]] || {
   echo "❌ running daemon did not route Codex TUI through unix remote"
   cat "$CODEX_LOG"
   exit 1
 }
 
 : > "$CODEX_LOG"
-HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=stopped codex resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--yolo resume session-123" ]] || {
+(
+  cd "$CODEX_WORKDIR"
+  HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=stopped codex resume session-123
+)
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--yolo> <resume> <session-123>" ]] || {
   echo "❌ stopped daemon did not fall back to local Codex TUI"
   cat "$CODEX_LOG"
   exit 1
 }
 
 : > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex --cd "$CODEX_OVERRIDE_DIR" resume session-123
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <--cd> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ explicit --cd was not preserved"
+  cat "$CODEX_LOG"
+  exit 1
+}
+
+: > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex -C "$CODEX_OVERRIDE_DIR" resume session-123
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--yolo> <-C> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ explicit -C was not preserved"
+  cat "$CODEX_LOG"
+  exit 1
+}
+
+: > "$CODEX_LOG"
 HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex app-server daemon version >/dev/null
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--yolo app-server daemon version" ]] || {
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--yolo> <app-server> <daemon> <version>" ]] || {
   echo "❌ app-server management command was unexpectedly remote-routed"
   cat "$CODEX_LOG"
   exit 1

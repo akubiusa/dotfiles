@@ -88,9 +88,36 @@ tmux_session_selector() {
   if [[ -n "$sessions" ]]; then
     local sname sattached swindows screated
     local attach_status pane_id cwd cmd display
+    local session_record numeric_check_name numeric_session_record sorted_numeric_sessions
+    local numeric_session_index=0
+    local -a session_records=() numeric_session_records=() sorted_numeric_session_records=()
 
-    while IFS='|' read -r sname sattached swindows screated; do
+    while IFS= read -r session_record; do
+      [[ -n "$session_record" ]] || continue
+      session_records+=("$session_record")
+      IFS='|' read -r numeric_check_name _ <<< "$session_record"
+      if [[ "$numeric_check_name" =~ ^[0-9]+$ ]]; then
+        numeric_session_records+=("$session_record")
+      fi
+    done <<< "$sessions"
+
+    if (( ${#numeric_session_records[@]} > 0 )); then
+      # tmux の数字名は辞書順で返るため、名前付きセッションを動かさず数字名だけを数値順にする。
+      sorted_numeric_sessions="$(printf '%s\n' "${numeric_session_records[@]}" | LC_ALL=C sort -s -t '|' -k1,1n)"
+      while IFS= read -r numeric_session_record; do
+        [[ -n "$numeric_session_record" ]] && sorted_numeric_session_records+=("$numeric_session_record")
+      done <<< "$sorted_numeric_sessions"
+    fi
+
+    for session_record in "${session_records[@]}"; do
+      IFS='|' read -r sname sattached swindows screated <<< "$session_record"
       [[ -n "$sname" ]] || continue
+
+      if [[ "$sname" =~ ^[0-9]+$ ]]; then
+        session_record="${sorted_numeric_session_records[$numeric_session_index]}"
+        numeric_session_index=$((numeric_session_index + 1))
+        IFS='|' read -r sname sattached swindows screated <<< "$session_record"
+      fi
 
       # 経過時間を短縮形で算出（例: 5s, 3m, 2h, 1d）
       # 行末ではなくコマンドの直後に配置することでモバイル幅でも見切れを防ぐ
@@ -146,7 +173,7 @@ tmux_session_selector() {
       # KEY は session_name。tmux のターゲット指定は "${session_name}:" で厳密に扱う
       # フィールド順: DISPLAY<TAB>TYPE<TAB>KEY<TAB>PANE_ID
       detailed_options+="$display"$'\t'"SESSION"$'\t'"$sname"$'\t'"$pane_id"$'\n'
-    done <<< "$sessions"
+    done
   fi
 
   # セッション0件でも必ず NEW を出す（即 new-session はしない）

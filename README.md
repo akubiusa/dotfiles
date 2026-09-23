@@ -4,7 +4,7 @@
 
 chezmoi 管理から削除・rename した旧ファイルは `home/.chezmoiremove` に旧 target path を記録し、次回の `chezmoi apply` / `chezmoi update` で自動削除します。Claude Code / Codex の session・cache・plugin などの runtime state は対象外です。
 
-AI CLI 起動時に `update.sh` が chezmoi を更新し、反映後に `~/.config/mise/config.toml` の宣言に対して `mise install` を実行します。更新は24時間に1回へ制限され、updater のロックにより同時実行は直列化されます。systemd による定期更新は dotfiles の管理対象外です。
+Linux では chezmoi 管理下の user-level systemd timer が `update.sh --force` を日次実行し、停止中に予定時刻を逃すと user manager の次回起動時に補完します。service は AI CLI 起動時の更新と共通の `flock` を使うため、同時実行は直列化されます。AI CLI 起動時の更新は24時間に1回へ制限され、反映後に `~/.config/mise/config.toml` の宣言に対して `mise install` を実行します。TTY がない更新では、ローカル変更された managed file を `~/.cache/chezmoi-update/drift-backups/` に権限 `0700` の日時付きディレクトリで退避してから反映します。退避は自動削除されません。
 
 ## インストール方法
 

@@ -17,7 +17,6 @@ tmux_session_selector() {
   TMUX_FZF_HEIGHT=${TMUX_FZF_HEIGHT:-60}           # fzf 高さ
   TMUX_PREVIEW_HEIGHT=${TMUX_PREVIEW_HEIGHT:-80%}  # プレビュー領域高さ（up:）
   TMUX_SESSION_DELAY=${TMUX_SESSION_DELAY:-1}      # NEW選択後の待ち（秒）
-  TMUX_MIN_WIDTH=${TMUX_MIN_WIDTH:-80}             # プレビュー有効化の最小幅（cols）
   TMUX_PATH_MAX=${TMUX_PATH_MAX:-60}               # cwd 表示の最大長（文字数）
 
   export TMUX_FZF_PREVIEW_LINES="$TMUX_PREVIEW_LINES"
@@ -25,10 +24,6 @@ tmux_session_selector() {
   # --- Dependency checks ---
   command -v tmux >/dev/null 2>&1 || { echo "tmux not found in PATH." >&2; return 1; }
   command -v fzf  >/dev/null 2>&1 || { echo "fzf not found in PATH."  >&2; return 1; }
-  command -v tput >/dev/null 2>&1 || { echo "tput not found in PATH." >&2; return 1; }
-
-  local terminal_width
-  terminal_width="$(tput cols 2>/dev/null || echo 80)"
 
   # --- Extensibility: load extra action providers ---
   _tmux_load_action_providers() {
@@ -197,30 +192,17 @@ tmux_session_selector() {
   # インタラクティブモードでは --no-sort の有無に関わらず選択結果は全フィールドを含む。
   # クエリ未入力時は全アイテムのスコアが 0 で安定ソートされ入力順が保たれる。
   local selected
-  if [[ "$terminal_width" -ge "$TMUX_MIN_WIDTH" ]]; then
-    selected="$(
-      printf "%s\n" "$detailed_options" | fzf \
-        --height="$TMUX_FZF_HEIGHT" \
-        --reverse \
-        --border \
-        --delimiter=$'\t' \
-        --with-nth=1 \
-        --prompt='Select session/action: ' \
-        --preview-window=up:"$TMUX_PREVIEW_HEIGHT":follow:wrap \
-        --preview "$preview_cmd"
-    )" || return 1
-  else
-    echo "Terminal width: ${terminal_width} (min: ${TMUX_MIN_WIDTH}) - Preview disabled" >&2
-    selected="$(
-      printf "%s\n" "$detailed_options" | fzf \
-        --height="$TMUX_FZF_HEIGHT" \
-        --reverse \
-        --border \
-        --delimiter=$'\t' \
-        --with-nth=1 \
-        --prompt='Select session/action: '
-    )" || return 1
-  fi
+  selected="$(
+    printf "%s\n" "$detailed_options" | fzf \
+      --height="$TMUX_FZF_HEIGHT" \
+      --reverse \
+      --border \
+      --delimiter=$'\t' \
+      --with-nth=1 \
+      --prompt='Select session/action: ' \
+      --preview-window=up:"$TMUX_PREVIEW_HEIGHT":follow:wrap \
+      --preview "$preview_cmd"
+  )" || return 1
 
   [[ -z "$selected" ]] && return 1
 

@@ -55,13 +55,6 @@ cat > "$CLAUDE_GLOBAL_CONFIG" <<'JSON'
 }
 JSON
 
-# dotfiles 管理から外した chezmoi updater unit は既存 target を保持する。
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-mkdir -p "$SYSTEMD_USER_DIR/timers.target.wants"
-printf 'local-service\n' > "$SYSTEMD_USER_DIR/chezmoi-update.service"
-printf 'local-timer\n' > "$SYSTEMD_USER_DIR/chezmoi-update.timer"
-ln -s ../chezmoi-update.timer "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
-
 # chezmoi apply を実行 (dry-run)
 if ! "$CHEZMOI_BIN" apply --dry-run --source="$SOURCE_DIR"; then
   echo "❌ chezmoi apply dry-run failed"
@@ -77,6 +70,22 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
 fi
 
 echo "✅ chezmoi apply passed"
+
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+if ! grep -Fq '/usr/bin/mkr wrap -n chezmoi-update -d -a -w -- %h/.local/share/chezmoi/update.sh --force' "$SYSTEMD_USER_DIR/chezmoi-update.service"; then
+  echo "❌ chezmoi-update.service was not deployed with the scheduled updater command"
+  exit 1
+fi
+if ! grep -Fq 'Persistent=true' "$SYSTEMD_USER_DIR/chezmoi-update.timer"; then
+  echo "❌ chezmoi-update.timer was not deployed as a persistent timer"
+  exit 1
+fi
+if [ ! -L "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer" ] \
+  || [ "$(readlink "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer")" != "../chezmoi-update.timer" ]; then
+  echo "❌ chezmoi-update.timer was not enabled by the expected symlink"
+  exit 1
+fi
+echo "✅ chezmoi updater systemd units deployed"
 
 if ! grep -Fq '"diffSidebarOpen": false' "$CLAUDE_GLOBAL_CONFIG"; then
   echo "❌ Claude diff sidebar setting was not disabled"
@@ -176,16 +185,6 @@ if ! grep -Fxq 'enabled' <<< "$NON_INTERACTIVE_ENV" \
   exit 1
 fi
 echo "✅ non-interactive Bash loads mise environment"
-
-TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
-if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
-  || [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.timer")" != "local-timer" ] \
-  || [ ! -L "$TIMER_WANTS_LINK" ] \
-  || [ "$(readlink "$TIMER_WANTS_LINK")" != "../chezmoi-update.timer" ]; then
-  echo "❌ existing unmanaged chezmoi updater systemd files were changed or removed"
-  exit 1
-fi
-echo "✅ existing unmanaged chezmoi updater systemd files were preserved"
 
 if [ ! -f "$HOME/.agents/skills/issue-pr/SKILL.md" ]; then
   echo "❌ Codex issue-pr skill not generated"

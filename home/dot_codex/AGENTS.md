@@ -12,6 +12,7 @@
 
 - ブランチは Conventional Branch の短縮形、コミットは Conventional Commits を使う。説明文の言語はリポジトリの指示に従い、未指定なら日本語にする。
 - SSH で push する。`GH_CONFIG_DIR`、`GIT_*`、`GIT_SSH_COMMAND` は許可なく変更せず、Git の username/email も変更しない。Renovate が作成した PR にはコミットしない。
+- SSH で `Bad owner or permissions on ...ssh_config...` が発生したら、`id` と `stat -L` で対象ファイルおよび symlink の実体の所有者・権限を確認し、`ssh -G <host>` で設定読み込み段階の失敗かを切り分ける。Codex sandbox が原因とは証拠なしに断定しない。`ssh -F "$HOME/.ssh/config"` は system-wide `/etc/ssh/ssh_config` を読み飛ばすため、`-F /dev/null` / `none` を使わない。per-user config が対象 host / alias を解決し、必要な system-wide alias・known-host・crypto policy 等が同等に設定されている、または不要と確認できる場合だけ、`ssh -F "$HOME/.ssh/config" -G <host>` と読み取り専用の接続確認を行う。確認できない、または検証が失敗する場合は設定を迂回せず、証拠とエラーを報告する。Git で同じ回避が必要かつ条件を確認できた場合は `git -c core.sshCommand="ssh -F \"$HOME/.ssh/config\"" <operation>` でそのコマンドに限り適用する。環境変数、永続的な SSH / Git 設定、ファイル所有者・権限、sandbox mode は変更しない。
 - 実装前に、リポジトリ構成、作業ブランチ、最新のリモート既定ブランチ、不要なローカルブランチ、必要な依存関係を確認する。調査目的の GitHub リポジトリは一時ディレクトリへ clone する。
 - コミット前に、秘密情報、lint/format エラー、必要な検証、期待どおりの動作を確認する。
 - PR 作成前に、ユーザーの依頼、秘密情報、競合リスク、変更内容に応じたローカルコードレビューを確認する。PR 作成先は `gh-pr-target-repo.sh` を優先し、GitHub の `upstream` remote があればそれを既定にする。

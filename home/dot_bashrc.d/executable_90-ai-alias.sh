@@ -99,7 +99,9 @@ codex() {
   # Codex CLI 自体は standalone installer が自前で自動更新するため update-ai-agents.sh の対象外
   ~/.local/share/chezmoi/update.sh
 
-  if _codex_is_direct_invocation "$@"; then
+  if [[ "${1:-}" == "agents" ]]; then
+    command codex "$@"
+  elif _codex_is_direct_invocation "$@"; then
     command codex --yolo "$@"
   elif _codex_app_server_running; then
     if _codex_is_resume_invocation "$@"; then

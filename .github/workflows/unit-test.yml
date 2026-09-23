@@ -71,6 +71,11 @@ jobs:
         background: true
         run: bash tests/unit/test_trilium_validation.sh
 
+      - name: Run tmux selector preview unit test
+        id: run-tmux-selector-preview-unit-test
+        background: true
+        run: bash tests/unit/test_tmux_selector_preview.sh
+
       - name: Wait for unit tests
         wait:
           - run-install-sh-unit-test
@@ -84,3 +89,4 @@ jobs:
           - run-powerline-daemon-launch-unit-test
           - run-pr-monitor-unit-test
           - run-trilium-validation-unit-test
+          - run-tmux-selector-preview-unit-test

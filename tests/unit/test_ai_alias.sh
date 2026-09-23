@@ -176,3 +176,12 @@ HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=runn
   exit 1
 }
 echo "✅ codex wrapper routing test passed"
+
+: > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex agents
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <agents>" ]] || {
+  echo "❌ agents command received wrapper-injected options"
+  cat "$CODEX_LOG"
+  exit 1
+}
+echo "✅ codex agents command bypasses wrapper-injected options"

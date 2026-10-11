@@ -32,22 +32,22 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-completion.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/deep-review-require-fixes.sh",
-            "onFailure": "fail"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/require-review-thread-fixes.sh",
-            "onFailure": "fail"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -59,7 +59,7 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -71,7 +71,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-askuserquestion.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       },
@@ -81,12 +81,12 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/rtk-rewrite.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "~/.claude/hooks/git-config-guard.sh",
-            "onFailure": "fail"
+            "onFailure": "block"
           }
         ]
       }
@@ -98,12 +98,12 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/deep-review-immediate-fix.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-post-tool-use.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       },
@@ -113,7 +113,7 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/trust-worktree-cwd.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -125,7 +125,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-permission-request.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -137,7 +137,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-notification.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -149,7 +149,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-user-prompt-submit.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }

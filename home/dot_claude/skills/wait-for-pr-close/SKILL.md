@@ -19,8 +19,8 @@ This only works while the current session stays alive — see Notes.
 
 Resolve `OWNER`, `REPO`, `PR_NUMBER` from the caller's context. Pass the
 repository explicitly whenever the target PR lives in a different
-repository than the local `origin` (the fork scenario from Issue #171 —
-`issue-pr`'s Phase 18 always resolves this as `$ISSUE_OWNER/$ISSUE_REPO`).
+repository than the local `origin` (the fork scenario — `issue-pr-deep` and `issue-pr-lite` always pass
+`$ISSUE_OWNER/$ISSUE_REPO`).
 
 Validate the resolved values before using them below — they end up
 embedded directly in a script that `Monitor` executes, so an unvalidated
@@ -134,7 +134,7 @@ Monitor({
   including the last captured error — to the Monitor's stdout, so a
   failure streak is never silent, then resets the counter and keeps
   polling.
-- Each poll now fetches `mergeable`/`mergeStateStatus` alongside `state` in the same `gh pr view` call. A transition into `mergeable == "CONFLICTING"` emits a `pr_conflict_detected` event and a Discord notification, but does **not** `break` the loop — conflict detection runs alongside close detection, not instead of it. Re-notification is suppressed by comparing against the previous poll's `mergeable` value, the same de-duplication pattern `pr-health-monitor`'s CI-check Monitor uses for its `prev`/`cur` comparison.
+- Each poll fetches `mergeable`/`mergeStateStatus` alongside `state` in the same `gh pr view` call. A transition into `mergeable == "CONFLICTING"` emits a `pr_conflict_detected` event and a Discord notification, but does **not** `break` the loop — conflict detection runs alongside close detection, not instead of it. Re-notification is suppressed by comparing against the previous poll's `mergeable` value, the same de-duplication pattern `pr-health-monitor`'s CI-check Monitor uses for its `prev`/`cur` comparison.
 
 ### Step 2: On Detection
 
@@ -149,9 +149,4 @@ When the monitor emits a `pr_conflict_detected` event, the caller (the session t
 - Do not ask the user for confirmation before starting the monitor.
 - This only detects closure while the current session is alive. If the
   session ends first, the monitor is lost — the user must run
-  `/pr-cleanup <PR number or URL>` manually later. This mirrors the
-  previous tmux-based design's real-world limitation (a terminated tmux
-  session could not be revived either), so it is not a regression.
-- No lock file / flock is used — Step 0's one-time state check replaces
-  it, since a `Monitor` loop only needs to run once per PR within a given
-  session.
+  `/pr-cleanup <PR number or URL>` manually later.

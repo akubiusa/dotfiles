@@ -78,7 +78,7 @@ To check for child tickets, use the JQL `parent = <ISSUE_KEY>` instead of the `s
 Use the AskUserQuestion tool only if there are unknowns.
 Do not ask "Is this plan okay?" — that is ExitPlanMode's role.
 
-AskUserQuestion limits: roughly 4-6 calls per session, each question times out after 60 seconds, and it cannot be used from sub-agents via the Task tool.
+AskUserQuestion cannot be used from sub-agents; if a sub-agent hits a real question, it reports it back and the main agent asks.
 
 ### Phase 4: Check External Specs
 
@@ -125,9 +125,14 @@ Create in the following format:
 
 ### Phase 6: Upload to Trilium and Post Comment to Jira Ticket
 
-Invoke the `trilium` skill (via the Skill tool) to upload the requirements document,
-passing the file path and a slug of `requirements-<ticket-key>` (lowercased, symbols
-normalized to `-`). Capture the returned share URL.
+Invoke the `trilium` skill (via the Skill tool) to upload the requirements document.
+Pass the file path, docType `spec`, topic = the lowercased ticket key (e.g. `proj-123`),
+noteId = `spec_` plus the lowercased ticket key with `-` replaced by `_` (e.g.
+`spec_proj_123`), and title `<ticket-key> Requirements`. These satisfy the skill's
+constraints (noteId `^[a-zA-Z0-9_]{4,32}$`, topic `^[a-zA-Z0-9_-]{1,25}$`) for the usual
+`<PROJECT>-<number>` key. The skill's pre-upload confirmation applies, so ask the user
+before the upload unless they already explicitly asked for it. Capture the returned
+share URL.
 
 Then post a short summary plus the share URL as the ticket comment — not the full
 document body — with the MCP tool `mcp__atlassian__addCommentToJiraIssue`.
@@ -204,11 +209,11 @@ Determine the branch type from the Jira issue type:
 
 ### Create Branch
 
-Prefer `origin/master`, falling back to the default branch if it doesn't exist:
+Branch from the latest remote default branch:
 
 ```bash
 git fetch --all --prune
-git checkout -b <branch_name> origin/master
+git checkout -b <branch_name> origin/HEAD
 ```
 
 Branch name follows Conventional Branch (e.g. `feat/add-user-authentication`).
@@ -289,7 +294,7 @@ without parsing the transcript:
 
 ```bash
 mkdir -p ~/.claude/data && chmod 700 ~/.claude/data
-PR_URL=$(gh pr view --json url -q .url)
+PR_URL=$(gh pr view ${REPO:+--repo "$REPO"} --json url -q .url)
 if [ -z "$PR_URL" ]; then
   echo "ERROR: gh pr view returned an empty URL, not writing session-state.json" >&2
   exit 1

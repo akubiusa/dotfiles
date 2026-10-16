@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # Stop hook: セッション終了時に deep-review / lite-review の未対応指摘が残っていないか検証する。
-# deep-review は ledger (ledger.sh が書き込む) を直接読んで判定する。
-# lite-review のみ、PostToolUse フックが書き出した旧ステートファイル
-# (~/.claude/data/deep-review-state-*.json) で判定する。
+# deep-review / lite-review は ledger (ledger.sh が書き込む) を直接読んで判定する。
+# 旧ステートファイル (~/.claude/data/deep-review-state-*.json) は後方互換のため残している。
 # ledger もステートファイルも存在しない場合はブロックしない（セッション内でどちらも未実行）。
 
 STATE_DIR="$HOME/.claude/data"
@@ -24,7 +23,7 @@ else
     STATE_FILE="$STATE_DIR/deep-review-state.json"
 fi
 
-# deep-review は ledger を直接読んで判定する。fix モードで open な merge-blocker が残っている場合のみブロックする。
+# deep-review / lite-review は ledger を直接読んで判定する。fix モードで open な merge-blocker が残っている場合のみブロックする。
 # ledger なし・schema/session 不一致・TTL 超過・破損は非ブロック。
 if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
     LEDGER="${DEEP_REVIEW_DATA_DIR:-$STATE_DIR}/deep-review-ledger-${SESSION_ID}.json"
@@ -34,7 +33,7 @@ if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
             then [.findings[] | select(.class == "merge-blocker" and .status == "open")] | length
             else 0 end' "$LEDGER" 2>/dev/null); then
             if [[ "$COUNT" -gt 0 ]]; then
-                REASON="⚠️ deep-review (fix モード) で ${COUNT} 件の未解決のマージ前必須指摘が残っています。
+                REASON="⚠️ review (fix モード) で ${COUNT} 件の未解決のマージ前必須指摘が残っています。
 
 対応手順:
 1. ledger の open な merge-blocker 指摘をすべて確認する
@@ -50,7 +49,7 @@ if [[ "$SESSION_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
     fi
 fi
 
-# 以降は lite-review 用の旧ステートファイル判定。
+# 以降は旧ステートファイル判定 (後方互換)。
 # ステートファイルが存在しない → このセッションで deep-review / lite-review 未実行 → ブロックしない
 if [[ ! -f "$STATE_FILE" ]]; then
     exit 0

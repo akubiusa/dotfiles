@@ -1,6 +1,6 @@
 ---
 name: plan-reviewer
-description: Reviews a plan document (.agent-work/plans/*.md) for placeholders, contradictions, missing coverage, missing code blocks, and mid-sentence line breaks, then fixes issues in place. Use after writing a plan file, before the user reviews it.
+description: Reviews a plan document (.agent-work/plans/*.md) for placeholders, contradictions, missing coverage, missing exact values for fragile items (signatures, schemas, migration/rollback commands), and mid-sentence line breaks, then fixes issues in place. Use after writing a plan file, before the user reviews it.
 tools: Read, Edit, SendMessage, Bash
 model: sonnet
 ---

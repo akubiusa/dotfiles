@@ -63,9 +63,11 @@ sub-agent's own "done" or "tests pass" self-report as completion evidence.
 
 ## Phase 6: Lite Review
 
-Run `/lite-review` (no arguments — local diff mode). Fix every finding
-scored ≥ 50 before moving on to Phase 7. This replaces `issue-pr-deep`'s
-Phase 13 `/deep-review` gate — the lite path always uses `/lite-review`.
+Run `/lite-review` (no arguments — local diff mode). Resolve every
+verified merge-blocker finding before moving on to Phase 7. This replaces
+`issue-pr-deep`'s Phase 13 `/deep-review` gate — the lite path always uses
+`/lite-review`. This is a deliberate, user-approved exception to the global
+pre-PR rule of running `/deep-review --fix`.
 
 ## Phase 7: Create PR
 

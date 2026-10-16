@@ -34,9 +34,7 @@ PR_ARG="$ARGUMENTS"
 # `gh repo view`. When both `origin` and `upstream` remotes exist (the
 # fork scenario), `gh repo view` with no repository argument resolves
 # ambiguously and can silently return `upstream`'s owner/repo instead of
-# `origin`'s — this previously broke the Step 4 fork check (it read
-# `upstream`'s own `parent`, which is `null`, and concluded `origin` wasn't
-# a fork when it actually was). `--origin` bypasses the script's default
+# `origin`'s. `--origin` bypasses the script's default
 # upstream-preferring resolution and always targets `origin` specifically,
 # which is what this skill's fork-detection genuinely needs.
 ORIGIN_REPO_FULL=$(gh-pr-target-repo.sh --origin)
@@ -79,8 +77,9 @@ HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefName -q .
 ```
 
 - **If this session's `EnterWorktree` created the worktree for `HEAD_REF`**
-  (i.e. you got here via Phase 18 of `issue-pr` continuing in the same
-  session, without a session break): call
+  (i.e. you got here from the `wait-for-pr-close` monitor started by
+  `issue-pr-deep`/`issue-pr-lite` in the same session, without a session
+  break): call
   `ExitWorktree(action: "remove", discard_changes: true)`. Passing
   `discard_changes: true` without re-confirming with the user is safe and
   required here — Step 1 already confirmed the PR is `MERGED`/`CLOSED`, so
@@ -128,7 +127,7 @@ report cleanup as complete when the local checkout may still be out of sync.
 
 This always targets the local `origin`'s default branch — even when the PR
 itself was created against a different repository (the fork/upstream
-scenario from Issue #171), the worktree/branch being cleaned up lives in
+scenario), the worktree/branch being cleaned up lives in
 the local checkout, which is always `origin`.
 
 ## Step 4: Sync the Fork (if applicable)

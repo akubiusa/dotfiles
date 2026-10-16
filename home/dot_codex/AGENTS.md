@@ -33,7 +33,7 @@
 - ユーザーへの確認は `request_user_input` ツールを使う。要件が複数に解釈できるときは、勝手に選ばない。
 - Markdown の段落途中で手動改行しない。箇条書き、表、見出し、コードブロックはこの制約の対象外とする。
 - GitHub Issue に紐付く仕様・計画・調査の成果物は、秘密情報を確認した上で Issue コメントへ投稿し、投稿後は URL のみを報告する。別々の文書は別コメントにし、更新時はそのコメント ID を指定する。Issue と無関係な文書の保存先は、利用可能な skill またはユーザーの指示に従う。
-- `docs/superpowers/specs/` または `docs/superpowers/plans/` を作成・更新した後、ユーザーへ提示する前に `spec_reviewer` または `plan_reviewer` agent にレビューと修正を依頼する。これらのローカル成果物が ignore 対象なら force-add しない。
+- `.agent-work/specs/` または `.agent-work/plans/` を作成・更新した後、ユーザーへ提示する前に `spec_reviewer` または `plan_reviewer` agent にレビューと修正を依頼する。これらのローカル成果物が ignore 対象なら force-add しない。
 
 変更対象に応じて、以下の reference を先に読む。
 

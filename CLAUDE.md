@@ -75,7 +75,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
   - `README.md`: 利用者向けの手順・機能説明。
   - `CLAUDE.md`: Claude Code 向けの作業方針(このファイル)。
   - `.github/copilot-instructions.md`: GitHub Copilot のコードレビュー観点。
-- エージェント向けの指示は `CLAUDE.md` と `.github/copilot-instructions.md` の 2 点に集約する(旧 `AGENTS.md` は廃止済み)。
+- リポジトリ向けのエージェント指示は `CLAUDE.md` と `.github/copilot-instructions.md` の 2 点に集約する(リポジトリ直下の `AGENTS.md` は置かない)。Codex CLI のグローバル指示は `home/dot_codex/AGENTS.md`(デプロイ後 `~/.codex/AGENTS.md`)で別管理する。
 
 ## リポジトリ固有
 
@@ -95,7 +95,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 Claude Code のフックは `home/dot_claude/private_settings.json` で設定され、`Stop` / `SubagentStop` / `PreToolUse` / `PostToolUse` / `PermissionRequest` / `Notification` / `UserPromptSubmit` を使う。役割は大きく 2 系統:
 
 - **Discord 通知**: `home/dot_claude/scripts/completion-notify/` 配下のスクリプト(セッション完了、権限リクエスト、AskUserQuestion、Notification 等)。`~/.env` の `DISCORD_CLAUDE_WEBHOOK` と `DISCORD_CLAUDE_MENTION_USER_ID` を使用する。
-- **レビュー強制など**: `home/dot_claude/hooks/` 配下のスクリプト(deep-review(既定は review モードでブロックせず、`--fix` モードの ledger に未解決の マージ前必須 指摘がある場合だけブロックする。`lite-review` はスコアに基づく)、レビュースレッド未解決チェック、rtk 書き換え、git config ガード等)。加えて `executable_detect-leaked-toolcall.sh` は、レビュー強制とは別の関心事として、アシスタントメッセージへのツールコール XML マークアップの漏洩を `Stop` / `SubagentStop` の両方で検出する。
+- **レビュー強制など**: `home/dot_claude/hooks/` 配下のスクリプト(deep-review(既定は review モードでブロックせず、`--fix` モードの ledger に未解決の マージ前必須 指摘がある場合だけブロックする。`lite-review` も同じ ledger で判定する)、レビュースレッド未解決チェック、rtk 書き換え、git config ガード等)。加えて `executable_detect-leaked-toolcall.sh` は、レビュー強制とは別の関心事として、アシスタントメッセージへのツールコール XML マークアップの漏洩を `Stop` / `SubagentStop` の両方で検出する。
 
 フックのコマンドや対象スクリプトを変更したときは、`tests/unit/test_hooks.sh` / `test_notifications.sh` の参照が古くなっていないか確認する。
 

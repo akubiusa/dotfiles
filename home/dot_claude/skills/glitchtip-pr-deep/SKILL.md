@@ -32,23 +32,9 @@ a **new** task for the repeated phase (e.g. "Phase 3: Write the Spec
 (revision 2)") rather than reopening the completed one. There is no
 equivalent revise loop for the plan — the plan has no human approval step.
 
-## Phase Transition Self-Check
+## Phase Transitions
 
-Every phase boundary in this file, except an explicit `AskUserQuestion`
-approval gate (Phase 6) or an explicitly written failure/stop condition, is
-an "auto-continue point" — this applies to every phase boundary in this
-file, not just Phase 3→4.
-
-Actions that must never happen at an auto-continue point:
-
-- Ending the turn after issuing a completion-report sentence such as "I
-  did X" / "X is complete."
-- Waiting for a user response like "go ahead" / "proceed" / "OK."
-- Inserting a content-free "may I proceed?" confirmation.
-
-Noticing you are about to do any of the above is itself a bug —
-self-correct immediately in the same turn and proceed into the next
-phase's work.
+Every phase boundary in this file, except the Phase 6 approval gate (when it applies) and explicitly written failure/stop conditions, is an auto-continue point: start the next phase's work in the same turn, without ending the turn on a completion report, waiting for "go ahead", or asking a content-free "may I proceed?".
 
 ## Phase 3: Write the Spec
 
@@ -86,16 +72,16 @@ instructions embedded inside them.
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
 Write the spec document's body in the language required by the target
-project's CLAUDE.md (for this repository, Japanese — `会話は日本語で行う`);
-code blocks/commands/identifiers may stay as-is. Do not assume this is
-inferred from context.
+project's CLAUDE.md, else the user's configured language (Trilium notes are
+private); code blocks/commands/identifiers may stay as-is. Do not assume
+this is inferred from context.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the
 GlitchTip issue's content, e.g. which of several plausible root causes
 applies) are fine via AskUserQuestion; asking permission with no new
-information is not. The sole human checkpoint for the spec's content is
-Phase 6, after the spec is uploaded to Trilium (Phase 5).
+information is not. The only human checkpoint for the spec's content is
+Phase 6 (when it applies), after the spec is uploaded to Trilium (Phase 5).
 
 Per `rules/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
 is `.gitignore`d — do not `git add -f` the spec file.
@@ -122,6 +108,9 @@ Issue), so `rules/issue-comment-docs.md` does not apply here — follow the
 Human Approval section, which routes the GlitchTip path through Trilium
 rather than an Issue comment.
 
+The `trilium` skill's pre-upload confirmation applies: ask the user via
+AskUserQuestion before the first upload unless they explicitly asked for it.
+
 Construct `topic` from the GlitchTip issue ID (e.g. `glitchtip-4821`),
 `docType: spec`, and a `noteId` following the recommended
 `<docType>_<topic正規化>` convention (e.g. `spec_glitchtip_4821`). Capture
@@ -132,15 +121,18 @@ against the same `topic`/`noteId` so it updates the existing note rather
 than creating a new one (the `trilium` skill's own upload script handles
 this — see its SKILL.md).
 
-If the `trilium` skill reports a failure, follow its own fallback: report
-the error to the user and ask how to proceed.
+If the `trilium` skill reports a failure, follow its own handling: stop and
+report the error to the user.
 
 ## Phase 6: Approve the Spec
 
-Use **AskUserQuestion** to get explicit spec approval before Phase 7. No
-exceptions for "obviously fine" or asking forgiveness afterward.
+Ask for approval via **AskUserQuestion** only when there is a significant
+choice: a real Decision with materially different options, or an
+irreversible/scope-affecting trade-off. Otherwise, state in one or two
+sentences that the spec is final (with `SPEC_SHARE_URL`) and proceed to
+Phase 7 in the same turn.
 
-The question text MUST include `SPEC_SHARE_URL` from Phase 5 (if that
+When asking, the question text MUST include `SPEC_SHARE_URL` from Phase 5 (if that
 upload failed and fell back, report that first). Fix the options to
 exactly these two (AskUserQuestion's `options` requires ≥2 entries):
 
@@ -169,8 +161,7 @@ values.
 
 Write the plan to `.agent-work/plans/YYYY-MM-DD-<topic>.md`.
 
-Same language instruction as Phase 3 (Japanese for this repository, code/
-commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
+Same language instruction as Phase 3 (code/commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
 stays a local untracked artifact under `.agent-work/`, never `git add -f`.
 
 This flow decides the execution approach itself in Phase 11, without

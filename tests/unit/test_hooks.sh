@@ -761,11 +761,26 @@ done
 assert_dr_hook pass "deep-review with only 'Score: 90' in tool_response does not block" \
   "$DR_IMMEDIATE" "$(dr_immediate_input s-score deep-review 'Score: 90')"
 
-# lite-review は従来どおり Score 抽出 + 旧 state で判定する
-assert_dr_hook block "lite-review immediate-fix still blocks on Score >= 50" \
-  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review 'Score: 90')"
-assert_dr_hook block "lite-review Stop still blocks via legacy state" \
+# lite-review も deep-review と同じ ledger で判定する
+assert_dr_hook pass "lite-review with only 'Score: 90' in tool_response does not block" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite-score lite-review 'Score: 90')"
+dr_ledger init s-lite fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-lite "$(dr_finding k1)" >/dev/null
+assert_dr_hook block "lite-review immediate-fix blocks on fix-mode ledger with open blocker" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review)"
+assert_dr_hook block "lite-review Stop blocks on fix-mode ledger with open blocker" \
   "$DR_STOP" '{"session_id":"s-lite"}'
+dr_ledger set-status s-lite 1 fixed abc verified >/dev/null
+assert_dr_hook pass "lite-review immediate-fix does not block after blocker is resolved" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review)"
+assert_dr_hook pass "lite-review Stop does not block after blocker is resolved" \
+  "$DR_STOP" '{"session_id":"s-lite"}'
+
+# 旧 state (lite-review, Score ベース) は後方互換として Stop が引き続きブロックする
+jq -nc --argjson t "$(date +%s)" '{session_id: "s-lite-old", skill: "lite-review", timestamp: $t, high_score_count: 2, max_score: 90}' \
+  > "$DR_DATA/deep-review-state-s-lite-old.json"
+assert_dr_hook block "lite-review Stop still blocks via legacy state (compat)" \
+  "$DR_STOP" '{"session_id":"s-lite-old"}'
 
 rm -rf "$DR_HOME"
 

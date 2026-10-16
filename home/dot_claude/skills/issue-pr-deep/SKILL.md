@@ -36,23 +36,9 @@ Once a phase's task is marked `completed`, immediately mark the next
 phase's task `in_progress` in the same turn and start that work — do not
 end the turn after marking `completed` and defer starting the next task.
 
-## Phase Transition Self-Check
+## Phase Transitions
 
-Every phase boundary in this file, except an explicit `AskUserQuestion`
-approval gate (Phase 6) or an explicitly written failure/stop condition, is
-an "auto-continue point" — this applies to every phase boundary in this
-file, not just Phase 3→4.
-
-Actions that must never happen at an auto-continue point:
-
-- Ending the turn after issuing a completion-report sentence such as "I
-  did X" / "X is complete."
-- Waiting for a user response like "go ahead" / "proceed" / "OK."
-- Inserting a content-free "may I proceed?" confirmation.
-
-Noticing you are about to do any of the above is itself a bug —
-self-correct immediately in the same turn and proceed into the next
-phase's work.
+Every phase boundary in this file, except the Phase 6 approval gate (when it applies) and explicitly written failure/stop conditions, is an auto-continue point: start the next phase's work in the same turn, without ending the turn on a completion report, waiting for "go ahead", or asking a content-free "may I proceed?".
 
 ## Phase 3: Write the Spec
 
@@ -84,16 +70,16 @@ Alternative Exploration, and Spec Synthesis sections:
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
 Write the spec document's body in the language required by the target
-project's CLAUDE.md (for this repository, Japanese — `会話は日本語で行う`);
-code blocks/commands/identifiers may stay as-is. Do not assume this is
-inferred from context.
+project's CLAUDE.md (English if it specifies none, per
+`rules/issue-comment-docs.md`); code blocks/commands/identifiers may stay
+as-is. Do not assume this is inferred from context.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the
 Issue's request, i.e. a genuine Decision) are fine via AskUserQuestion;
-asking permission with no new information is not. The sole human
-checkpoint for the spec's content is Phase 6, after the spec is posted as
-an Issue comment.
+asking permission with no new information is not. The only human
+checkpoint for the spec's content is Phase 6 (when it applies), after the
+spec is posted as an Issue comment.
 
 Per `rules/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
 is `.gitignore`d — do not `git add -f` the spec file.
@@ -142,10 +128,13 @@ If `gh issue comment` / `gh api` fails, follow
 
 ## Phase 6: Approve the Spec
 
-Use **AskUserQuestion** to get explicit spec approval before Phase 7. No
-exceptions for "obviously fine" or asking forgiveness afterward.
+Ask for approval via **AskUserQuestion** only when there is a significant
+choice: a real Decision with materially different options, or an
+irreversible/scope-affecting trade-off. Otherwise, state in one or two
+sentences that the spec is final (with `SPEC_COMMENT_URL`) and proceed to
+Phase 7 in the same turn.
 
-The question text MUST include `SPEC_COMMENT_URL` from Phase 5 (if that post
+When asking, the question text MUST include `SPEC_COMMENT_URL` from Phase 5 (if that post
 failed and fell back, report that first). Fix the options to exactly these
 two (AskUserQuestion's `options` requires ≥2 entries):
 
@@ -174,8 +163,7 @@ values.
 
 Write the plan to `.agent-work/plans/YYYY-MM-DD-<topic>.md`.
 
-Same language instruction as Phase 3 (Japanese for this repository, code/
-commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
+Same language instruction as Phase 3 (code/commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
 stays a local untracked artifact under `.agent-work/`, never `git add -f`.
 
 This flow decides the execution approach itself in Phase 11, without
@@ -296,7 +284,7 @@ Give the sub-agent's dispatch prompt:
   count-open-blockers <that SID>` (the integer count of open merge-blocker
   findings).
 
-Because this dispatch uses the `Agent` tool rather than the `Skill` tool, the PostToolUse/Stop hooks that normally enforce ADR-003 do not fire for it (they key off the `Skill` tool call and the parent's own session id — see the spec's Constraints & Established Facts). This step's own completion check substitutes for that automatic block: **the parent must not proceed to Phase 14 until the sub-agent's final report shows an open merge-blocker count of 0.** If the count is not 0, or the report omits it, treat Phase 13 as incomplete — do not proceed to Phase 14; report the outstanding count and the ledger session id to the user instead.
+Because this dispatch uses the `Agent` tool rather than the `Skill` tool, the PostToolUse/Stop hooks that normally enforce ADR-003 do not fire for it (they key off the `Skill` tool call and the parent's own session id). This step's own completion check substitutes for that automatic block: **the parent must not proceed to Phase 14 until the sub-agent's final report shows an open merge-blocker count of 0.** If the count is not 0, or the report omits it, treat Phase 13 as incomplete — do not proceed to Phase 14; report the outstanding count and the ledger session id to the user instead.
 
 After receiving the sub-agent's report, the parent session must independently run `~/.agents/skills/deep-review/scripts/ledger.sh count-open-blockers <SID>` itself via Bash, using the session ID from the report, and gate progression to Phase 14 on that independently-obtained count rather than on the sub-agent's stated figure. If the two counts disagree, or the independently-obtained count is nonzero, do not proceed to Phase 14 — report the discrepancy or the outstanding blockers to the user instead.
 
@@ -403,14 +391,12 @@ Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed
 state check, then `Monitor(..., persistent: true)`), always passing
 `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — this matters even in the
 non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not
-necessarily the local `origin` (the fork scenario from Issue #171).
+necessarily the local `origin`.
 
-This does not require tmux or a fresh session: when the monitor emits a
-`pr_closed` event, call `/pr-cleanup` directly in this same conversation.
-If this session ends before the PR is merged or closed, the wait is lost
-and the user must run `/pr-cleanup <PR number or URL>` manually later —
-this is an accepted limitation (see the design spec behind Issue #200 for
-rationale), not a regression from the previous tmux-based design.
+The monitor runs in this session: when it emits a `pr_closed` event, call
+`/pr-cleanup` directly in this same conversation. If this session ends
+before the PR is merged or closed, the wait is lost and the user must run
+`/pr-cleanup <PR number or URL>` manually later.
 
 The `issue-pr-deep` flow is considered complete once this monitor is running.
 
@@ -429,6 +415,6 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - The plan has no human approval step by design: Phase 8's dispatched `plan-reviewer` sub-agent
   review and Phase 9's Issue-comment posting already surface the plan's content for
   review/record before implementation starts, so an additional explicit `AskUserQuestion`
-  gate (the old Phase 10) was removed as redundant. If a plan needs correction after Phase 9,
+  gate is not needed. If a plan needs correction after Phase 9,
   treat it the same as any other implementation issue found during Phase 11 (Execute the
   Plan) rather than reopening an approval loop.

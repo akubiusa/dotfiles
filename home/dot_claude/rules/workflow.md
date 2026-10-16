@@ -47,7 +47,7 @@ Rules and checklists for the full development workflow.
 1. User has requested PR creation.
 2. No sensitive information.
 3. No conflict risk.
-4. Run `/deep-review --fix` (local diff mode) — resolve all merge-blocker findings.
+4. Run `/deep-review --fix` (local diff mode) — resolve all merge-blocker findings. Exception: the lite paths (`issue-pr-lite`, `glitchtip-pr-lite`) run `/lite-review` instead.
 
 ## Post-PR checklist
 

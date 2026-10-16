@@ -42,3 +42,28 @@ Rules that apply regardless of language.
   - **Test code** expresses *what*: test/spec names and assertions state the behavior being verified, not the internal implementation steps.
   - **Commit messages** express *why*: the description/body explains the motivation/reasoning for the change. The diff itself already shows *what* changed — do not restate it.
 - Never leave edit-history notes (e.g. "Deleted X") in code — history belongs in commit messages / PRs
+
+## Failure Handling
+
+- Do not hide bugs behind fallbacks: no `config.port ?? 8080` for required config, no silent default in an "unreachable" branch — assert or throw instead.
+- Never write an empty catch block, and do not catch errors that indicate programmer bugs.
+- Validate with strict schemas at IO boundaries (file, network, IPC, user input) and reject bad data with specifics instead of repairing it; past the boundary, trust the data.
+- Every raised error names what went wrong and the offending values (`Unknown effect type "reverb2"`, not `invalid input`).
+- Gate-then-commit chains must abort on failure: `check && commit`, never `check; commit`.
+
+## Testing
+
+- Assert exact expected values and exact error messages, not loose predicates such as "contains 'error'".
+- Never make a test pass by weakening its assertions; a failing test is information, so first decide whether the code or the test's expectation is wrong, and state why when you change the test.
+- Every "never"/"always" claim in a comment or commit message should exist as a test (property-based where the input domain allows).
+- A comparison or golden-output test must be sensitive to the behavior under test: inspect what the fixture actually produces and confirm a plausible bug would change it.
+- Every test run must be bounded and exit; leave no watch modes, dev servers, or background processes behind.
+
+## Editing
+
+- Do not do mass edits with a regex; searching by pattern is fine, but read and change each site deliberately, since identical text can mean different things.
+- Before writing a new function or pattern, search for an existing one and reuse it; if you find two near-duplicates, unifying them is part of the task.
+- When replacing code, remove the old code in the same commit (no commented-out blocks, `-old`/`-v2` files, or unused exports).
+- Do not add an abstraction until a second real use exists, and do not add options or fallback paths that nothing uses.
+- Outside TypeScript (where `coding-ts.md` governs `any`), do not silence the type checker (unchecked casts, `unsafe`, `# type: ignore`) without a comment stating why it is safe.
+- Stage explicit paths when committing (no `git add -A` / `git add .`) and read `git status` first.

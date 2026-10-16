@@ -37,6 +37,16 @@ STALE_TARGETS=(
   "$HOME/.claude/commands/issue-pr.md"
   "$HOME/.codex/hooks/tmux-ipc-check.sh"
   "$HOME/bin/tmux-ipc-send.sh"
+  "$HOME/.claude/rules/workflow.md"
+  "$HOME/.claude/rules/workflow-sub-agents.md"
+  "$HOME/.claude/rules/design-workflow.md"
+  "$HOME/.claude/rules/issue-comment-docs.md"
+  "$HOME/.claude/skills/deep-review/reviewers/g-performance.md"
+  "$HOME/.claude/skills/deep-review/reviewers/h-error-handling.md"
+  "$HOME/.claude/skills/deep-review/reviewers/i-type-design-tests.md"
+  "$HOME/.agents/skills/deep-review/reviewers/g-performance.md"
+  "$HOME/.agents/skills/deep-review/reviewers/h-error-handling.md"
+  "$HOME/.agents/skills/deep-review/reviewers/i-type-design-tests.md"
 )
 for target in "${STALE_TARGETS[@]}"; do
   mkdir -p "$(dirname "$target")"
@@ -400,7 +410,7 @@ for skill in "${CLAUDE_WORKFLOW_SKILLS[@]}"; do
   done
 done
 
-for rule in "$HOME/.claude/rules/"*.md; do
+for rule in "$HOME/.claude/rules/"*.md "$HOME/.claude/docs/"*.md; do
   for invocation in "${SUPERPOWERS_INVOCATIONS[@]}"; do
     if grep -Fq "$invocation" "$rule"; then
       echo "❌ Stale $invocation invocation still present in $rule"
@@ -415,6 +425,30 @@ if [ -f "$HOME/.claude/rules/superpowers.md" ]; then
 fi
 
 echo "✅ No superpowers: invocation remains in active Claude workflow"
+
+# オンデマンド参照の workflow 系文書は docs/ にのみ展開され、常時ロードされる rules/ に残らないこと。
+for doc in workflow workflow-sub-agents design-workflow issue-comment-docs; do
+  if [ ! -f "$HOME/.claude/docs/$doc.md" ] || [ -f "$HOME/.claude/rules/$doc.md" ]; then
+    echo "❌ $doc.md must be deployed under docs/ and not under rules/"
+    exit 1
+  fi
+done
+
+# 旧レビュアーは STALE_TARGETS で事前配置済みのため、ここで残っていれば .chezmoiremove の登録漏れを意味する。
+for reviewer in g-performance h-error-handling i-type-design-tests; do
+  if [ -f "$HOME/.claude/skills/deep-review/reviewers/$reviewer.md" ] \
+    || [ -f "$HOME/.agents/skills/deep-review/reviewers/$reviewer.md" ]; then
+    echo "❌ merged reviewer $reviewer.md still deployed"
+    exit 1
+  fi
+done
+if [ ! -f "$HOME/.claude/skills/deep-review/reviewers/g-performance-errors-types.md" ] \
+  || [ ! -f "$HOME/.agents/skills/deep-review/reviewers/g-performance-errors-types.md" ]; then
+  echo "❌ merged reviewer g-performance-errors-types.md not deployed"
+  exit 1
+fi
+
+echo "✅ On-demand docs and merged reviewers deployed at their new paths"
 
 # Superpowers plugin が展開後 settings.json (private_settings.json から生成) で
 # enabled でないこと。
@@ -454,7 +488,7 @@ for skill in "${DEEP_WORKFLOW_SKILLS[@]}"; do
     '## Phase 4: Review the Spec' \
     'Ask for approval via **AskUserQuestion** only when there is a significant' \
     '## Phase 8: Review the Plan' \
-    'Decide the execution approach yourself, per `rules/design-workflow.md`' \
+    'Decide the execution approach yourself, per `~/.claude/docs/design-workflow.md`' \
     'Final Evidence Gate (Prompt-Only Contract)' \
     '## Phase 13: Deep Review'
 done

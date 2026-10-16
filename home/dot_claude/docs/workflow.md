@@ -19,11 +19,11 @@ Rules and checklists for the full development workflow.
 
 **Explicit decline handling**: If the user explicitly declines to address the Stop hook's unresolved-review-thread warning for a specific PR, run `bash ~/.claude/hooks/mark-review-declined.sh <PR_NUMBER>` before ending the turn. This suppresses re-warning for that PR within the current session only (it does not persist across sessions) and is distinct from the blanket `SKIP_REVIEW_CHECK=1` escape, which skips all checks every time.
 
-## ADR-003: Unresolved merge-blocker findings from `/deep-review --fix` must be resolved before PR creation
+## ADR-003: Unresolved merge-blocker findings from the pre-PR review must be resolved before PR creation
 
-**Decision**: `/deep-review --fix` must leave no unresolved merge-blocker findings before creating a PR.  
+**Decision**: The pre-PR review (`/deep-review --fix`, or `/lite-review` for doc-only/small diffs — see the Pre-PR checklist) must leave no unresolved merge-blocker findings before creating a PR.  
 **Rationale**: Catches correctness bugs, security issues, and CLAUDE.md violations early.  
-**Implementation**: In fix mode, PostToolUse and Stop hooks block while the fix-mode ledger has open merge-blocker findings.
+**Implementation**: `deep-review` and `lite-review` share the same ledger. PostToolUse and Stop hooks block only while a fix-mode ledger has open merge-blocker findings (`/deep-review --fix`, or `/lite-review` on the user's own PR). `/lite-review` on a local diff records a review-mode ledger, so the hooks do not enforce it — resolving its merge-blockers before the PR is a manual obligation.
 
 ---
 
@@ -47,7 +47,10 @@ Rules and checklists for the full development workflow.
 1. User has requested PR creation.
 2. No sensitive information.
 3. No conflict risk.
-4. Run `/deep-review --fix` (local diff mode) — resolve all merge-blocker findings. Exception: the lite paths (`issue-pr-lite`, `glitchtip-pr-lite`) run `/lite-review` instead.
+4. Run the pre-PR review (local diff mode) and resolve all merge-blocker findings:
+   - Doc-only diff, or small diff (≤ 5 files and ≤ 150 changed lines, excluding lockfiles): `/lite-review`. On a local diff it only reports, so fix its verified merge-blockers yourself and re-run it.
+   - Everything else: `/deep-review --fix`.
+   - The lite paths (`issue-pr-lite`, `glitchtip-pr-lite`) always run `/lite-review`.
 
 ## Post-PR checklist
 

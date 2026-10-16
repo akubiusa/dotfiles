@@ -27,13 +27,13 @@ Can I do this in ≤ 5 tool calls?
 | Cross-module investigation | 10–15 | Explore agent if parallel work exists |
 | Full feature implementation | 15+ | general-purpose agent with planning |
 | Security / code review | Any | Specialized agent (high signal-to-noise) |
-| Claude Code prompt-file maintenance (`CLAUDE.md`, `AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hook scripts, `settings.json`) | Any | Always delegate — see carve-out below |
+| Claude Code prompt-file maintenance (`CLAUDE.md`, `AGENTS.md`, `rules/*.md`, `docs/*.md`, `skills/*`, `agents/*.md`, hook scripts, `settings.json`) | Any | Always delegate — see carve-out below |
 
 ## Prompt-file maintenance carve-out
 
-Claude Code's own prompt files (`CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) get re-injected into every future session's context. Reading/editing them from the parent session leaves that exploration sitting in a context that persists for the rest of the conversation — so, regardless of tool-call count, delegate this work to an agent instead of doing it directly.
+Claude Code's own prompt files (`CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `docs/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) get injected into, or read by, every future session. Reading/editing them from the parent session leaves that exploration sitting in a context that persists for the rest of the conversation — so, regardless of tool-call count, delegate this work to an agent instead of doing it directly. Exception: reading a `docs/*.md` file in order to follow it (as the CLAUDE.md Context loading table directs) is not maintenance and is done directly; maintenance and editing are always delegated.
 
-Parent session's job: define the task, pass along any research/decisions already gathered, review the agent's output, and own all user-facing Q&A (agents can't call `AskUserQuestion` — relay per `rules/design-workflow.md`). Keep direct tool use to quick recon (`ls`/`grep`) for scoping only.
+Parent session's job: define the task, pass along any research/decisions already gathered, review the agent's output, and own all user-facing Q&A (agents can't call `AskUserQuestion` — relay per `~/.claude/docs/design-workflow.md`). Keep direct tool use to quick recon (`ls`/`grep`) for scoping only.
 
 The agent has no memory of this rule file, so the dispatch prompt must restate the concrete scope and task inline — not just reference "this carve-out" by name.
 

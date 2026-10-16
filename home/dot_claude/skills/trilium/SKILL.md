@@ -16,13 +16,13 @@ investigations, spec/plan documents not posted as Issue comments).
 - Applies to: `ticket-pr` requirements documents, standalone investigations, spec/plan
   documents for work **not** tied to a GitHub Issue.
 - Does not apply to: documents tied to a GitHub Issue — those follow
-  `rules/issue-comment-docs.md` instead (posted directly as an Issue comment, no Trilium
+  `~/.claude/docs/issue-comment-docs.md` instead (posted directly as an Issue comment, no Trilium
   upload).
 
 ## Procedure
 
 1. **Scope check**: confirm the document is not tied to a GitHub Issue (see "When to
-   Apply" above). If it is, stop and follow `rules/issue-comment-docs.md` instead.
+   Apply" above). If it is, stop and follow `~/.claude/docs/issue-comment-docs.md` instead.
 2. **Determine `noteId` / `topic` / `docType`**: the caller (this skill's invoker) is
    responsible for constructing these:
    - `noteId`: must match `^[a-zA-Z0-9_]{4,32}$`. Recommended (not required) convention:

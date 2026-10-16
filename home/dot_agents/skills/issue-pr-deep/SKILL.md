@@ -13,11 +13,11 @@ description: 非自明な GitHub Issue を仕様・計画・実装・深いレ�
 6. 最終ゲートは fail-closed で、HEAD、index、worktree の tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する。全 substep はこの同じ snapshot を使い、各 substep の直後に比較する。tracked、staged、untracked、evidence のいずれかが変われば、最終ゲート全体を最初からやり直す。
    1. 最新の全検証を実行し、失敗したら停止する。
    2. 直後にシークレット確認を実行し、検出したら停止する。
-   3. `$deep-review --fix` をローカル差分に実行する。50 以上、P1、P2 の未解決指摘があれば停止する(deep-review では未解決の merge-blocker 指摘が残る場合に停止する)。
+   3. `$deep-review --fix` をローカル差分に実行する。未解決の merge-blocker 指摘が残る場合は停止する。
    4. diff、status、evidence を確認する。未記録の検証、未追跡ファイル、意図しない差分があれば停止する。
    5. final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する。commit と PR 作成はこの reviewed snapshot だけを使う。
    6. 差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す。
 7. Issue ごとの review evidence を scope/acceptance criteria と対応付け、各 Issue の文書、review evidence、closing keyword が確認済みであることを確認する。すべての Issue の aggregate 最終ゲートが通るまで PR を作成しない。確認後に日本語 Conventional Commit でコミットし SSH push する。PR には概要、変更内容、検証、前提を含める。検証済みの各 Issue にだけ `Closes #<issue>` を含める。`--owner`/`--repo` で解決済みの target repository に明示して作成する。
 8. PR 作成直後に `$pr-health-monitor <PR 番号または URL>` を実行する。monitor 初期化が失敗した場合の failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含め、incomplete/unmonitored と報告する。start 成功後の initial CI/review observation の失敗は active な watcher と区別して報告する。XDG state の watcher は close、CI failure、conflict、Copilot review を durable event として記録する。
 
-Claude 専用の superpowers、EnterWorktree、AskUserQuestion は使用しない。Codex の plan、sub-agent、`request_user_input` ツールに置き換える。仕様・計画レビューは `home/dot_codex/AGENTS.md` の追加ガイダンスに従い `spec_reviewer`/`plan_reviewer` agent を使う。
+Claude 専用の superpowers、EnterWorktree、AskUserQuestion は使用しない。Codex の plan、sub-agent、`request_user_input` ツールに置き換える。仕様・計画レビューは `~/.codex/AGENTS.md` の追加ガイダンスに従い `spec_reviewer`/`plan_reviewer` agent を使う。

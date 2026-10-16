@@ -1,6 +1,6 @@
 ---
 name: handle-pr-reviews
-description: Process all PR review threads in bulk. Fetches all unresolved threads and systematically applies code fixes, replies, and resolves. Auto-triggered by background script on Copilot review detection.
+description: Process all PR review threads in bulk. Fetches all unresolved threads and systematically applies code fixes, replies, and resolves. Called automatically by the wait-for-copilot-review Monitor when a Copilot review is detected.
 argument-hint: "[PR URL or PR number]"
 disable-model-invocation: false
 ---

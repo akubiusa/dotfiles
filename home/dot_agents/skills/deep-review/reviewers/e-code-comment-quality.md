@@ -9,7 +9,7 @@ applies_to: all
 
 Check changed comments and documentation for claims that are false, stale, misleading, redundant with code, or omit a non-obvious invariant necessary to use the changed interface safely. These checks are explicitly in scope for this agent, so the shared "general code quality concerns" suppression in SKILL.md does not apply to them.
 
-Judge each comment against the Content layer "Code comments" allow/deny conditions in the coding-conventions rules already provided in your context — apply those conditions as given rather than assuming what they say from memory. Flag any comment that does not satisfy an allow condition, or that matches a deny condition, for example:
+Judge each comment against the code-comment rules in the repository instructions and rule files already provided in your context (comments carry only non-obvious rationale or constraints, never what the code already shows or change history) — apply the stated conditions rather than assuming them from memory. Flag any comment that does not satisfy them, for example:
 
 - Redundant comments that merely restate what the code already makes obvious (e.g. a comment saying "increment i by 1" directly above `i++`).
 - Obvious descriptions or comments that can be removed without issue.

@@ -20,8 +20,7 @@ of an already-approved workflow step, not a new decision.
 
 Resolve `OWNER`, `REPO`, `PR_NUMBER` from the caller's context (always pass
 `--repo <owner>/<repo>` equivalent explicitly when the PR lives in a
-different repository than the local `origin` — the fork scenario from
-Issue #171).
+different repository than the local `origin` — the fork scenario).
 
 Validate the resolved values before using them below — they end up
 embedded directly in a script that `Monitor` executes, so an unvalidated
@@ -41,9 +40,8 @@ fi
 ### Step 0: Skip if a review already exists
 
 Before starting the monitor, check once whether a Copilot review is
-already present — this replaces the old flock-based multi-instance guard,
-since a `Monitor` polling loop only needs to exist once per PR within a
-session:
+already present, since a `Monitor` polling loop only needs to exist once per
+PR within a session:
 
 ```bash
 EXISTING=$(gh api graphql \
@@ -123,7 +121,7 @@ Monitor({
       rm -f /tmp/wait-copilot-review-err.$$
       if [[ -n \"$count\" && \"$count\" -gt \"$last_count\" ]]; then
         echo \"copilot_review_detected count=$count\"
-        # Send a Discord notification, same as the old script did
+        # Send a Discord notification
         SCRIPT_DIR=\"$HOME/.claude/scripts/completion-notify\"
         if [[ -x \"$SCRIPT_DIR/send-discord-notification.sh\" ]]; then
           payload=$(jq -n \\
@@ -171,10 +169,6 @@ event arrives in this conversation and this conversation acts on it.
 - Do not ask the user for confirmation before starting the monitor.
 - If the session ends before a review is detected, the monitor is lost —
   the user (or a later session) must run `/handle-pr-reviews` manually.
-  This is an accepted limitation (see the design spec for rationale).
-- No lock file / flock is used — Step 0's one-time existence check replaces
-  it, since a `Monitor` loop only needs to run once per PR within a given
-  session.
 - If requesting a Copilot review fails or Copilot code review isn't
   available for the target repository (`request-review-copilot` missing,
   a permissions error, Copilot not enabled on the repo, etc.), it is fine

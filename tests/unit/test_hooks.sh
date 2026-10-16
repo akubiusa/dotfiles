@@ -724,11 +724,6 @@ assert_dr_both pass "fix-mode ledger with all resolved does not block" s-fix
 
 assert_dr_both pass "no ledger does not block" s-none
 
-# 旧 state (deep-review, Score ベース) のみが残っている場合は無視する
-jq -nc --argjson t "$(date +%s)" '{session_id: "s-old", skill: "deep-review", timestamp: $t, high_score_count: 3, max_score: 90}' \
-  > "$DR_DATA/deep-review-state-s-old.json"
-assert_dr_both pass "legacy deep-review state alone does not block" s-old
-
 dr_ledger init s-mismatch fix pr o/r 1 true abc >/dev/null
 dr_ledger add s-mismatch "$(dr_finding k1)" >/dev/null
 jq '.session_id = "other"' "$DR_DATA/deep-review-ledger-s-mismatch.json" > "$DR_DATA/tmp.json" \
@@ -761,11 +756,26 @@ done
 assert_dr_hook pass "deep-review with only 'Score: 90' in tool_response does not block" \
   "$DR_IMMEDIATE" "$(dr_immediate_input s-score deep-review 'Score: 90')"
 
-# lite-review は従来どおり Score 抽出 + 旧 state で判定する
-assert_dr_hook block "lite-review immediate-fix still blocks on Score >= 50" \
-  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review 'Score: 90')"
-assert_dr_hook block "lite-review Stop still blocks via legacy state" \
+# lite-review も deep-review と同じ ledger で判定する
+assert_dr_hook pass "lite-review with only 'Score: 90' in tool_response does not block" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite-score lite-review 'Score: 90')"
+dr_ledger init s-lite fix pr o/r 1 true abc >/dev/null
+dr_ledger add s-lite "$(dr_finding k1)" >/dev/null
+assert_dr_hook block "lite-review immediate-fix blocks on fix-mode ledger with open blocker" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review)"
+assert_dr_hook block "lite-review Stop blocks on fix-mode ledger with open blocker" \
   "$DR_STOP" '{"session_id":"s-lite"}'
+dr_ledger set-status s-lite 1 fixed abc verified >/dev/null
+assert_dr_hook pass "lite-review immediate-fix does not block after blocker is resolved" \
+  "$DR_IMMEDIATE" "$(dr_immediate_input s-lite lite-review)"
+assert_dr_hook pass "lite-review Stop does not block after blocker is resolved" \
+  "$DR_STOP" '{"session_id":"s-lite"}'
+
+# 解決済みの fix-mode ledger と残存した旧 state (high_score_count > 0) が併存してもブロックしない
+dr_ledger init s-legacy fix pr o/r 1 true abc >/dev/null
+jq -nc --argjson t "$(date +%s)" '{session_id: "s-legacy", skill: "lite-review", timestamp: $t, high_score_count: 1, max_score: 90}' \
+  > "$DR_DATA/deep-review-state-s-legacy.json"
+assert_dr_both pass "resolved fix-mode ledger with leftover legacy state does not block" s-legacy
 
 rm -rf "$DR_HOME"
 

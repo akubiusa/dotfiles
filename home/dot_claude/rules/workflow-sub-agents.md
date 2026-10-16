@@ -57,8 +57,8 @@ When the prompt files being edited live under a chezmoi-managed dotfiles repo (s
 
 | Anti-pattern | Bad | Good |
 |---|---|---|
-| Micro-delegation | Launch agent to read one file | `view` directly |
-| Background polling | launch background → immediately `read_agent(wait=true)` | Continue own work; retrieve on notification |
+| Micro-delegation | Launch agent to read one file | Read the file directly |
+| Background polling | Launch background, then immediately block waiting for its result | Continue own work; retrieve on notification |
 | Deep chains | A → B → C → D | Keep depth ≤ 2 levels |
 | Excessive context passing | Shuttle 200 KB between agents | Keep large context in main, delegate only independent pieces |
 

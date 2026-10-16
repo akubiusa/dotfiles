@@ -299,11 +299,15 @@ for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
 done
 
 for skill in "${ISSUE_PR_SKILLS[@]}"; do
+  case "$skill" in
+    */issue-pr-deep/SKILL.md) review_gate='未解決の merge-blocker 指摘が残る場合は停止する' ;;
+    *) review_gate='confidence 50 以上の未解決指摘があれば停止する' ;;
+  esac
   assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
     'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する' \
     '最新の全検証を実行し' \
     '直後にシークレット確認を実行し' \
-    '50 以上、P1、P2 の未解決指摘があれば停止する' \
+    "$review_gate" \
     'diff、status、evidence を確認する' \
     'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
     '差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す'
@@ -448,7 +452,7 @@ for skill in "${DEEP_WORKFLOW_SKILLS[@]}"; do
   # shellcheck disable=SC2016
   assert_ordered_policy "$skill" "self-hosted design-workflow contract order" \
     '## Phase 4: Review the Spec' \
-    'Use **AskUserQuestion** to get explicit spec approval before Phase 7' \
+    'Ask for approval via **AskUserQuestion** only when there is a significant' \
     '## Phase 8: Review the Plan' \
     'Decide the execution approach yourself, per `rules/design-workflow.md`' \
     'Final Evidence Gate (Prompt-Only Contract)' \

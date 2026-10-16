@@ -13,4 +13,4 @@ description: 非自明な GlitchTip issue を仕様・計画・実装・深い�
 6. PR 本文に、GitHub の `Closes #<番号>` 構文ではなく `GlitchTip Issue: <permalink URL>` の形式で issue への参照を含める(GlitchTip issue は GitHub Issue ではなく、`Closes #<番号>` は無関係な GitHub Issue を誤って参照・クローズしうるため使わない)。概要・変更内容・検証・Trilium の Spec/Plan URL も含める。PR は `gh-pr-target-repo.sh` で解決した target repository に明示して作成する。
 7. 続けて `$pr-health-monitor <PR URL>` を実行する。watcher は close を含む event を durable state に記録するだけで、GlitchTip callback を保存・実行しない。PR が `MERGED` 後に user が Resolve を明示的に求めた場合だけ、この flow で `get_issue` により取得した issue ID、permalink、PR body を再確認して `update_issue(issue_id, status: "resolved")` を実行する。不一致または `CLOSED`(マージされずクローズ)では Resolve を実行しない。session 終了後、agent capacity がない場合、または watcher 停止後も `$resume-pr-monitor <PR URL>` を使う。
 
-Claude 専用の superpowers、EnterWorktree、AskUserQuestion は使用しない。Codex の plan、sub-agent、`request_user_input` ツールに置き換える。仕様・計画レビューは `home/dot_codex/AGENTS.md` の追加ガイダンスに従い `spec_reviewer`/`plan_reviewer` agent を使う。
+Claude 専用の superpowers、EnterWorktree、AskUserQuestion は使用しない。Codex の plan、sub-agent、`request_user_input` ツールに置き換える。仕様・計画レビューは `~/.codex/AGENTS.md` の追加ガイダンスに従い `spec_reviewer`/`plan_reviewer` agent を使う。

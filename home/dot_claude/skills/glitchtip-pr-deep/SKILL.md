@@ -110,6 +110,9 @@ rather than an Issue comment.
 
 The `trilium` skill's pre-upload confirmation applies: ask the user via
 AskUserQuestion before the first upload unless they explicitly asked for it.
+A re-upload that revises the same note because the user requested a
+revision through the approval question counts as explicitly requested, so
+it needs no new confirmation.
 
 Construct `topic` from the GlitchTip issue ID (e.g. `glitchtip-4821`),
 `docType: spec`, and a `noteId` following the recommended

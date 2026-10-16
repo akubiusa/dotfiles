@@ -29,7 +29,8 @@ are identical to `deep-review`'s Steps 1-3; `lite-review`'s Steps 5-12
 correspond to `deep-review`'s Steps 6-13 (see
 `~/.claude/skills/deep-review/SKILL.md` for their exact text) — only
 `lite-review`'s own Step 4 below replaces `deep-review`'s Steps 4-5
-(project-specific reviewer discovery and per-reviewer parallel review).
+(project-specific reviewer discovery and per-reviewer parallel review),
+and `lite-review`'s Step 4.5 is `deep-review`'s Step 5.5.
 
 ### Step 1: Eligibility check (PR mode only)
 
@@ -62,6 +63,10 @@ one call:
 
 Each agent returns findings as: *problem summary + evidence + file:line reference*.
 
+### Step 4.5: Merge candidates
+
+Same as `deep-review` Step 5.5.
+
 ### Step 5: Independent verification
 
 Same as `deep-review` Step 6.
@@ -76,11 +81,11 @@ Same as `deep-review` Step 8.
 
 ### Step 8: PR author check (PR mode only)
 
-Same as `deep-review` Step 9.
+Same as `deep-review` Step 9, except that the fix condition is the ledger mode, not a `--fix` flag: if the ledger mode is `fix` (the user's own PR, or a bot created by the user), proceed to Step 9; otherwise skip to Step 12.
 
 ### Step 9: Autofix (own PRs only)
 
-Same as `deep-review` Step 10.
+Same as `deep-review` Step 10 (runs only when the ledger mode is `fix`).
 
 ### Step 10: Commit (own PRs only)
 

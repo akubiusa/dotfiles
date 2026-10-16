@@ -213,8 +213,11 @@ Branch from the latest remote default branch:
 
 ```bash
 git fetch --all --prune
+git remote set-head origin -a >/dev/null 2>&1 || true
 git checkout -b <branch_name> origin/HEAD
 ```
+
+If the checkout still fails, stop and report instead of branching from another base.
 
 Branch name follows Conventional Branch (e.g. `feat/add-user-authentication`).
 **Important**: do not include the Jira ticket key in the branch name. The branch name is

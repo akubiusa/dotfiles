@@ -67,7 +67,15 @@ sub-agent's own "done" or "tests pass" self-report as completion evidence.
 ## Phase 6: Lite Review
 
 Run `/lite-review` (no arguments — local diff mode). Resolve every
-verified merge-blocker finding before moving on to Phase 7. This replaces
+verified merge-blocker finding before moving on to Phase 7. In local diff
+mode `/lite-review` uses the ledger in review mode, so the hooks do not
+block on open merge-blockers and `ledger.sh count-open-blockers` always
+returns 0; the gate is therefore explicit. After `/lite-review` returns,
+count the open merge-blocker findings in its ledger by running
+`~/.agents/skills/deep-review/scripts/ledger.sh show "${CLAUDE_SESSION_ID}" | jq '[.findings[] | select(.class == "merge-blocker" and .status == "open")] | length'`.
+Do not proceed to Phase 7 while the count is non-zero: fix the findings and
+re-run `/lite-review` (it creates a fresh ledger) until the count is 0. If
+the count cannot be read, stop and report to the user. This replaces
 `glitchtip-pr-deep`'s Phase 13 `/deep-review` gate — the lite path always uses
 `/lite-review`. This is a deliberate, user-approved exception to the global
 pre-PR rule of running `/deep-review --fix`.

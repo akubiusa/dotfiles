@@ -52,8 +52,8 @@ one call:
 
 1. Read `~/.claude/skills/deep-review/reviewers/a-claude-md-compliance.md`, `b-bugs-correctness.md`, `e-code-comment-quality.md`, and `f-security.md` directly (reuse their
    `## Scope` bodies verbatim — do not duplicate the text into this file).
-2. Pass the sub-agent: the full diff, the change summary from Step 3, the
-   CLAUDE.md/rules content from Step 2 (with the "already read, don't
+2. Pass the sub-agent: the `DIFF_FILE` path from Step 3, the change summary from Step 3, the
+   repository CLAUDE.md/rules content from Step 2 (with the "already read, don't
    re-Read" instruction), the shared false-positive suppression
    instructions (identical text to `deep-review` SKILL.md's Step 5
    suppression block), and all 4 reviewers' `## Scope` bodies together,

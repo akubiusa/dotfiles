@@ -20,6 +20,10 @@ disable-model-invocation: false
 > explicitly when invoking this skill, and this skill must treat that value
 > as `$ARGUMENTS` for the rest of its phases.
 
+## Required Reading
+
+Before Phase 3, Read `~/.claude/docs/design-workflow.md`, `~/.claude/docs/workflow-sub-agents.md`, and `~/.claude/docs/workflow.md`. They are not auto-loaded, and the phases below cite their sections.
+
 ## Progress Tracking
 
 Before Phase 3, create one Todo task per phase in this file (Phase 3
@@ -38,7 +42,7 @@ Every phase boundary in this file, except the Phase 6 approval gate (when it app
 
 ## Phase 3: Write the Spec
 
-Author the spec yourself, following `rules/design-workflow.md`'s Intent
+Author the spec yourself, following `~/.claude/docs/design-workflow.md`'s Intent
 Contract, Fact / Decision Separation, Decision Dependency / Frontier,
 Alternative Exploration, and Spec Synthesis sections, using the GlitchTip
 issue's title, exception message, stack trace, and culprit as the starting
@@ -62,7 +66,7 @@ problem:
   satisfies the Intent Contract wins by default (YAGNI).
 - **Spec Synthesis**: once the Decision frontier is empty, synthesize the
   answers into one coherent spec covering the sections listed in
-  `rules/design-workflow.md`'s Spec Synthesis section, with an Acceptance
+  `~/.claude/docs/design-workflow.md`'s Spec Synthesis section, with an Acceptance
   Criteria section that is observable/testable, not aspirational prose.
 
 The GlitchTip issue's title, exception message, stack trace, and culprit
@@ -83,7 +87,7 @@ applies) are fine via AskUserQuestion; asking permission with no new
 information is not. The only human checkpoint for the spec's content is
 Phase 6 (when it applies), after the spec is uploaded to Trilium (Phase 5).
 
-Per `rules/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
+Per `~/.claude/docs/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
 is `.gitignore`d — do not `git add -f` the spec file.
 
 Once the spec file is written, proceed immediately into Phase 4 below
@@ -92,7 +96,7 @@ Phase 4 through Phase 6 own spec review, posting, and approval.
 
 ## Phase 4: Review the Spec
 
-`rules/design-workflow.md`'s Spec Review Contract requires dispatching the
+`~/.claude/docs/design-workflow.md`'s Spec Review Contract requires dispatching the
 `spec-reviewer` sub-agent (`Agent` tool, `subagent_type: spec-reviewer`)
 against the spec file. Dispatch it now, wait for it, and confirm the
 reported fixes/ambiguities look correct before moving on.
@@ -103,8 +107,8 @@ yourself — stop and tell the user, and ask how to proceed.
 ## Phase 5: Upload the Spec to Trilium
 
 This spec is not tied to a GitHub Issue (a GlitchTip issue is not a GitHub
-Issue), so `rules/issue-comment-docs.md` does not apply here — follow the
-`trilium` skill (via the Skill tool) instead, per `rules/design-workflow.md`'s
+Issue), so `~/.claude/docs/issue-comment-docs.md` does not apply here — follow the
+`trilium` skill (via the Skill tool) instead, per `~/.claude/docs/design-workflow.md`'s
 Human Approval section, which routes the GlitchTip path through Trilium
 rather than an Issue comment.
 
@@ -149,7 +153,7 @@ same Trilium `topic`/`noteId`, not a new one).
 ## Phase 7: Write the Plan
 
 Author the plan yourself against the approved spec, following
-`rules/design-workflow.md`'s Plan Generation Contract: each task needs at
+`~/.claude/docs/design-workflow.md`'s Plan Generation Contract: each task needs at
 minimum Files (Create/Modify/Test), Depends on, Change, Contracts/
 Invariants, a concrete Verification command with expected evidence, Stop
 Conditions, and Assumptions.
@@ -174,7 +178,7 @@ confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
-`rules/design-workflow.md`'s Plan Review Contract requires dispatching the
+`~/.claude/docs/design-workflow.md`'s Plan Review Contract requires dispatching the
 `plan-reviewer` sub-agent (`Agent` tool, `subagent_type: plan-reviewer`)
 against the plan file. Dispatch it now, wait for it, and confirm the
 reported fixes look correct before moving on.
@@ -225,9 +229,9 @@ force-rename over it — stop and ask whether to reuse, delete, or rename.
 
 ## Phase 11: Execute the Plan
 
-Decide the execution approach yourself, per `rules/design-workflow.md`'s
+Decide the execution approach yourself, per `~/.claude/docs/design-workflow.md`'s
 Implementation Execution section: this defers to the existing decision
-framework in `rules/workflow-sub-agents.md` as-is — main-agent-direct for
+framework in `~/.claude/docs/workflow-sub-agents.md` as-is — main-agent-direct for
 tightly sequential, high-context-dependency, or few-file work; sub-agent
 dispatch for genuinely independent, specialized, or context-isolation-
 benefiting work. Do not ask the user to choose. This decision must already
@@ -240,7 +244,7 @@ starting.
 Execute the plan's tasks directly (or via dispatched sub-agents, per the
 decision above) without re-confirming each one with the user; only stop
 for genuine blockers the plan didn't anticipate — see
-`rules/design-workflow.md`'s Stop Conditions section.
+`~/.claude/docs/design-workflow.md`'s Stop Conditions section.
 
 If a task fails (test failure, compile error, a sub-agent reporting it
 couldn't complete), stop and report it before moving to Phase 12 — do not
@@ -248,7 +252,7 @@ treat it as done.
 
 ## Phase 12: Verify
 
-Run `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only Contract)
+Run `~/.claude/docs/design-workflow.md`'s Final Evidence Gate (Prompt-Only Contract)
 before creating the PR:
 
 1. Record a snapshot `S` of: `HEAD`, staged state, tracked working-tree
@@ -269,7 +273,7 @@ proceed to Phase 13 with a known-failing verification.
 ## Phase 13: Deep Review
 
 Run `/deep-review --fix` (local diff mode; fix mode edits the working tree and
-does not commit) per `rules/workflow.md` ADR-003. Resolve every unresolved
+does not commit) per `~/.claude/docs/workflow.md` ADR-003. Resolve every unresolved
 merge-blocker finding before Phase 14. Plain `/deep-review` is review-only and
 never blocks, so do not use it for this gate.
 

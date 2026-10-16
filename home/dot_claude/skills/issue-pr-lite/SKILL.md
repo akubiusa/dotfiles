@@ -15,6 +15,8 @@ disable-model-invocation: false
 This is the lightweight counterpart to `issue-pr-deep`: no spec, no plan,
 no approval gates. Implementation proceeds directly from the Issue body.
 
+Before Phase 3, Read `~/.claude/docs/design-workflow.md` (not auto-loaded); its Final Evidence Gate section is cited below.
+
 ## Progress Tracking
 
 Before Phase 3, create one Todo task per phase in this file (Phase 3
@@ -52,7 +54,7 @@ to proceed.
 
 ## Phase 5: Verify
 
-Follow `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only
+Follow `~/.claude/docs/design-workflow.md`'s Final Evidence Gate (Prompt-Only
 Contract) before creating the PR: record snapshot `S` (`HEAD`, staged
 state, tracked working-tree diff, untracked files, and the identity of the
 verification evidence collected so far), then run a fresh full

@@ -3,8 +3,8 @@
 - No unauthorized changes (hooks, settings, PRs) without explicit approval — ask if blocked.
 - Work carefully and thoroughly, no shortcuts regardless of scale.
 - **Do not merge PRs until explicitly instructed.**
-- **Delegate all reading/writing of Claude Code's own prompt files** (`CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) to a sub-agent, regardless of task size — see `rules/workflow-sub-agents.md` for detail.
-- **Before creating any PR, run `/deep-review --fix` (local diff mode) and complete the Pre-PR checklist in `rules/workflow.md`** — do not skip this even for small or doc-only changes. Exception: the lite paths (`issue-pr-lite`, `glitchtip-pr-lite`) run `/lite-review` instead.
+- **Delegate all reading/writing of Claude Code's own prompt files** (`CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `docs/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) to a sub-agent, regardless of task size (reading a `docs/*.md` file to follow it, as Context loading directs, is not maintenance and is done directly) — see `~/.claude/docs/workflow-sub-agents.md` for detail.
+- **Before creating any PR, run the pre-PR review (local diff mode) and complete the Pre-PR checklist in `~/.claude/docs/workflow.md`** — never skip it. Doc-only diffs and small diffs (≤ 5 files and ≤ 150 changed lines, excluding lockfiles) use `/lite-review` (report-only on a local diff, so fix its merge-blocker findings yourself); everything else uses `/deep-review --fix`. The lite paths (`issue-pr-lite`, `glitchtip-pr-lite`) always run `/lite-review`.
 
 ## Behavior
 
@@ -42,16 +42,16 @@
 
 ## Context loading
 
-Not auto-loaded. Read the relevant file only when the situation applies:
+Auto-loaded: this file, `rules/security.md`, and the path-gated `rules/*.md` (`coding-*`, `context7`) when matching files are touched. The `~/.claude/docs/*.md` files are not auto-loaded — Read the relevant one only when the situation applies:
 
 | When | Read |
 |---|---|
-| Checklists / Jira / GlitchTip rules needed | `rules/workflow.md` |
-| Deciding whether to delegate to a sub-agent (esp. any work touching Claude Code's own prompt files: `CLAUDE.md`/`AGENTS.md`, `rules/*.md`, `skills/*`, `agents/*.md`, hooks, `settings.json`) | `rules/workflow-sub-agents.md` |
-| An idle notification arrives from a background sub-agent | `rules/workflow-sub-agents.md` ("Handling Idle Notifications from Background Sub-Agents" section) |
-| Writing/reviewing code, comments, tests, commits | `rules/coding-common.md` |
-| Writing a spec or plan document | `rules/design-workflow.md` |
-| Posting a spec/plan/investigation doc to a GitHub Issue | `rules/issue-comment-docs.md` |
+| Checklists / Jira / GlitchTip rules needed | `~/.claude/docs/workflow.md` |
+| Deciding whether or how to delegate to a sub-agent | `~/.claude/docs/workflow-sub-agents.md` |
+| An idle notification arrives from a background sub-agent | `~/.claude/docs/workflow-sub-agents.md` ("Handling Idle Notifications from Background Sub-Agents" section) |
+| Writing/reviewing code, comments, tests, commits | `~/.claude/rules/coding-common.md` |
+| Writing a spec or plan document | `~/.claude/docs/design-workflow.md` |
+| Posting a spec/plan/investigation doc to a GitHub Issue | `~/.claude/docs/issue-comment-docs.md` |
 | Posting a spec/plan/investigation doc not tied to a GitHub Issue | `trilium` skill (invoke via Skill tool) |
 | Using an `rtk` meta command (`gain`, `discover`, `proxy`) | `rtk` skill |
 

@@ -71,7 +71,7 @@ The spec is authority; the plan is its implementation argument. There is no plan
 
 ## Implementation Execution
 
-Whether execution runs on the main agent directly or via a sub-agent follows the existing decision framework in `rules/workflow-sub-agents.md` as-is. Do not invent a new selection mechanism for this, and never ask the user to choose the execution approach.
+Whether execution runs on the main agent directly or via a sub-agent follows the existing decision framework in `~/.claude/docs/workflow-sub-agents.md` as-is. Do not invent a new selection mechanism for this, and never ask the user to choose the execution approach.
 
 ## Stop Conditions
 

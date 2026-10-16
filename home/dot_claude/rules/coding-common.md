@@ -46,24 +46,24 @@ Rules that apply regardless of language.
 ## Failure Handling
 
 - Do not hide bugs behind fallbacks: no `config.port ?? 8080` for required config, no silent default in an "unreachable" branch — assert or throw instead.
-- Never write an empty catch block, and do not catch errors that indicate programmer bugs.
+- Never swallow an error (e.g. an empty catch block); catching is fine for cleanup, logging, or translating and rethrowing, but let errors that indicate programmer bugs propagate.
 - Validate with strict schemas at IO boundaries (file, network, IPC, user input) and reject bad data with specifics instead of repairing it; past the boundary, trust the data.
-- Every raised error names what went wrong and the offending values (`Unknown effect type "reverb2"`, not `invalid input`).
-- Gate-then-commit chains must abort on failure: `check && commit`, never `check; commit`.
+- Every raised error names what went wrong and the offending value where useful (`Unknown effect type "reverb2"`, not `invalid input`); never include secrets or personal data, and truncate large values.
+- A gate before a commit or other irreversible step must abort on failure (e.g. `check && commit` in shell, never `check; commit`; in other languages, throw or return explicitly before the commit).
 
 ## Testing
 
-- Assert exact expected values and exact error messages, not loose predicates such as "contains 'error'".
+- Assert exact expected values, not loose predicates such as "contains 'error'"; for errors prefer the exception type, code, or structured fields, and match the message text exactly only when the message is part of the specified behavior.
 - Never make a test pass by weakening its assertions; a failing test is information, so first decide whether the code or the test's expectation is wrong, and state why when you change the test.
-- Every "never"/"always" claim in a comment or commit message should exist as a test (property-based where the input domain allows).
+- Every testable "never"/"always" invariant you claim about behavior should exist as a test (property-based where the input domain allows).
 - A comparison or golden-output test must be sensitive to the behavior under test: inspect what the fixture actually produces and confirm a plausible bug would change it.
 - Every test run must be bounded and exit; leave no watch modes, dev servers, or background processes behind.
 
 ## Editing
 
 - Do not do mass edits with a regex; searching by pattern is fine, but read and change each site deliberately, since identical text can mean different things.
-- Before writing a new function or pattern, search for an existing one and reuse it; if you find two near-duplicates, unifying them is part of the task.
-- When replacing code, remove the old code in the same commit (no commented-out blocks, `-old`/`-v2` files, or unused exports).
+- Before writing a new function or pattern, search for an existing one and reuse it; if you find two near-duplicates that the current change touches, unify them; otherwise note them as a separate task.
+- When replacing code, remove the old code in the same commit (no commented-out blocks, `-old`/`-v2` files, or unused exports), unless a staged migration or backward-compatibility window requires both; then record the removal plan.
 - Do not add an abstraction until a second real use exists, and do not add options or fallback paths that nothing uses.
-- Outside TypeScript (where `coding-ts.md` governs `any`), do not silence the type checker (unchecked casts, `unsafe`, `# type: ignore`) without a comment stating why it is safe.
+- Do not bypass static checks or safety guarantees (unchecked casts, `# type: ignore`, `unsafe`) without a comment stating why it is safe; TypeScript `any` is governed by `coding-ts.md`.
 - Stage explicit paths when committing (no `git add -A` / `git add .`) and read `git status` first.

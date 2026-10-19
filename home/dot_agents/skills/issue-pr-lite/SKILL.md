@@ -7,7 +7,7 @@ description: 小規模で曖昧さの少ない GitHub Issue を直接実装し�
 
 1. 各 positional argument を順序を保った `ISSUE_REFERENCES` として解析し、`--owner` と `--repo` を除く option や空入力を拒否する。`gh issue view` で Issue、状態、コメント、受入条件を確認する(`--owner`/`--repo` が渡されなければ最初の URL から自分で抽出する)。全 Issue を `gh issue view <reference> --repo "$OWNER/$REPO"` で再取得し、number、canonical URL、state を照合して、すべての Issue が一意、open、target repository 所属であることを検証する。1 件でも重複、closed、別 repository、または scope/acceptance criteria の欠落があれば停止する。Issue ごとに確認済みの scope と acceptance criteria を記録する。Issue ごとの文書として対象範囲と実装方針をコメントに残し、Issue ごとの closing keyword を PR 本文用に記録する。この時点では実装または検証の結果を投稿しない。変更が設計判断を要するほど広がったら停止し、`$issue-pr-deep` への切替を提案する。
 2. Conventional Branch を作り、Issue の要求を直接実装する。対象が dotfiles なら `home/` の chezmoi ソースを更新する。
-3. PR 作成前の monitor preflight は非変更で、起動能力または選択する fallback だけを確認する。canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない。`gh pr create` の前に、PR 作成後に開始できる永続的な terminal または `$resume-pr-monitor <PR URL>` の fallback を選択して維持する。永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する。
+3. PR 作成前の monitor preflight は非変更で、起動能力または選択する fallback だけを確認する。canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない。`gh pr create` の前に、PR 作成後に開始できる永続的な terminal または `$resume-pr-monitor <PR URL>` の fallback を選択して維持する。永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する。PR 作成時は `gh-pr-reviewer.sh <owner/repo>` で reviewer を解決し、book000 が出力された場合は `gh pr create` に `--reviewer` で指定する(出力が空なら指定しない)。非ゼロ終了した場合は PR を作成せず停止して報告する。
 4. 最終ゲートは fail-closed で、HEAD、index、worktree の tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する。全 substep はこの同じ snapshot を使い、各 substep の直後に比較する。tracked、staged、untracked、evidence のいずれかが変われば、最終ゲート全体を最初からやり直す。
    1. 最新の全検証を実行し、失敗したら停止する。
    2. 直後にシークレット確認を実行し、検出したら停止する。

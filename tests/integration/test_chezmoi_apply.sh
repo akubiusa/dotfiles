@@ -206,6 +206,11 @@ if [ ! -x "$HOME/bin/gh-pr-target-repo.sh" ]; then
   exit 1
 fi
 
+if [ ! -x "$HOME/bin/gh-pr-reviewer.sh" ]; then
+  echo "❌ gh-pr-reviewer helper not generated"
+  exit 1
+fi
+
 if [ ! -x "$HOME/bin/powerline-daemon-launch.sh" ]; then
   echo "❌ powerline-daemon-launch helper not generated"
   exit 1

@@ -115,6 +115,64 @@ else
 fi
 rm -rf "$TEST_REPO_DIR" "$TEST_BIN_DIR"
 
+echo "Testing gh-pr-reviewer helper behavior..."
+TEST_BIN_DIR=$(mktemp -d)
+cat > "$TEST_BIN_DIR/gh" <<'EOF'
+#!/bin/bash
+if [[ "$1" == "api" && "$2" == "user" ]]; then
+  [[ "${STUB_USER_FAIL:-0}" == "1" ]] && exit 1
+  echo "${STUB_USER:-akubiusa}"
+  exit 0
+fi
+if [[ "$1" == "api" && "$2" == "repos/book000/dotfiles/collaborators/book000" ]]; then
+  exit "${STUB_COLLAB_EXIT:-0}"
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/gh"
+REVIEWER_HELPER="$PWD/home/bin/executable_gh-pr-reviewer.sh"
+
+run_reviewer_helper() {
+  local stderr_file
+  stderr_file=$(mktemp)
+  HELPER_EXIT=0
+  HELPER_STDOUT=$(PATH="$TEST_BIN_DIR:$PATH" bash "$REVIEWER_HELPER" "$@" 2>"$stderr_file") || HELPER_EXIT=$?
+  HELPER_STDERR=$(cat "$stderr_file")
+  rm -f "$stderr_file"
+}
+
+assert_reviewer_helper() {
+  local label="$1" want_exit="$2" want_stdout="$3" want_stderr="$4"
+  if [[ "$HELPER_EXIT" != "$want_exit" || "$HELPER_STDOUT" != "$want_stdout" ]]; then
+    echo "❌ gh-pr-reviewer helper: $label (exit=$HELPER_EXIT stdout=\"$HELPER_STDOUT\")"
+    FAILED=1
+  elif [[ "$want_stderr" == "empty" && -n "$HELPER_STDERR" ]] || [[ "$want_stderr" == "nonempty" && -z "$HELPER_STDERR" ]]; then
+    echo "❌ gh-pr-reviewer helper: $label (unexpected stderr state: \"$HELPER_STDERR\")"
+    FAILED=1
+  else
+    echo "✅ gh-pr-reviewer helper: $label"
+  fi
+}
+
+STUB_USER=akubiusa STUB_COLLAB_EXIT=0 run_reviewer_helper book000/dotfiles
+assert_reviewer_helper "requests book000 for another author" 0 "book000" empty
+
+STUB_USER=book000 run_reviewer_helper book000/dotfiles
+assert_reviewer_helper "skips when the author is book000" 0 "" empty
+
+STUB_USER=akubiusa STUB_COLLAB_EXIT=1 run_reviewer_helper book000/dotfiles
+assert_reviewer_helper "skips when book000 is not a collaborator" 0 "" nonempty
+
+STUB_USER_FAIL=1 run_reviewer_helper book000/dotfiles
+assert_reviewer_helper "fails when gh api user fails" 1 "" nonempty
+
+run_reviewer_helper 'book000/dotfiles;rm'
+assert_reviewer_helper "rejects a malformed repository" 1 "" nonempty
+
+run_reviewer_helper
+assert_reviewer_helper "rejects a missing repository" 1 "" nonempty
+rm -rf "$TEST_BIN_DIR"
+
 echo "Testing Codex Copilot wait script notification behavior..."
 TEST_HOME=$(mktemp -d)
 TEST_BIN_DIR=$(mktemp -d)

@@ -93,9 +93,13 @@ git push -u origin "$(git branch --show-current)"
 REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
 ```
 
+book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
+`--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
+
 ```bash
 PR_TITLE="<derived from the GlitchTip issue title>"
-gh pr create ${REPO:+--repo "$REPO"} --title "$PR_TITLE" --body "$(cat <<'EOF'
+REVIEWER=${REPO:+$(gh-pr-reviewer.sh "$REPO")}
+gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body — summarize the fix; include `GlitchTip Issue: <permalink URL>`; no Spec/Plan lines. Do not use GitHub's `Closes #<number>` syntax — a GlitchTip issue is not a GitHub Issue.>
 EOF
 )"

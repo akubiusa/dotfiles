@@ -84,6 +84,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 - `.env.example` と `.gitconfig.local.example` をサンプルとして提供。
 - wakatime は別途管理するため、dotfiles での暗号化管理は行わない。
 - PR 作成先は `upstream` remote があればそれを既定とし、`home/bin/executable_gh-pr-target-repo.sh`（デプロイ後 `~/bin/gh-pr-target-repo.sh`）で解決する。
+- PR 作成時のレビュアー(`book000`)は `home/bin/executable_gh-pr-reviewer.sh`（デプロイ後 `~/bin/gh-pr-reviewer.sh`）で解決し、`gh pr create --reviewer` に渡す。PR 作成者が `book000` 本人、または `book000` が collaborator でない場合は何も出力せず、レビュアー指定をスキップする。
 - 依存バージョンの更新は `renovate.json` の Renovate (GitHub App) で管理する。`install.sh` に固定記述された mise 本体のバージョンなど、通常の `package.json` では追跡できない箇所は `regexManagers` で個別に対象化する。`gh`/`ghq`/`roots`/`gitleaks`/`ccstatusline` など mise 管理下のツールバージョンは `home/dot_config/mise/config.toml` への宣言により Renovate のネイティブな mise サポートで自動追跡される(`regexManagers` の追加設定は不要)。
 - chezmoi によるデプロイ先 (`~/.claude/` 配下など、`home/dot_*` から展開される全ての実体) を直接編集してはならない。必ず対応する `home/dot_*` 配下のソースファイルを編集し、動作確認が必要な場合は `chezmoi apply` (または `chezmoi diff`) で反映すること。デプロイ先を直接編集すると、その後の `chezmoi apply`/`chezmoi update` (自動実行される場合を含む) によってソース側の内容で無言のまま上書き・巻き戻しされる。
 - 既存の managed file を rename / delete して target 側からも消す場合は、`home/.chezmoiremove` に旧 target path を追加する。`.claude` / `.codex` のように runtime state を持つディレクトリを `exact_` 化してはならない。

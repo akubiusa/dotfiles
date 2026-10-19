@@ -248,9 +248,13 @@ Follow Conventional Commits. `<description>` language: follow the project CLAUDE
 Resolve the target repository for the PR with `gh-pr-target-repo.sh`. If an `upstream` remote
 exists, it is used as the default target.
 
+book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
+`--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
+
 ```bash
 REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
-gh pr create ${REPO:+--repo "$REPO"} --title "<title>" --body "<PR body>"
+REVIEWER=${REPO:+$(gh-pr-reviewer.sh "$REPO")}
+gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title "<title>" --body "<PR body>"
 ```
 
 **Important**: do not include the Jira ticket key or any reference to Jira in the PR title or body.

@@ -60,6 +60,7 @@ one call:
    instructing it to check the diff against all 4 perspectives in a
    single pass and return findings tagged with which perspective(s) they
    belong to.
+3. Also pass the sub-agent `deep-review` Step 5's reporting instruction (verbatim), with `<REPORT_TARGET>` resolved by the rule given there and substituted as a literal value.
 
 Each agent returns findings as: *problem summary + evidence + file:line reference*.
 

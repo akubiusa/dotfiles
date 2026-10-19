@@ -274,13 +274,12 @@ proceed to Phase 13 with a known-failing verification.
 
 ## Phase 13: Deep Review
 
-Dispatch a `general-purpose` sub-agent with the `Agent` tool as a **sync dispatch** (do not pass `run_in_background`) — Phase 13 and Phase 14 are strictly sequential, and there is no other independent work to run alongside it, so `~/.claude/docs/workflow-sub-agents.md`'s decision table calls for sync here. Pass a `name` (e.g. `deep-review-runner`) on this dispatch, so the sub-agent's reviewers can address their reports to it. Do not set `isolation`: the sub-agent must run in the current worktree, the same one the parent has been working in.
+Dispatch a `general-purpose` sub-agent with the `Agent` tool as a **sync dispatch** (do not pass `run_in_background`) — Phase 13 and Phase 14 are strictly sequential, and there is no other independent work to run alongside it, so `~/.claude/docs/workflow-sub-agents.md`'s decision table calls for sync here. Do not set `isolation`: the sub-agent must run in the current worktree, the same one the parent has been working in.
 
 Give the sub-agent's dispatch prompt:
 
 - It is working in the current worktree (no `isolation`, so it shares the
   parent's cwd and git state).
-- Use the name given to this dispatch (e.g. `deep-review-runner`) as the `REPORT_TARGET` for the `/deep-review --fix` reviewers.
 - It must run `/deep-review --fix` (local diff mode; fix mode edits the
   working tree and does not commit) per `~/.claude/docs/workflow.md` ADR-003.
 - Its final report to the parent must include: the `$CLAUDE_SESSION_ID` it

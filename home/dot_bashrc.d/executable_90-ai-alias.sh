@@ -46,7 +46,9 @@ _claude_warn_remote_settings() {
   fi
 }
 
-claude() {
+_claude_launch() {
+  local mode="$1"
+  shift
   _claude_warn_remote_settings
   [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only claude
   ~/.local/share/chezmoi/update.sh
@@ -55,8 +57,23 @@ claude() {
       command claude "$@" ;;
     *)
       _claude_trust_cwd
-      command claude --permission-mode auto "$@" ;;
+      case "$mode" in
+        skip) command claude --dangerously-skip-permissions "$@" ;;
+        auto) command claude --permission-mode auto "$@" ;;
+        *)
+          echo "_claude_launch: unknown mode \"$mode\"" >&2
+          return 1 ;;
+      esac ;;
   esac
+}
+
+claude() {
+  _claude_launch auto "$@"
+}
+
+unalias clauded 2>/dev/null
+clauded() {
+  _claude_launch skip "$@"
 }
 # Codex のラッパー関数。managed app-server が稼働中なら TUI を同じ app-server へ接続する。
 # 管理・非対話サブコマンドは remote 接続せず、従来どおり直接実行する。

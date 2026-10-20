@@ -98,6 +98,16 @@ HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" CLAUDE_ENV_FILE="$WRAPPER_ENV" 
 grep -Fq 'claude:--permission-mode auto --version' "$EVENT_LOG" || { echo "❌ wrapped Claude command was not launched"; exit 1; }
 echo "✅ claude wrapper warning order test passed"
 
+echo "Testing clauded wrapper launches Claude with --dangerously-skip-permissions..."
+: > "$EVENT_LOG"
+HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" clauded --version 2> "$TEST_ROOT/clauded.err"
+[[ "$(grep -c '^claude:' "$EVENT_LOG")" == "1" ]] || { echo "❌ clauded launched Claude an unexpected number of times"; exit 1; }
+grep -Fxq 'claude:--dangerously-skip-permissions --version' "$EVENT_LOG" || { echo "❌ clauded did not pass --dangerously-skip-permissions"; exit 1; }
+: > "$EVENT_LOG"
+HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" clauded rc 2> "$TEST_ROOT/clauded-rc.err"
+grep -Fxq 'claude:rc' "$EVENT_LOG" || { echo "❌ clauded injected flags into remote-control subcommand"; exit 1; }
+echo "✅ clauded wrapper test passed"
+
 
 echo "Testing codex wrapper auto-connects only TUI launches to running app-server..."
 declare -F codex >/dev/null || { echo "❌ codex wrapper function is not defined"; exit 1; }

@@ -63,7 +63,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 
 - `tests/` 配下にシェルスクリプトのテストがあり、以下の 3 系統に分かれる:
   - `tests/syntax/`: `test_bash_syntax.sh` / `test_shellcheck.sh` / `test_json_schema.sh`(構文・shellcheck・JSON スキーマ)。
-  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_measure_usage.sh`(単体テスト)。
+  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_deep_review_layout.sh` / `test_measure_usage.sh`(単体テスト)。
   - `tests/integration/`: `test_chezmoi_apply.sh`(`chezmoi apply` の統合テスト) / `test_gitleaks.sh`(固定した gitleaks 実バイナリの回帰テスト)。
 - CI は `.github/workflows/` の `unit-test.yml` / `integration-test.yml` / `pr-checks.yml` で pull_request 時に自動実行される(`unit-test.yml` / `integration-test.yml` は master への push 時にも実行)。
 - 通知・フック関連スクリプト(`home/dot_claude/scripts/`、`home/dot_claude/hooks/`、`home/dot_codex/` 等)や `home/bin/` のヘルパーを変更・削除した場合、対応するテストの参照が古くなっていないか確認する。
@@ -89,6 +89,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 - chezmoi によるデプロイ先 (`~/.claude/` 配下など、`home/dot_*` から展開される全ての実体) を直接編集してはならない。必ず対応する `home/dot_*` 配下のソースファイルを編集し、動作確認が必要な場合は `chezmoi apply` (または `chezmoi diff`) で反映すること。デプロイ先を直接編集すると、その後の `chezmoi apply`/`chezmoi update` (自動実行される場合を含む) によってソース側の内容で無言のまま上書き・巻き戻しされる。
 - 既存の managed file を rename / delete して target 側からも消す場合は、`home/.chezmoiremove` に旧 target path を追加する。`.claude` / `.codex` のように runtime state を持つディレクトリを `exact_` 化してはならない。
 - `chezmoi-update.service` / `.timer` は `home/dot_config/systemd/user/` と enable symlink で管理し、unit 変更時は run-on-change script が user manager を reload する。Linux の日次 timer は `Persistent=true` とし、`update.sh --force` を実行する。AI CLI 起動時の `update.sh` は 24 時間 throttle と `flock` を使い、TTY がない場合はローカル変更された managed file を `~/.cache/chezmoi-update/drift-backups/` に退避してから適用する。適用後は managed global config (`~/.config/mise/config.toml`) を明示して `mise install` を実行し、mise まで成功した場合だけ更新 timestamp を記録する。
+- `home/dot_claude/skills/deep-review/` は ZIP 単体でインポートできる自己完結構成を保つ。`SKILL.md` はスキル外(`~/.agents/` や `~/.claude/` 配下)のスクリプト・参照ファイルを指さず、`${CLAUDE_SKILL_DIR}` 基準で `scripts/`・`references/`・`reviewers/` を参照する。`scripts/` 配下は `executable_` を付けず `bash` 経由で呼び出す。Codex 向け `home/dot_agents/skills/deep-review/` のスクリプト・references とは内容を同期させる(`tests/unit/test_deep_review_layout.sh` が検証)。
 - `home/dot_claude/skills/check-container-status/` は、多数の Docker Compose プロジェクトが同居するディレクトリ(例: `/mnt/hdd/<マシン名>`)の稼働状況を、並列サブエージェント(`home/dot_claude/agents/container-status-checker.md` / `container-error-investigator.md`)で網羅的に確認するグローバルスキル。
 
 ## Claude Code フック / 通知機能

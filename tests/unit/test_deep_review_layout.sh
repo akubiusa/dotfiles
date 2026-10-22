@@ -29,6 +29,7 @@ else
 fi
 
 # --- SKILL.md がスキル外のスクリプト・参照ファイルを指していない ---
+# shellcheck disable=SC2088 # チルダはパスの文字列検索パターンであり展開しない
 if grep -nE '~/\.agents/skills/deep-review|~/\.claude/skills/deep-review' "$CLAUDE_DIR/SKILL.md"; then
   ng "SKILL.md references deep-review files outside the skill directory"
 else
@@ -38,6 +39,7 @@ fi
 if grep -q 'SKILL_DIR' "$CLAUDE_DIR/SKILL.md"; then ok "SKILL.md defines SKILL_DIR"; else ng "SKILL.md must define SKILL_DIR"; fi
 
 # SKILL.md が $SKILL_DIR/<path> で参照するファイルがすべて存在する
+# shellcheck disable=SC2016 # $SKILL_DIR はパターン中のリテラル文字列であり展開しない
 while IFS= read -r ref; do
   if [[ -e "$CLAUDE_DIR/$ref" ]]; then
     ok "SKILL.md reference resolves: $ref"

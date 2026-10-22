@@ -336,12 +336,18 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 - **PR/ローカル diff 両対応**: 引数ありで PR モード、引数なしでローカル diff モード
 - **既定は review モード**: コミット・push・PR 本文更新・作業ツリー変更を行わず、フックもブロックしない。書き込みは ledger と PR モードの開発者向けコメントのみ
 - **`--fix` モード（自分の PR またはローカル diff のみ）**: 検証済みの マージ前必須 指摘だけを自動修正する。PR モードではコミット → push を行い、ローカル diff モードでは作業ツリーのみ編集してコミットしない
-- **開発者向け PR コメント**: `~/.agents/skills/deep-review/scripts/` の `render-comment.sh` で生成し、`validate-comment.sh` で検証してから投稿する（`ledger.sh` が指摘の状態を管理する）
+- **開発者向け PR コメント**: スキルディレクトリ内 `scripts/` の `render-comment.sh` で生成し、`validate-comment.sh` で検証してから投稿する（`ledger.sh` が指摘の状態を管理する）
 - **偽陽性抑制**: 各エージェントに「無視すべきもの」を明示して精度を確保
 
 ### レビュー観点
 
 固定レビュアー 6 件は `home/dot_claude/skills/deep-review/reviewers/*.md` に 1 ファイル 1 観点で定義されており、`chezmoi apply` で `~/.claude/skills/deep-review/reviewers/*.md` にデプロイされる。
+
+#### ZIP でのインポート
+
+`home/dot_claude/skills/deep-review/` ディレクトリは、補助スクリプト（`scripts/`）、検証用リファレンス（`references/regression-cases.md`）、レビュアー定義（`reviewers/`）をすべて内包しており、このディレクトリだけを ZIP 化して Claude にインポートしても動作する。`SKILL.md` は `${CLAUDE_SKILL_DIR}` 基準でファイルを参照し、スクリプトは実行ビットに依存しないよう `bash "$SKILL_DIR/scripts/<name>.sh"` で呼び出す（`scripts/` 配下は `executable_` プレフィックスを付けず、リポジトリ上と展開後でファイル名が一致するようにしている）。
+
+Codex 向け（`home/dot_agents/skills/deep-review/`）にも同じスクリプトと `references/regression-cases.md` が置かれているため、変更時は両方を同期させる（`tests/unit/test_deep_review_layout.sh` が内容一致を検証する）。
 
 | 観点 | 内容 | 定義ファイル |
 |---|---|---|

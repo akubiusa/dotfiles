@@ -56,6 +56,11 @@ jobs:
         background: true
         run: bash tests/unit/test_deep_review_ledger.sh
 
+      - name: Run deep-review layout unit test
+        id: run-deep-review-layout-unit-test
+        background: true
+        run: bash tests/unit/test_deep_review_layout.sh
+
       - name: Run deep-review comment unit test
         id: run-deep-review-comment-unit-test
         background: true

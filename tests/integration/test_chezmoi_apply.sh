@@ -235,6 +235,14 @@ if [ ! -x "$HOME/.agents/skills/deep-review/scripts/ledger.sh" ] \
   exit 1
 fi
 
+# Claude 側 deep-review スキルが ZIP インポート可能な自己完結構成で展開されることを確認する。
+for f in scripts/ledger.sh scripts/render-comment.sh scripts/validate-comment.sh scripts/measure-usage.sh references/regression-cases.md; do
+  if [ ! -f "$HOME/.claude/skills/deep-review/$f" ]; then
+    echo "❌ Claude deep-review skill file not generated: $f"
+    exit 1
+  fi
+done
+
 echo "✅ Codex files generated successfully"
 
 # PR 後フローの skill 契約が chezmoi 展開後も保持されることを確認する。

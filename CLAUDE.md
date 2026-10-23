@@ -1,108 +1,108 @@
-## 目的
+## Purpose
 
-Claude Code の作業方針と、このリポジトリ固有のルールを示します。
+This document describes the working policy for Claude Code and the rules specific to this repository.
 
 @AGENTS.md
 
-## プロジェクト概要
+## Project Overview
 
-- 目的: chezmoi で dotfiles と AI エージェント設定を管理する。
-- 主な機能: シェル設定、tmux 設定、通知設定、エージェント設定のテンプレート化。
+- Purpose: manage dotfiles and AI agent settings with chezmoi.
+- Main features: templating of shell settings, tmux settings, notification settings, and agent settings.
 
-## 開発コマンド
+## Development Commands
 
-- `package.json` は存在しない。ビルド工程はなく、`chezmoi apply` でデプロイする。
-- ローカル検証は Docker 上で `chezmoi apply` を実行して結果を確認する。
-- テストは `tests/` 配下のシェルスクリプトを直接実行する(下記「テスト」参照)。
+- There is no `package.json`. There is no build step; deploy with `chezmoi apply`.
+- For local verification, run `chezmoi apply` in Docker and check the result.
+- Run the tests by executing the shell scripts under `tests/` directly (see "Testing" below).
 
-## アーキテクチャと主要ファイル
+## Architecture and Key Files
 
-- `home/`: chezmoi のソース。
-- `home/dot_*`: 実際の dotfiles を `dot_` で表現。
-- `home/dot_*/*.tmpl`: テンプレートファイル。
-- `home/dot_*/*.d`: 追加設定の分割配置。
+- `home/`: chezmoi source.
+- `home/dot_*`: actual dotfiles, expressed with the `dot_` prefix.
+- `home/dot_*/*.tmpl`: template files.
+- `home/dot_*/*.d`: split placement of additional settings.
 
-## chezmoi のファイル命名規則
+## chezmoi File Naming Rules
 
-chezmoi はソース側のプレフィックスを解釈してデプロイする。主なプレフィックス:
+chezmoi interprets source-side prefixes when deploying. Main prefixes:
 
-| ソースファイル名 | デプロイ後のファイル名 | 備考 |
+| Source file name | Deployed file name | Notes |
 |---|---|---|
-| `executable_foo.sh` | `foo.sh` (実行可能) | `executable_` は除去される |
-| `dot_foo` | `.foo` | `dot_` は `.` に変換される |
-| `symlink_foo` | `foo` (シンボリックリンク) | リンク先はファイル内容 |
+| `executable_foo.sh` | `foo.sh` (executable) | `executable_` is removed |
+| `dot_foo` | `.foo` | `dot_` is converted to `.` |
+| `symlink_foo` | `foo` (symbolic link) | The link target is the file content |
 
-**重要**: `executable_` プレフィックスはデプロイ時に除去される。そのため、スクリプトを外部から呼び出す設定ファイル (`settings.json` など) では、`executable_` を付けずにパスを記述すること。
+**Important**: The `executable_` prefix is removed at deploy time. Therefore, in configuration files that invoke scripts from outside (such as `settings.json`), write paths without `executable_`.
 
 ```jsonc
-// 正しい
+// Correct
 {"command": "bash ~/.claude/hooks/foo.sh"}
 
-// 誤り（chezmoi 適用後にファイルが存在しない）
+// Wrong (the file does not exist after chezmoi apply)
 {"command": "bash ~/.claude/hooks/executable_foo.sh"}
 ```
 
-`symlink_executable_` パターン（シンボリックリンクで `executable_` 付きの名前を作る回避策）は使用しない。
+Do not use the `symlink_executable_` pattern (a workaround that creates an `executable_`-prefixed name via a symbolic link).
 
-## 実装パターン
+## Implementation Patterns
 
-推奨:
-- シェル設定は `.d` ディレクトリに分割する。
+Recommended:
+- Split shell settings into `.d` directories.
 
-非推奨:
-- 秘密情報の平文コミット。
-- 一括で巨大な設定ファイルに追記する。
+Discouraged:
+- Committing secrets in plain text.
+- Appending everything to one huge configuration file.
 
-## コーディング規約
+## Coding Conventions
 
-- 言語: Bash / Zsh。
-- コミットメッセージは Conventional Commits に従う。
-- 既存ファイルの構成・命名パターンに合わせる。
+- Language: Bash / Zsh.
+- Follow Conventional Commits for commit messages.
+- Match the structure and naming patterns of existing files.
 
-## テスト
+## Testing
 
-- `tests/` 配下にシェルスクリプトのテストがあり、以下の 3 系統に分かれる:
-  - `tests/syntax/`: `test_bash_syntax.sh` / `test_shellcheck.sh` / `test_json_schema.sh`(構文・shellcheck・JSON スキーマ)。
-  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_deep_review_layout.sh` / `test_measure_usage.sh` / `test_language_policy.sh`。
-  - `tests/integration/`: `test_chezmoi_apply.sh`(`chezmoi apply` の統合テスト) / `test_gitleaks.sh`(固定した gitleaks 実バイナリの回帰テスト)。
-- CI は `.github/workflows/` の `unit-test.yml` / `integration-test.yml` / `pr-checks.yml` で pull_request 時に自動実行される(`unit-test.yml` / `integration-test.yml` は master への push 時にも実行)。
-- 通知・フック関連スクリプト(`home/dot_claude/scripts/`、`home/dot_claude/hooks/`、`home/dot_codex/` 等)や `home/bin/` のヘルパーを変更・削除した場合、対応するテストの参照が古くなっていないか確認する。
-- 変更後はローカルでも Docker 上で `chezmoi apply` を実行して結果を確認する。
+- Shell script tests live under `tests/` and fall into the following 3 groups:
+  - `tests/syntax/`: `test_bash_syntax.sh` / `test_shellcheck.sh` / `test_json_schema.sh` (syntax, shellcheck, JSON schema).
+  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_deep_review_layout.sh` / `test_measure_usage.sh` / `test_language_policy.sh`.
+  - `tests/integration/`: `test_chezmoi_apply.sh` (integration test for `chezmoi apply`) / `test_gitleaks.sh` (regression test against a pinned real gitleaks binary).
+- CI runs automatically on pull_request via `unit-test.yml` / `integration-test.yml` / `pr-checks.yml` under `.github/workflows/` (`unit-test.yml` / `integration-test.yml` also run on push to master).
+- When you change or delete notification/hook-related scripts (`home/dot_claude/scripts/`, `home/dot_claude/hooks/`, `home/dot_codex/`, etc.) or helpers under `home/bin/`, check that references in the corresponding tests have not become stale.
+- After changes, also run `chezmoi apply` in Docker locally and check the result.
 
-## ドキュメント更新ルール
+## Documentation Update Rules
 
-- リポジトリ構成・コマンド・テスト・セキュリティ方針を変えたときは、実態に合わせて次のドキュメントを更新する:
-  - `README.md`: 利用者向けの手順・機能説明。
-  - `CLAUDE.md`: Claude Code 向けの作業方針(このファイル)。
-  - `.github/copilot-instructions.md`: GitHub Copilot のコードレビュー観点。
-- リポジトリ向けのエージェント指示は `AGENTS.md`(言語規約のみ) / `CLAUDE.md` / `.github/copilot-instructions.md` の 3 点に集約する。Codex CLI のグローバル指示は `home/dot_codex/AGENTS.md`(デプロイ後 `~/.codex/AGENTS.md`)で別管理する。
+- When you change the repository structure, commands, tests, or security policy, update the following documents to match reality:
+  - `README.md`: instructions and feature descriptions for users.
+  - `CLAUDE.md`: working policy for Claude Code (this file).
+  - `.github/copilot-instructions.md`: review guidelines for GitHub Copilot code review.
+- Agent instructions for this repository are consolidated in 3 files: `AGENTS.md` (language policy only) / `CLAUDE.md` / `.github/copilot-instructions.md`. The global instructions for Codex CLI are managed separately in `home/dot_codex/AGENTS.md` (deployed as `~/.codex/AGENTS.md`).
 
-## リポジトリ固有
+## Repository-Specific
 
-- Git 設定は `~/.gitconfig.local` で管理（chezmoi 管理外）。
-- 通知系の環境変数は `~/.env` で管理（chezmoi 管理外）。
-- `.env.example` と `.gitconfig.local.example` をサンプルとして提供。
-- wakatime は別途管理するため、dotfiles での暗号化管理は行わない。
-- PR 作成先は `upstream` remote があればそれを既定とし、`home/bin/executable_gh-pr-target-repo.sh`（デプロイ後 `~/bin/gh-pr-target-repo.sh`）で解決する。
-- PR 作成時のレビュアー(`book000`)は `home/bin/executable_gh-pr-reviewer.sh`（デプロイ後 `~/bin/gh-pr-reviewer.sh`）で解決し、`gh pr create --reviewer` に渡す。PR 作成者が `book000` 本人、または `book000` が collaborator でない場合は何も出力せず、レビュアー指定をスキップする。
-- 依存バージョンの更新は `renovate.json` の Renovate (GitHub App) で管理する。`install.sh` に固定記述された mise 本体のバージョンなど、通常の `package.json` では追跡できない箇所は `regexManagers` で個別に対象化する。`gh`/`ghq`/`roots`/`gitleaks`/`ccstatusline` など mise 管理下のツールバージョンは `home/dot_config/mise/config.toml` への宣言により Renovate のネイティブな mise サポートで自動追跡される(`regexManagers` の追加設定は不要)。
-- chezmoi によるデプロイ先 (`~/.claude/` 配下など、`home/dot_*` から展開される全ての実体) を直接編集してはならない。必ず対応する `home/dot_*` 配下のソースファイルを編集し、動作確認が必要な場合は `chezmoi apply` (または `chezmoi diff`) で反映すること。デプロイ先を直接編集すると、その後の `chezmoi apply`/`chezmoi update` (自動実行される場合を含む) によってソース側の内容で無言のまま上書き・巻き戻しされる。
-- 既存の managed file を rename / delete して target 側からも消す場合は、`home/.chezmoiremove` に旧 target path を追加する。`.claude` / `.codex` のように runtime state を持つディレクトリを `exact_` 化してはならない。
-- `chezmoi-update.service` / `.timer` は `home/dot_config/systemd/user/` と enable symlink で管理し、unit 変更時は run-on-change script が user manager を reload する。Linux の日次 timer は `Persistent=true` とし、`update.sh --force` を実行する。AI CLI 起動時の `update.sh` は 24 時間 throttle と `flock` を使い、TTY がない場合はローカル変更された managed file を `~/.cache/chezmoi-update/drift-backups/` に退避してから適用する。適用後は managed global config (`~/.config/mise/config.toml`) を明示して `mise install` を実行し、mise まで成功した場合だけ更新 timestamp を記録する。
-- `home/dot_claude/skills/deep-review/` は ZIP 単体でインポートできる自己完結構成を保つ。`SKILL.md` はスキル外(`~/.agents/` や `~/.claude/` 配下)のスクリプト・参照ファイルを指さず、`${CLAUDE_SKILL_DIR}` 基準で `scripts/`・`references/`・`reviewers/` を参照する。`scripts/` 配下は `executable_` を付けず `bash` 経由で呼び出す。Codex 向け `home/dot_agents/skills/deep-review/` のスクリプト・references とは内容を同期させる(`tests/unit/test_deep_review_layout.sh` が検証)。
-- `home/dot_claude/skills/check-container-status/` は、多数の Docker Compose プロジェクトが同居するディレクトリ(例: `/mnt/hdd/<マシン名>`)の稼働状況を、並列サブエージェント(`home/dot_claude/agents/container-status-checker.md` / `container-error-investigator.md`)で網羅的に確認するグローバルスキル。
+- Git settings are managed in `~/.gitconfig.local` (outside chezmoi management).
+- Notification environment variables are managed in `~/.env` (outside chezmoi management).
+- `.env.example` and `.gitconfig.local.example` are provided as samples.
+- wakatime is managed separately, so dotfiles do not manage it with encryption.
+- The PR target defaults to the `upstream` remote if one exists, and is resolved by `home/bin/executable_gh-pr-target-repo.sh` (deployed as `~/bin/gh-pr-target-repo.sh`).
+- The reviewer (`book000`) at PR creation is resolved by `home/bin/executable_gh-pr-reviewer.sh` (deployed as `~/bin/gh-pr-reviewer.sh`) and passed to `gh pr create --reviewer`. If the PR author is `book000` themselves, or `book000` is not a collaborator, it prints nothing and the reviewer assignment is skipped.
+- Dependency version updates are managed by Renovate (GitHub App) via `renovate.json`. Places that a regular `package.json` cannot track, such as the mise core version hard-coded in `install.sh`, are targeted individually with `regexManagers`. Versions of mise-managed tools such as `gh`/`ghq`/`roots`/`gitleaks`/`ccstatusline` are tracked automatically by Renovate's native mise support through their declaration in `home/dot_config/mise/config.toml` (no extra `regexManagers` configuration is needed).
+- Never directly edit chezmoi deploy targets (everything expanded from `home/dot_*`, such as under `~/.claude/`). Always edit the corresponding source file under `home/dot_*`, and when verification is needed, apply it with `chezmoi apply` (or `chezmoi diff`). Directly editing a deploy target means it is silently overwritten and rolled back to the source contents by a later `chezmoi apply`/`chezmoi update` (including automatically run ones).
+- When you rename / delete an existing managed file and also want it removed from the target side, add the old target path to `home/.chezmoiremove`. Never make a directory that holds runtime state, such as `.claude` / `.codex`, `exact_`.
+- `chezmoi-update.service` / `.timer` are managed with `home/dot_config/systemd/user/` and enable symlinks, and when a unit changes, a run-on-change script reloads the user manager. The Linux daily timer uses `Persistent=true` and runs `update.sh --force`. `update.sh` at AI CLI startup uses a 24-hour throttle and `flock`, and when there is no TTY, it backs up locally modified managed files to `~/.cache/chezmoi-update/drift-backups/` before applying. After applying, it runs `mise install` with the managed global config (`~/.config/mise/config.toml`) specified explicitly, and records the update timestamp only if mise also succeeds.
+- Keep `home/dot_claude/skills/deep-review/` self-contained so that it can be imported as a standalone ZIP. `SKILL.md` must not point to scripts or reference files outside the skill (under `~/.agents/` or `~/.claude/`), and references `scripts/`, `references/`, and `reviewers/` relative to `${CLAUDE_SKILL_DIR}`. Files under `scripts/` do not get the `executable_` prefix and are invoked via `bash`. Keep the contents in sync with the scripts and references of `home/dot_agents/skills/deep-review/` for Codex (verified by `tests/unit/test_deep_review_layout.sh`).
+- `home/dot_claude/skills/check-container-status/` is a global skill that comprehensively checks the running status of a directory where many Docker Compose projects coexist (e.g. `/mnt/hdd/<machine name>`) using parallel sub-agents (`home/dot_claude/agents/container-status-checker.md` / `container-error-investigator.md`).
 
-## Claude Code フック / 通知機能
+## Claude Code Hooks / Notification Features
 
-Claude Code のフックは `home/dot_claude/private_settings.json` で設定され、`Stop` / `SubagentStop` / `PreToolUse` / `PostToolUse` / `PermissionRequest` / `Notification` / `UserPromptSubmit` を使う。役割は大きく 2 系統:
+Claude Code hooks are configured in `home/dot_claude/private_settings.json` and use `Stop` / `SubagentStop` / `PreToolUse` / `PostToolUse` / `PermissionRequest` / `Notification` / `UserPromptSubmit`. Their roles fall broadly into 2 groups:
 
-- **Discord 通知**: `home/dot_claude/scripts/completion-notify/` 配下のスクリプト(セッション完了、権限リクエスト、AskUserQuestion、Notification 等)。`~/.env` の `DISCORD_CLAUDE_WEBHOOK` と `DISCORD_CLAUDE_MENTION_USER_ID` を使用する。
-- **レビュー強制など**: `home/dot_claude/hooks/` 配下のスクリプト(deep-review(既定は review モードでブロックせず、`--fix` モードの ledger に未解決の マージ前必須 指摘がある場合だけブロックする。`lite-review` も同じ ledger で判定する)、レビュースレッド未解決チェック、rtk 書き換え、git config ガード等)。加えて `executable_detect-leaked-toolcall.sh` は、レビュー強制とは別の関心事として、アシスタントメッセージへのツールコール XML マークアップの漏洩を `Stop` / `SubagentStop` の両方で検出する。
+- **Discord notifications**: scripts under `home/dot_claude/scripts/completion-notify/` (session completion, permission requests, AskUserQuestion, Notification, etc.). They use `DISCORD_CLAUDE_WEBHOOK` and `DISCORD_CLAUDE_MENTION_USER_ID` from `~/.env`.
+- **Review enforcement, etc.**: scripts under `home/dot_claude/hooks/` (deep-review (by default it runs in review mode and does not block; it blocks only when the `--fix` mode ledger has an unresolved must-fix-before-merge finding; `lite-review` is judged by the same ledger), unresolved review thread check, rtk rewriting, git config guard, etc.). In addition, `executable_detect-leaked-toolcall.sh`, as a concern separate from review enforcement, detects leakage of tool-call XML markup into assistant messages on both `Stop` and `SubagentStop`.
 
-フックのコマンドや対象スクリプトを変更したときは、`tests/unit/test_hooks.sh` / `test_notifications.sh` の参照が古くなっていないか確認する。
+When you change a hook command or its target script, check that references in `tests/unit/test_hooks.sh` / `test_notifications.sh` have not become stale.
 
-## Git フック(シークレットスキャン)
+## Git Hook (Secret Scanning)
 
-`home/dot_config/git/hooks/executable_pre-commit`(デプロイ後 `~/.config/git/hooks/pre-commit`)が `core.hooksPath` 経由でグローバル pre-commit フックとして登録され、`gitleaks` によるステージ済み差分のシークレットスキャンを行う。フォールバック設定は `home/dot_gitleaks.toml`(デプロイ後 `~/.gitleaks.toml`)。
+`home/dot_config/git/hooks/executable_pre-commit` (deployed as `~/.config/git/hooks/pre-commit`) is registered as the global pre-commit hook via `core.hooksPath` and scans the staged diff for secrets with `gitleaks`. The fallback configuration is `home/dot_gitleaks.toml` (deployed as `~/.gitleaks.toml`).
 
-このフックや `gitleaks` コマンド自体のインストール方法(`home/dot_config/mise/config.toml` 経由の mise 管理、`install.sh` の `install_mise_tools`)を変更した場合、`tests/unit/test_hooks.sh` / `tests/unit/test_install.sh` / `tests/integration/test_chezmoi_apply.sh` / `tests/integration/test_gitleaks.sh` の参照が古くなっていないか確認する。
+When you change this hook or how the `gitleaks` command itself is installed (mise management via `home/dot_config/mise/config.toml`, `install_mise_tools` in `install.sh`), check that references in `tests/unit/test_hooks.sh` / `tests/unit/test_install.sh` / `tests/integration/test_chezmoi_apply.sh` / `tests/integration/test_gitleaks.sh` have not become stale.

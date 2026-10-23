@@ -37,10 +37,10 @@ else
 fi
 
 # 英語限定のファイルに日本語が混入していない
-if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex .github/copilot-instructions.md --include=*.md; then
-  ng "Japanese text found in home/dot_codex Markdown or .github/copilot-instructions.md"
+if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex home/dot_agents .github/copilot-instructions.md AGENTS.md CLAUDE.md --include=*.md; then
+  ng "Japanese text found in Markdown under home/dot_codex or home/dot_agents, or in .github/copilot-instructions.md, AGENTS.md, CLAUDE.md"
 else
-  ok "No Japanese text in home/dot_codex Markdown or .github/copilot-instructions.md"
+  ok "No Japanese text in Markdown under home/dot_codex or home/dot_agents, or in .github/copilot-instructions.md, AGENTS.md, CLAUDE.md"
 fi
 
 if [[ $FAILED -eq 0 ]]; then

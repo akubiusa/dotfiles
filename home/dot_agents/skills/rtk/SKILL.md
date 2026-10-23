@@ -1,11 +1,11 @@
 ---
 name: rtk
-description: Rust Token Killer の分析・履歴・探索・raw proxy コマンドを使うときの参照 skill。
+description: Reference skill for using Rust Token Killer's analysis, history, discovery, and raw proxy commands.
 ---
 
 # RTK
 
-Codex では Claude の hook によるコマンド自動書換えは使えない。必要な場合だけ明示的に `rtk` を実行する。
+In Codex, Claude's hook-based automatic command rewriting is unavailable. Run `rtk` explicitly, and only when needed.
 
 ```bash
 rtk --version
@@ -15,9 +15,9 @@ rtk discover
 rtk proxy <command>
 ```
 
-- `rtk gain`: token 節約の集計。
-- `rtk gain --history`: コマンド別の履歴。
-- `rtk discover`: Claude Code 履歴を対象にした分析であり、Codex 履歴を網羅しないことを明記して扱う。
-- `rtk proxy`: フィルタを通さず raw command を実行する。安全確認が必要なコマンドを迂回する目的では使わない。
+- `rtk gain`: aggregate token savings.
+- `rtk gain --history`: per-command history.
+- `rtk discover`: analysis targeting Claude Code history; state explicitly that it does not cover Codex history.
+- `rtk proxy`: run the raw command without filtering. Do not use it to bypass commands that require a safety check.
 
-`rtk gain` が失敗する場合は、同名の Rust Type Kit が PATH にある可能性を `which rtk` と `rtk --version` で確認する。
+If `rtk gain` fails, check with `which rtk` and `rtk --version` whether a same-named Rust Type Kit is on the PATH.

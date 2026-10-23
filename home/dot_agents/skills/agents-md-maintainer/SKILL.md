@@ -1,14 +1,14 @@
 ---
 name: agents-md-maintainer
-description: プロジェクトの AGENTS.md を実態と Codex の公式ベストプラクティスに照らして作成・保守するときに使う。AGENTS.md の新規作成、古い手順の更新、指示の整理を求められたときに使用する。
+description: Use to create and maintain a project's AGENTS.md against the actual state of the project and Codex's official best practices. Use when asked to create a new AGENTS.md, update outdated procedures, or tidy up instructions.
 ---
 
-# AGENTS.md メンテナー
+# AGENTS.md Maintainer
 
-`$agents-md-maintainer [ディレクトリ]`。省略時はカレントディレクトリを対象にする。
+`$agents-md-maintainer [directory]`. If omitted, target the current directory.
 
-1. 対象ディレクトリの存在・可読性を確認し、README、主要なマニフェスト、テスト・lint コマンド、レイアウト、既存の `AGENTS.md` を読む。
-2. 実在する build・test・format・deploy コマンド、生成物、構成、制約、レビュー基準だけを抽出する。存在しないコマンドや古いパスは残さない。
-3. Codex の durable guidance として、リポジトリ固有の作業手順・安全制約・完了条件を簡潔に記述する。広範な手順は skill へ分け、サブディレクトリ固有の規則はより近い `AGENTS.md` に置く。
-4. 適用可能な主要カテゴリの半数以上が欠ける、構造が壊れている、または実態と異なる記述が複数ある場合は全体を書き直す。それ以外は必要な節だけを更新する。文書がない場合は新規作成する。
-5. 本文の言語はリポジトリの言語規約を優先する。規約が無い場合に限り既存文書の言語を維持し、どちらも無ければユーザーに質問する(非対話なら保留して報告する)。変更後は方式、根拠、主な変更、検証方法を報告する。
+1. Confirm that the target directory exists and is readable, and read the README, the main manifests, the test and lint commands, the layout, and any existing `AGENTS.md`.
+2. Extract only the build, test, format, and deploy commands that actually exist, plus generated artifacts, structure, constraints, and review criteria. Do not keep nonexistent commands or stale paths.
+3. As durable guidance for Codex, concisely describe the repository-specific work procedures, safety constraints, and completion criteria. Split broad procedures out into skills, and put subdirectory-specific rules in the nearer `AGENTS.md`.
+4. If half or more of the applicable major categories are missing, the structure is broken, or there are multiple statements that differ from reality, rewrite the whole document. Otherwise update only the sections that need it. If no document exists, create one.
+5. Prefer the repository's language policy for the body language. Only when there is no such policy, keep the existing document's language; if neither exists, ask the user (if non-interactive, hold off and report). After the change, report the approach, the rationale, the main changes, and how it was verified.

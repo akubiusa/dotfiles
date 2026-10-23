@@ -1,27 +1,30 @@
-# 言語規約
+# Language Policy
 
-このリポジトリで作成する成果物の言語規約です。
+This document defines the language policy for deliverables created in this repository.
 
-## 日本語で記載するもの
+## Written in Japanese
 
-- コミットメッセージの `<description>`(Conventional Commits の type / scope は英語のまま)。
-- コードコメント・Docstring。
-- PR / Issue のタイトル・本文・レビューコメント。
-- `README.md` などのドキュメント。
+- The `<description>` of commit messages (the Conventional Commits type / scope stay in English).
+- Code comments and docstrings.
+- PR / Issue titles, bodies, and review comments.
+- Documents such as `README.md`.
 
-## 英語で記載するもの
+## Written in English
 
-- エラーメッセージ。
-- 技術識別子、コマンド、設定キー。
-- `home/dot_claude/`(展開先 `~/.claude/`)配下の Markdown。
-- `home/dot_codex/`(展開先 `~/.codex/`)配下の Markdown。
-- `.github/copilot-instructions.md`。
+- Error messages.
+- Technical identifiers, commands, and configuration keys.
+- Markdown under `home/dot_claude/` (deployed to `~/.claude/`).
+- Markdown under `home/dot_codex/` (deployed to `~/.codex/`).
+- Markdown under `home/dot_agents/`.
+- `CLAUDE.md`.
+- `AGENTS.md` (this file).
+- `.github/copilot-instructions.md`.
 
-## 表記ルール
+## Notation
 
-- 日本語と英数字の間には半角スペースを挿入する。
+- Insert a half-width space between Japanese and alphanumeric characters.
 
-## 例外
+## Exceptions
 
-- ローカライズ対象の UI 文言、引用、自動生成物、外部ソースの原文は、この規約による言語統一の対象外とする。
-- Git 履歴は書き換えない。
+- Localized UI strings, quotations, generated artifacts, and original text from external sources are excluded from the language unification required by this policy.
+- Git history is never rewritten.

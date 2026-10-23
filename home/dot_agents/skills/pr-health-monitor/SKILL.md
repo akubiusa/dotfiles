@@ -1,29 +1,29 @@
 ---
 name: pr-health-monitor
-description: PR 作成直後に本文、CI、競合、レビューを確認し、再開可能な PR 監視を開始するときに使う。明示的な `$pr-health-monitor` 呼び出し専用。
+description: Use right after creating a PR to check its body, CI, conflicts, and reviews, and to start a resumable PR monitor. Only for explicit `$pr-health-monitor` invocations.
 ---
 
-# PR ヘルスモニター
+# PR Health Monitor
 
-`$pr-health-monitor <PR 番号または URL>` は PR 作成後の確認を進め、XDG state に event を記録する観測だけを行う。watcher は観測専用で、cleanup、Git 変更、callback を実行しない。後処理は `$resume-pr-monitor` だけが行う。
+`$pr-health-monitor <PR number or URL>` drives the post-PR checks and only observes, recording events in the XDG state. The watcher is observation-only and never runs cleanup, Git changes, or callbacks. Follow-up actions are performed only by `$resume-pr-monitor`.
 
-PR 作成直後に monitor を開始する。PR 作成前の preflight は非変更で起動能力または選択する fallback だけを確認し、pane の登録、state/window の作成、watcher の起動は canonical PR URL の取得後にこの skill が行う。
+Start the monitor immediately after the PR is created. The preflight before PR creation is non-mutating and only verifies the launch capability or the fallback to be used. Registering the pane, creating the state/window, and starting the watcher are done by this skill after the canonical PR URL has been obtained.
 
-## 使い方
+## Usage
 
-- `$pr-health-monitor <PR 番号または URL>`
+- `$pr-health-monitor <PR number or URL>`
 
-## 手順
+## Steps
 
-1. PR を解決する。
-   - 番号だけなら `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
-   - `gh pr view` で取得した `url` を canonical `PR_URL` とし、state/watcher にはこの URL だけを渡す。
-2. canonical `PR_URL` の取得後に monitor を初期化する。
+1. Resolve the PR.
+   - For a bare number, prefer `gh-pr-target-repo.sh`, then the GitHub `upstream` remote.
+   - Use the `url` obtained from `gh pr view` as the canonical `PR_URL`, and pass only this URL to the state/watcher.
+2. Initialize the monitor after obtaining the canonical `PR_URL`.
 
-   - まず state を必ず初期化する。
-   - resolver は、現在の Codex に対応する tmux pane を安全に一意に選ぶ。有効な直接の `TMUX_PANE` はそのまま使い、それがない場合は parent process chain から一意に対応する pane だけを選ぶ。
-   - resolver が成功した場合にだけ、16 文字以上の random nonce を登録し、watcher を開始する。`start` は専用 tmux window に supervisor を起動し、observer と dispatcher を継続実行する。
-   - `start` の readiness 確認と、失敗時の `foreground_required` への fail-closed fallback は後述のとおり維持する。
+   - Always initialize the state first.
+   - The resolver safely and uniquely selects the tmux pane that corresponds to the current Codex. A valid direct `TMUX_PANE` is used as is; otherwise only the pane that uniquely corresponds via the parent process chain is selected.
+   - Only when the resolver succeeds, register a random nonce of at least 16 characters and start the watcher. `start` launches a supervisor in a dedicated tmux window, which keeps running the observer and the dispatcher.
+   - Keep the readiness check of `start` and the fail-closed fallback to `foreground_required` on failure, as described below.
 
    ```bash
    ~/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh init --pr-url "$PR_URL"
@@ -38,30 +38,30 @@ PR 作成直後に monitor を開始する。PR 作成前の preflight は非変
    fi
    ```
 
-   `start` は専用 window の作成だけでは成功にしない。parent は launch ごとの random token を supervisor に渡し、child は token、PID、process identity を live lock owner metadata に記録する。window ID を取得後、bounded interval で同じ launch token の live lock と同じ PID の state を待ち、両方を確認できた時だけ active と報告する。確認に失敗した場合はその window を停止し、別 launch の active watcher を上書きせず `foreground_required` と watcher PID の clear を記録する。
+   `start` does not count as successful merely because the dedicated window was created. The parent passes a per-launch random token to the supervisor, and the child records the token, PID, and process identity in the live lock owner metadata. After obtaining the window ID, wait within a bounded interval for a live lock with the same launch token and a state with the same PID, and report active only when both are confirmed. If confirmation fails, stop that window, do not overwrite an active watcher from another launch, and record `foreground_required` and a clear of the watcher PID.
 
-   - monitor 初期化の失敗は incomplete/unmonitored として扱う。complete または monitoring と報告しない。
-   - failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含める。state を書ける場合は `foreground_required` を記録する。
-   - start が成功した後の initial CI/review observation が失敗しても watcher は active と報告する。`foreground_required` を追加または上書きせず、active な watcher を incomplete/unmonitored と報告してはならない。
-   - 初期観測の失敗は active な watcher と区別して報告する。failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含める。fresh な GitHub access がまだない場合はその再開を明示的に予定する。
+   - Treat a monitor initialization failure as incomplete/unmonitored. Do not report it as complete or monitoring.
+   - The failure report includes the canonical PR URL, the failed stage, fresh evidence, and the exact recovery command `$resume-pr-monitor <PR_URL>`. If the state is writable, record `foreground_required`.
+   - Report the watcher as active even if the initial CI/review observation fails after start succeeds. Do not add or overwrite `foreground_required`, and never report an active watcher as incomplete/unmonitored.
+   - Report an initial observation failure separately from the active watcher. The failure report includes the canonical PR URL, the failed stage, fresh evidence, and the exact recovery command `$resume-pr-monitor <PR_URL>`. If there is not yet fresh GitHub access, explicitly schedule that resume.
 
    ```bash
    ~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh watch --pr-url "$PR_URL"
    ```
 
-   state は `${XDG_STATE_HOME:-~/.local/state}/codex-pr-monitor/` に最小限の PR metadata と pending/acknowledged event だけを保存し、atomic lock で重複 watcher を防ぐ。GlitchTip callback descriptor は state に保存しない。foreground terminal を使えない場合は health check を止めず、`$resume-pr-monitor <PR_URL>` を実行する。ChatGPT Desktop/Web の Scheduled Tasks を使う場合も project context の resume を予定し、local shell を detached 実行するものとして扱わない。
-3. PR 本文を current status に更新する。更新前に `gh pr view "$PR_URL" --json body` で現行本文を取得し、既存の必要な link（特に `GlitchTip Issue: <permalink URL>`）を保持する。本文には概要、変更内容、実行済み検証、現在の CI/レビュー状態、前提・未解決事項だけを記載し、更新履歴は列挙しない。
-4. `gh pr view "$PR_URL" --json mergeable,mergeStateStatus` と `gh pr checks "$PR_URL" --watch` で初期の競合と CI を確認する。失敗時は `gh run view <RUN_ID> --log-failed` で原因を調べる。watcher も CI failure/conflict を durable event として記録する。
-5. Codex のローカルレビューを実行する。
-   - `gh pr view "$PR_URL" --json headRefName,baseRefName` で head/base を取得する。
-   - 現在の worktree が対象 PR の repository と head に対応することを `git remote -v` と branch で確認する。対応しない worktree で修正や `codex review` を推測実行しない。
-   - 対応する場合だけ target remote の base ref を確認し、必要なら `git fetch <target-remote> <base-ref>` を実行して `codex review --base <target-remote>/<base-ref>` を使う。`origin/master` を固定値にしない。
-   - 対応する checkout がない場合は、その事実を報告し、対象 repository を明示して clone/worktree を用意してから再実行する。PR の diff と review threads の確認は続けられるが、ローカル修正は行わない。
-6. `request-review-copilot` が利用できる場合だけ review を依頼する。Copilot の観測は watcher に統合し、`wait-for-copilot-review.sh` を background 起動しない。
-7. CI、競合、本文、ローカルレビュー、Copilot request、tmux monitor の状態または resume fallback を報告する。fresh な evidence のみを報告する。過去の watcher event は fresh な GitHub state で再確認できるまで現在の状態として扱わない。dispatcher は lifecycle hook が `ready` と記録した pane へだけ固定の `$resume-pr-monitor` prompt を送る。user が ready 後に入力を始めた場合の入力混在 race は、user が許容した既知の制約である。
+   The state stores only minimal PR metadata and pending/acknowledged events under `${XDG_STATE_HOME:-~/.local/state}/codex-pr-monitor/`, and an atomic lock prevents duplicate watchers. The GlitchTip callback descriptor is not stored in state. If a foreground terminal is unavailable, do not stop the health check; run `$resume-pr-monitor <PR_URL>`. When using ChatGPT Desktop/Web Scheduled Tasks, also schedule the resume in the project context, and do not treat it as running a local shell detached.
+3. Update the PR body to the current status. Before updating, fetch the current body with `gh pr view "$PR_URL" --json body` and preserve the required existing links (especially `GlitchTip Issue: <permalink URL>`). The body contains only the overview, the changes, the verification performed, the current CI/review status, and prerequisites/unresolved items; do not list an update history.
+4. Check the initial conflicts and CI with `gh pr view "$PR_URL" --json mergeable,mergeStateStatus` and `gh pr checks "$PR_URL" --watch`. On failure, investigate the cause with `gh run view <RUN_ID> --log-failed`. The watcher also records CI failures/conflicts as durable events.
+5. Run the Codex local review.
+   - Get head/base with `gh pr view "$PR_URL" --json headRefName,baseRefName`.
+   - Confirm with `git remote -v` and the branch that the current worktree corresponds to the target PR's repository and head. Do not guess and run fixes or `codex review` in a worktree that does not correspond.
+   - Only when it corresponds, check the base ref on the target remote, run `git fetch <target-remote> <base-ref>` if needed, and use `codex review --base <target-remote>/<base-ref>`. Do not hard-code `origin/master`.
+   - If there is no corresponding checkout, report that fact, and rerun after preparing a clone/worktree that explicitly names the target repository. Checking the PR diff and review threads may continue, but no local fixes are made.
+6. Request a review with `request-review-copilot` only when it is available. Copilot observation is integrated into the watcher, so do not start `wait-for-copilot-review.sh` in the background.
+7. Report the status of CI, conflicts, the body, the local review, the Copilot request, and the tmux monitor, or the resume fallback. Report only fresh evidence. Do not treat past watcher events as the current state until they can be rechecked against fresh GitHub state. The dispatcher sends the fixed `$resume-pr-monitor` prompt only to a pane that the lifecycle hook has recorded as `ready`. The input-mixing race when the user starts typing after ready is a known constraint accepted by the user.
 
-## 境界
+## Boundaries
 
-- watcher は 30 秒間隔（`PR_MONITOR_INTERVAL` でテスト時のみ変更可能）で PR state、checks、会話コメント、レビュー、レビューコメントを actor を問わず poll し、連続 5 回の API failure で停止する。
-- `MERGED`/`CLOSED`、CI failure、conflict、review feedback は transition ごとに一度だけ記録する。検出した review feedback は `$handle-pr-reviews` に配送する。action processor は event lease を取得し、成功後にだけ acknowledge するため、session をまたいでも未処理状態を失わない。
-- local state は GlitchTip callback authority を持たない。GlitchTip Resolve は user が明示的に要求した verified flow でのみ、issue、permalink、PR body を再照合して実行する。
+- The watcher polls the PR state, checks, conversation comments, reviews, and review comments regardless of actor at a 30-second interval (changeable via `PR_MONITOR_INTERVAL` for tests only), and stops on 5 consecutive API failures.
+- `MERGED`/`CLOSED`, CI failure, conflict, and review feedback are each recorded once per transition. Detected review feedback is delivered to `$handle-pr-reviews`. The action processor acquires an event lease and acknowledges only after success, so unprocessed state is not lost across sessions.
+- The local state holds no GlitchTip callback authority. GlitchTip Resolve is performed only in a verified flow that the user explicitly requested, after re-checking the issue, permalink, and PR body.

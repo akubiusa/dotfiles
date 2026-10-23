@@ -4,6 +4,12 @@ case ":$PATH:" in
   *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
+# skill が参照する gh-pr-target-repo.sh などのヘルパーを PATH から呼べるようにする。既存コマンドを遮蔽しないよう末尾に追加する
+case ":$PATH:" in
+  *":$HOME/bin:"*) ;;
+  *) export PATH="$PATH:$HOME/bin" ;;
+esac
+
 # 子プロセスの非対話 Bash にも同じ環境初期化を適用する
 if [ -z "${BASH_ENV:-}" ] && [ -f "$HOME/.bash_env" ]; then
   export BASH_ENV="$HOME/.bash_env"

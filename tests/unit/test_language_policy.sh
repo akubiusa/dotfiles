@@ -51,7 +51,7 @@ else
 fi
 
 # コードフェンス内ではなく単独行としての取り込みを要求する
-if match grep -qE '^@AGENTS\.md$' CLAUDE.md; then
+if match awk '/^```/ { f = !f; next } !f && /^@AGENTS\.md$/ { found = 1 } END { exit !found }' CLAUDE.md; then
   ok "CLAUDE.md imports @AGENTS.md"
 else
   ng "CLAUDE.md does not import @AGENTS.md"

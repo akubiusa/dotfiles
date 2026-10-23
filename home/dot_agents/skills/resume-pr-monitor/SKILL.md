@@ -1,28 +1,28 @@
 ---
 name: resume-pr-monitor
-description: PR monitor の状態を再観測して、lease を取得した pending event だけを安全に処理するときに使う。`$resume-pr-monitor <PR番号またはURL>`。
+description: Use to re-observe the PR monitor state and safely process only the pending events whose lease has been acquired. `$resume-pr-monitor <PR number or URL>`.
 ---
 
 # PR Monitor Resume
 
-`$resume-pr-monitor <PR 番号または URL> [--event-id <type:generation>]` は action processor の唯一の入口である。tmux dispatcher から届く event ID は `[a-z_]+:[0-9]+` だけを受け付け、同じ event を再配送されても action lease と acknowledge state により idempotent に扱う。watcher と Copilot watcher は event を記録・通知するだけで、cleanup、Git 変更、review handling、GlitchTip 更新を実行しない。
+`$resume-pr-monitor <PR number or URL> [--event-id <type:generation>]` is the only entry point of the action processor. The only event IDs accepted from the tmux dispatcher are those matching `[a-z_]+:[0-9]+`, and even if the same event is redelivered, it is handled idempotently through the action lease and the acknowledge state. The watcher and the Copilot watcher only record and notify events; they do not run cleanup, Git changes, review handling, or GlitchTip updates.
 
-## Reconcile してから処理する
+## Reconcile before processing
 
-1. `gh pr view` で canonical `PR_URL` を解決する。番号のみでは `gh-pr-target-repo.sh`、次に GitHub の `upstream` remote を優先する。
-2. 最初に `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh once --pr-url "$PR_URL"` を実行する。この command は PR state、checks/conflict、会話コメント、レビュー、レビューコメントを actor を問わず fresh GitHub response から観測し、不足している close、CI failure（run URL を含む）、conflict、review feedback event を state lock 下で enqueue する。API 取得に失敗したら action を実行せず停止する。
-3. `--event-id <type:generation>` が与えられた場合は、その ID と完全に一致する event だけを対象にする。`watch-pr.sh once` によって同種の新しい generation が作られ、指定 ID が一致しなくなった場合は何も処理せず停止する。event を列挙する通常の resume では、各 action/event について新しいランダム lease ID で `claim --lease-id <ID> --lease-seconds 300` を取得する。指定 ID を処理する場合は `claim --event-id <type:generation> --lease-id <ID> --lease-seconds 300` を使う。claim が exit 3 なら、別の resume が所有しているか event は既に処理済み・stale なので skip する。
-4. 長時間 action の前には同じ lease ID で 60 秒ごとに `renew --lease-id <ID> --lease-seconds 300` を実行する heartbeat を開始し、action の終了後に停止する。renew が exit 3 なら ownership を失ったため action を開始・継続せず、結果を報告する。heartbeat は lease を取得した resume だけが実行する。
-5. action が成功した場合だけ同じ lease ID で `ack` を実行する。失敗、再検証不一致、またはユーザー判断待ちは同じ lease ID で `release` を実行して pending に戻す。lease のない `ack` は行わない。ack/release 後は heartbeat を停止する。
+1. Resolve the canonical `PR_URL` with `gh pr view`. For a bare number, prefer `gh-pr-target-repo.sh`, then the GitHub `upstream` remote.
+2. First run `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh once --pr-url "$PR_URL"`. This command observes the PR state, checks/conflict, conversation comments, reviews, and review comments regardless of actor from fresh GitHub responses, and enqueues any missing close, CI failure (including the run URL), conflict, and review feedback events under the state lock. If fetching from the API fails, stop without running any action.
+3. If `--event-id <type:generation>` is given, target only the event that exactly matches that ID. If `watch-pr.sh once` creates a newer generation of the same type and the specified ID no longer matches, process nothing and stop. In a normal resume that enumerates events, acquire `claim --lease-id <ID> --lease-seconds 300` with a new random lease ID for each action/event. When processing a specified ID, use `claim --event-id <type:generation> --lease-id <ID> --lease-seconds 300`. If claim exits with 3, another resume owns it or the event is already processed or stale, so skip it.
+4. Before a long-running action, start a heartbeat that runs `renew --lease-id <ID> --lease-seconds 300` with the same lease ID every 60 seconds, and stop it after the action ends. If renew exits with 3, ownership was lost, so do not start or continue the action and report the result. Only the resume that acquired the lease runs the heartbeat.
+5. Run `ack` with the same lease ID only if the action succeeded. On failure, a revalidation mismatch, or waiting for a user decision, run `release` with the same lease ID to return it to pending. Never `ack` without a lease. Stop the heartbeat after ack/release.
 
-## Event ごとの action
+## Action per event
 
-- `close.cleanup`: fresh PR state が state の terminal value (`MERGED`/`CLOSED`) と一致する場合だけ `$pr-cleanup <PR_URL>` を実行する。
-- `review_feedback`: fresh GraphQL query で review feedback の存在を再確認し、`$handle-pr-reviews <PR_URL>` を実行する。この skill は author を含むすべての actor の未解決レビューとコメントを処理する。
-- `copilot_review`: 既存 state との互換用 event。fresh GraphQL query でレビューを再確認し、`$handle-pr-reviews <PR_URL>` を実行する。
-- `ci_failure`: event の `run_url` を使う。空または stale なら `gh pr checks "$PR_URL" --json name,bucket,link` から failed/cancelled check の link を解決し、`gh run view <RUN_ID> --log-failed` で確認する。失敗が継続中なら event は pending のままにする。
-- `conflict`: fresh `mergeable`/`mergeStateStatus` が conflict を示す間は event を pending のままにする。rebase、merge、force push は実行しない。
+- `close.cleanup`: Run `$pr-cleanup <PR_URL>` only if the fresh PR state matches the state's terminal value (`MERGED`/`CLOSED`).
+- `review_feedback`: Recheck the existence of review feedback with a fresh GraphQL query, then run `$handle-pr-reviews <PR_URL>`. This skill handles unresolved reviews and comments from all actors, including the author.
+- `copilot_review`: An event kept for compatibility with existing state. Recheck the review with a fresh GraphQL query, then run `$handle-pr-reviews <PR_URL>`.
+- `ci_failure`: Use the event's `run_url`. If it is empty or stale, resolve the link of the failed/cancelled check from `gh pr checks "$PR_URL" --json name,bucket,link` and check it with `gh run view <RUN_ID> --log-failed`. If the failure is ongoing, leave the event pending.
+- `conflict`: Leave the event pending while the fresh `mergeable`/`mergeStateStatus` indicates a conflict. Do not run rebase, merge, or force push.
 
-GlitchTip Resolve は durable state callback に保存しないし、自動実行もしない。GlitchTip flow で user が明示的に Resolve を求めた場合だけ、`get_issue(issue_id)`、issue permalink、canonical PR body の正確な `GlitchTip Issue: <permalink URL>`、PR が `MERGED` であることをその時点で再確認して `update_issue(issue_id, status: "resolved")` を実行する。`CLOSED`、metadata 不一致、取得失敗では実行しない。この照合は cryptographic provenance ではないため、任意の state descriptor や argument を callback authority として扱わない。
+GlitchTip Resolve is not stored in a durable state callback and is not run automatically. Only when the user explicitly asks for Resolve in the GlitchTip flow, re-verify at that moment `get_issue(issue_id)`, the issue permalink, the exact `GlitchTip Issue: <permalink URL>` in the canonical PR body, and that the PR is `MERGED`, then run `update_issue(issue_id, status: "resolved")`. Do not run it for `CLOSED`, a metadata mismatch, or a fetch failure. This verification is not cryptographic provenance, so do not treat an arbitrary state descriptor or argument as callback authority.
 
-全 event を reconcile した後も、`watch-pr.sh start` は tmux pane が登録されている場合に専用 tmux window で supervisor を起動し、pane が未登録、または launch/readiness 確認に失敗した場合だけ `foreground_required` を記録して終了する。持続した terminal を user が明示的に用意できる場合だけ、`observed.state` が `OPEN` の PR に `watch-pr.sh watch --pr-url "$PR_URL"` を foreground で実行する。それ以外は resume の再実行を fallback とする。ChatGPT Desktop/Web の Scheduled Tasks を利用できる場合は project context で resume を予定できるが、local shell の detached watcher として扱わない。terminal PR は watcher が final event を enqueue して終了するため、再開しない。restart、agent capacity 不足、tmux 非対応、watcher 停止後もこの手順を使う。
+After reconciling all events, `watch-pr.sh start` starts a supervisor in a dedicated tmux window if a tmux pane is registered, and records `foreground_required` and exits only if the pane is unregistered or the launch/readiness check fails. Only when the user can explicitly provide a persistent terminal, run `watch-pr.sh watch --pr-url "$PR_URL"` in the foreground for a PR whose `observed.state` is `OPEN`. Otherwise, rerunning the resume is the fallback. If ChatGPT Desktop/Web Scheduled Tasks are available, the resume can be scheduled in the project context, but it is not treated as a detached watcher in a local shell. A terminal PR is not resumed, because the watcher enqueues the final event and exits. Use this procedure also after a restart, insufficient agent capacity, lack of tmux support, or a watcher stop.

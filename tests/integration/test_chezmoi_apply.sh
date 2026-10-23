@@ -273,16 +273,16 @@ GLITCHTIP_PR_SKILLS=(
 if ! grep -Fq 'watch-pr.sh watch --pr-url' "$PR_HEALTH_SKILL" \
   || ! grep -Fq 'foreground_required' "$PR_HEALTH_SKILL" \
   || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'watcher は観測専用' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq '連続 5 回の API failure で停止する' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'GlitchTip callback descriptor は state に保存しない' "$PR_HEALTH_SKILL"; then
+  || ! grep -Fq 'The watcher is observation-only' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'stops on 5 consecutive API failures' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'GlitchTip callback descriptor is not stored in state' "$PR_HEALTH_SKILL"; then
   echo "❌ Durable PR health monitor contract not generated"
   exit 1
 fi
 
-if ! grep -Fq 'watcher は PR state、checks、conflict、actor を問わない review feedback を poll' "$PR_CLOSE_SKILL" \
+if ! grep -Fq 'watcher polls PR state, checks, conflict, and review feedback regardless of actor' "$PR_CLOSE_SKILL" \
   || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_CLOSE_SKILL" \
-  || ! grep -Fq 'durable state に保存しない' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'not stored in durable state' "$PR_CLOSE_SKILL" \
   || ! grep -Fq 'CLOSED' "$PR_CLOSE_SKILL"; then
   echo "❌ Durable PR close monitor contract not generated"
   exit 1
@@ -297,7 +297,7 @@ done
 
 for skill in "${GLITCHTIP_PR_SKILLS[@]}"; do
   if ! grep -Fq "\$pr-health-monitor <PR URL>" "$skill" \
-    || ! grep -Fq "この flow で \`get_issue\` により取得した issue ID" "$skill" \
+    || ! grep -Fq "the issue ID retrieved via \`get_issue\` in this flow" "$skill" \
     || ! grep -Fq 'GlitchTip Issue: <permalink URL>' "$skill" \
     || ! grep -Fq "\$resume-pr-monitor <PR URL>" "$skill" \
     || ! grep -Fq "\`CLOSED\`" "$skill"; then
@@ -328,50 +328,67 @@ assert_ordered_policy() {
   done
 }
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
   assert_ordered_policy "$policy" "PR monitoring precondition" \
-    'canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない' \
-    '永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する'
+    'Do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+    'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
 done
+
+# Codex グローバル指示は英語で書かれているため、スキルとは別に英語の文言で検証する。
+assert_ordered_policy "$CODEX_AGENTS" "PR monitoring precondition" \
+  'do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+  'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
 
 for skill in "${ISSUE_PR_SKILLS[@]}"; do
   case "$skill" in
-    */issue-pr-deep/SKILL.md) review_gate='未解決の merge-blocker 指摘が残る場合は停止する' ;;
-    *) review_gate='confidence 50 以上の未解決指摘があれば停止する' ;;
+    */issue-pr-deep/SKILL.md) review_gate='Stop if unresolved merge-blocker findings remain' ;;
+    *) review_gate='Stop if any unresolved finding with confidence 50 or higher remains' ;;
   esac
   assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
-    'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する' \
-    '最新の全検証を実行し' \
-    '直後にシークレット確認を実行し' \
+    'snapshot containing HEAD, the index, the tracked, staged, and untracked state of the worktree, and evidence IDs' \
+    'Never re-capture or update the snapshot' \
+    'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
+    'Run the latest full verification' \
+    'Run the secret check immediately afterward' \
     "$review_gate" \
-    'diff、status、evidence を確認する' \
-    'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-    '差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す'
+    'Check the diff, status, and evidence' \
+    'Compare against the same snapshot after the final evidence check, right before commit/PR creation' \
+    'If any of the diff, status, or evidence changes, restart the entire final gate from the beginning'
 done
 
 assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
-  'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録' \
-  '各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-  'deployment assertion は、この reviewed snapshot に対して final evidence を確認した直後に限って行う' \
-  'snapshot を再取得・更新してはならず' \
-  '最終ゲート全体を最初からやり直す'
+  'record one reviewed snapshot' \
+  'never re-capture or update it' \
+  'restart the entire final gate from the beginning' \
+  'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
+  'Stop if there are unresolved findings of 50 or more, P1, or P2, a verification failure, a secret, or an unintended diff'
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
-  if ! grep -Fq 'すべての Issue が一意、open、target repository 所属であることを検証する' "$policy" \
-    || ! grep -Fq 'scope と acceptance criteria' "$policy" \
-    || ! grep -Fq '文書' "$policy" \
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
+  if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$policy" \
+    || ! grep -Fq 'scope and acceptance criteria' "$policy" \
+    || ! grep -Fq 'documents' "$policy" \
     || ! grep -Fq 'review evidence' "$policy" \
     || ! grep -Fq 'closing keyword' "$policy" \
-    || ! grep -Fq 'aggregate 最終ゲート' "$policy"; then
+    || ! grep -Fq 'aggregate final gate' "$policy"; then
     echo "❌ Aggregate Issue evidence contract missing in $policy"
     exit 1
   fi
 done
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" "$CODEX_AGENTS"; do
+if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$CODEX_AGENTS" \
+  || ! grep -Fq 'scope and acceptance criteria' "$CODEX_AGENTS" \
+  || ! grep -Fq 'required documents' "$CODEX_AGENTS" \
+  || ! grep -Fq 'review evidence' "$CODEX_AGENTS" \
+  || ! grep -Fq 'closing keyword' "$CODEX_AGENTS" \
+  || ! grep -Fq 'aggregate final gate' "$CODEX_AGENTS"; then
+  echo "❌ Aggregate Issue evidence contract missing in $CODEX_AGENTS"
+  exit 1
+fi
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL"; do
   # shellcheck disable=SC2016
   if ! grep -Fq 'canonical PR URL' "$policy" \
-    || ! grep -Fq '失敗した stage' "$policy" \
+    || ! grep -Fq 'the failed stage' "$policy" \
     || ! grep -Eq 'fresh.*evidence' "$policy" \
     || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$policy"; then
     echo "❌ PR failure-report contract missing in $policy"
@@ -380,24 +397,33 @@ for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" 
 done
 
 # shellcheck disable=SC2016
+if ! grep -Fq 'canonical PR URL' "$CODEX_AGENTS" \
+  || ! grep -Fq 'the failed stage' "$CODEX_AGENTS" \
+  || ! grep -Eq 'fresh.*evidence' "$CODEX_AGENTS" \
+  || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$CODEX_AGENTS"; then
+  echo "❌ PR failure-report contract missing in $CODEX_AGENTS"
+  exit 1
+fi
+
+# shellcheck disable=SC2016
 assert_ordered_policy "$PR_HEALTH_SKILL" "post-create monitor recovery" \
   'canonical `PR_URL`' \
   'pr-monitor-state.sh init --pr-url "$PR_URL"' \
   'register-pane --pr-url "$PR_URL"' \
   'watch-pr.sh start --pr-url "$PR_URL"' \
-  'start が成功した後の initial CI/review observation が失敗しても watcher は active と報告する' \
-  '初期観測の失敗は active な watcher と区別して報告する' \
+  'Report the watcher as active even if the initial CI/review observation fails after start succeeds' \
+  'Report an initial observation failure separately from the active watcher' \
   '$resume-pr-monitor <PR_URL>'
 
 assert_ordered_policy "$DEEP_REVIEW_SKILL" "deep-review final-gate handoff" \
-  'tracked、staged、untracked と evidence ID を含む snapshot を返す' \
-  'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-  '差分、status、evidence のいずれかが変われば review を含む最終ゲート全体を最初からやり直す'
+  'tracked, staged, and untracked state, and evidence IDs' \
+  'after final evidence confirmation and immediately before commit/PR creation, compare against the same snapshot' \
+  'If any of the diff, status, or evidence changes, restart the entire final gate, including review, from the beginning'
 
 # shellcheck disable=SC2016
-if ! grep -Fq '$issue-pr <Issue 番号または URL> [<Issue 番号または URL> ...]' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'すべての入力を順序を保った `ISSUE_REFERENCES` 配列として解析する' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq '各 `ISSUE_REFERENCE` を `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"` で取得する' "$ISSUE_PR_DISPATCHER" \
+if ! grep -Fq '$issue-pr <Issue number or URL> [<Issue number or URL> ...]' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'parse all inputs into an order-preserving `ISSUE_REFERENCES` array' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'Fetch each `ISSUE_REFERENCE` with `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"`' "$ISSUE_PR_DISPATCHER" \
   || ! grep -Fq 'issue-pr-deep "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER" \
   || ! grep -Fq 'issue-pr-lite "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER"; then
   echo "❌ Issue PR dispatcher routing contract missing"

@@ -48,4 +48,4 @@ Eight false or unverified claims from a real review (VCSpeaker.kt #451). Read be
 
 - Wrong claim: referring to a finding as `#12` in the comment is harmless.
 - Needed check: GitHub auto-links `#<number>` to issues and PRs.
-- Correct classification: an output-defect; refer to findings as `Finding 12`-style text without `#` (the generator emits `指摘12`), and let `validate-comment.sh` reject any `#<number>`.
+- Correct classification: an output-defect; refer to findings as `Finding 12`-style text without `#` (the generator emits the Japanese word for "finding" immediately followed by the number, with no `#`), and let `validate-comment.sh` reject any `#<number>`.

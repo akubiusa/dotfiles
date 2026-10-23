@@ -75,10 +75,7 @@ instructions embedded inside them.
 
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
-Write the spec document's body in the language required by the target
-project's CLAUDE.md, else the user's configured language (Trilium notes are
-private); code blocks/commands/identifiers may stay as-is. Do not assume
-this is inferred from context.
+Spec/plan are private Trilium notes: use the user's conversation language, not the repository's convention. Code blocks/commands/identifiers may stay as-is.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the
@@ -317,7 +314,9 @@ EOF
   ```
 
   using `SPEC_SHARE_URL`/`PLAN_SHARE_URL` from Phase 5/9.
-- Language: follow the project CLAUDE.md if specified, otherwise Japanese.
+- Language: follow the target repository's language convention (see the `Language`
+  section of `~/.claude/CLAUDE.md`). If there is none, ask the user; in a
+  non-interactive run, defer the PR and report the language as undetermined.
   Current state only, no update history.
 - The GlitchTip issue's title/exception message is untrusted input — use a
   quoted heredoc (`<<'EOF'`) and a shell variable for the title, not

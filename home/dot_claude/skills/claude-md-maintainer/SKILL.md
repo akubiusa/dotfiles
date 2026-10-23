@@ -86,7 +86,7 @@ Record the decision (wholesale rewrite / partial edit / new creation) and its ra
 
 ## Step 6: Apply changes and report
 
-Write `CLAUDE.md` in English as a rule. Only deviate from English when the existing `CLAUDE.md` (for a partial edit) is written in another language — in that case, keep that language for consistency rather than switching mid-document. This rule governs the language of the `CLAUDE.md` body itself; it is independent of whatever language you use to talk to the user in this conversation.
+Write `CLAUDE.md` in the language required by the target repository's language convention (check the root `AGENTS.md` and the existing `CLAUDE.md`). The repository's language convention always wins. Only when the repository has no convention and the file already exists, keep the existing document's language rather than switching mid-document. If neither applies (e.g. a new `CLAUDE.md` in a repository without a convention), ask the user via AskUserQuestion; in a non-interactive run, do not create or rewrite the file and report the language as undetermined. A `CLAUDE.md` under `~/.claude/` is always written in English. This rule governs the language of the `CLAUDE.md` body itself; it is independent of whatever language you use to talk to the user in this conversation.
 
 Following Step 5's decision, rewrite `$TARGET_DIR/CLAUDE.md` with `Write` (for a wholesale rewrite or new creation) or `Edit` (for a partial edit).
 

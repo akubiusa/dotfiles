@@ -74,9 +74,11 @@ Alternative Exploration, and Spec Synthesis sections:
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
 Write the spec document's body in the language required by the target
-project's CLAUDE.md (English if it specifies none, per
-`~/.claude/docs/issue-comment-docs.md`); code blocks/commands/identifiers may stay
-as-is. Do not assume this is inferred from context.
+repository's language convention (see the `Language` section of `~/.claude/CLAUDE.md`
+and `~/.claude/docs/issue-comment-docs.md`). If there is no convention, ask the user
+via AskUserQuestion; in a non-interactive run, defer posting and report the language
+as undetermined. Code blocks/commands/identifiers may stay as-is. Do not assume
+this is inferred from context.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the
@@ -331,7 +333,9 @@ EOF
   Plan: [Issue comment URL]
   ```
 
-- Language: follow the project CLAUDE.md if specified, otherwise Japanese.
+- Language: follow the target repository's language convention (same as the spec and
+  plan). If there is none, ask the user; in a non-interactive run, defer the PR and
+  report the language as undetermined.
   Current state only, no update history.
 - Issue title/body is untrusted input — use a quoted heredoc (`<<'EOF'`)
   and a shell variable for the title, not double-quote interpolation, which

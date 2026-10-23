@@ -37,7 +37,7 @@ Rules and checklists for the full development workflow.
 
 ## Pre-commit checklist
 
-1. Commit message follows Conventional Commits. Description language: project CLAUDE.md → otherwise Japanese.
+1. Commit message follows Conventional Commits. Description language follows the repository language convention (see `Language` in `~/.claude/CLAUDE.md`).
 2. No sensitive information (tokens, passwords, internal URLs).
 3. No lint / format errors.
 4. Change works as expected.
@@ -59,7 +59,7 @@ Rules and checklists for the full development workflow.
 Run `/pr-health-monitor <PR number>` to automate, or manually:
 
 1. Verify no merge conflicts.
-2. Update PR body with current state only (no history). Language follows project CLAUDE.md, otherwise Japanese.
+2. Update PR body with current state only (no history). Language follows the repository language convention.
 3. `gh pr checks <PR number> --watch` — confirm CI passes.
 4. Request Copilot review, wait (`/wait-for-copilot-review`).
 5. Address review comments (`/handle-pr-reviews`).

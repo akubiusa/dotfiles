@@ -1,85 +1,85 @@
 ---
 name: ticket-pr
-description: Jira チケットの調査、実装、ブランチ作成、PR 作成、PR 後フロー開始までを Codex で一貫して進めるときに使う。明示的な `$ticket-pr` 呼び出し専用。
+description: Use to drive a Jira ticket end to end in Codex, from investigation through implementation, branch creation, PR creation, and starting the post-PR flow. For explicit `$ticket-pr` invocations only.
 ---
 
-# Jira チケットから PR を作成
+# Create a PR from a Jira ticket
 
-Jira チケットを起点に、要件整理からブランチ作成、実装、検証、コミット、PR 作成、PR 後フロー開始までを一気通貫で進める skill。
+A skill that takes a Jira ticket as its starting point and drives it end to end: requirement organization, branch creation, implementation, verification, commit, PR creation, and starting the post-PR flow.
 
-## 使い方
+## Usage
 
-- Codex CLI で `$ticket-pr` を選択し、Jira チケットキーまたは URL を渡す
-- 例:
+- Select `$ticket-pr` in Codex CLI and pass a Jira ticket key or URL
+- Examples:
   - `$ticket-pr PROJECT-123`
   - `$ticket-pr https://company.atlassian.net/browse/PROJECT-123`
 
-URL が渡された場合は、パスの末尾からチケットキーを抽出する。
+If a URL is passed, extract the ticket key from the end of the path.
 
-## 前提
+## Prerequisites
 
-- Jira MCP (`mcp__atlassian__*`) が利用可能であること
-- `gh` がインストール済みで認証済みであること
-- 現在のリポジトリで作業すること
-- 判断記録は Markdown ファイルではなく Jira チケットのコメントに残すこと
+- The Jira MCP (`mcp__atlassian__*`) is available
+- `gh` is installed and authenticated
+- Work in the current repository
+- Leave decision records in Jira ticket comments, not in Markdown files
 
-## ブランチタイプの決定
+## Determining the branch type
 
-Jira の課題タイプからブランチタイプを決定する:
+Determine the branch type from the Jira issue type:
 
-| Jira 課題タイプ | ブランチタイプ |
+| Jira issue type | Branch type |
 |---|---|
 | Epic / Story / Task / New Feature / Improvement | `feat` |
 | Bug | `fix` |
 | Documentation | `docs` |
 | Refactoring / Technical Debt | `refactor` |
-| Sub-task | 親チケットに準拠、不明なら `feat` |
+| Sub-task | Follow the parent ticket; `feat` if unknown |
 
-## ワークフロー
+## Workflow
 
-0. cloudId を解決する。
-   - 引数が URL（例: `https://company.atlassian.net/browse/PROJECT-123`）の場合: ホスト名（例: `company.atlassian.net`）を `cloudId` として使用する
-   - チケットキーのみの場合: `mcp__atlassian__getAccessibleAtlassianResources` で `cloudId` を取得する
-1. Jira チケット情報を取得する。
+0. Resolve the cloudId.
+   - If the argument is a URL (e.g. `https://company.atlassian.net/browse/PROJECT-123`): use the hostname (e.g. `company.atlassian.net`) as the `cloudId`
+   - If it is only a ticket key: obtain the `cloudId` with `mcp__atlassian__getAccessibleAtlassianResources`
+1. Fetch the Jira ticket information.
    - `mcp__atlassian__getJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>" })`
-   - Done / Closed / Resolved 等のステータスの場合は警告を表示し、処理を中断する
-2. 要件と不確実性を整理する。
-   - 変更対象
-   - 想定されるリスク
-   - 不明点
-   - 外部仕様が絡む場合は必ず Web 検索や一次情報で確認する
-3. 実装前の判断を行う。
-   - 曖昧さが高く、実装を進めると危険ならユーザーに質問する
-   - そうでなければ合理的な前提を明示して進める
-4. ブランチを作成する。
+   - If the status is Done / Closed / Resolved or similar, show a warning and abort
+2. Organize the requirements and uncertainties.
+   - What will change
+   - Expected risks
+   - Unknowns
+   - If external specifications are involved, always confirm via web search or primary sources
+3. Make the pre-implementation decision.
+   - If the ambiguity is high and proceeding would be dangerous, ask the user
+   - Otherwise, state reasonable assumptions explicitly and proceed
+4. Create the branch.
    - `git fetch --all --prune`
-   - ベースは `origin/master` を優先し、存在しなければデフォルトブランチを使う
-   - ブランチ名は Conventional Branch に従う
-   - **重要**: ブランチ名に Jira チケットキーを含めない（ブランチ名は GitHub PR ページに表示されるため）
-   - 例: `feat/add-user-authentication`
-5. 実装する。
-   - dotfiles では `home/` 配下の chezmoi ソースを更新する
-   - 関連ドキュメントも同期する
-6. 検証する。
-   - 最低限、変更内容に対応する syntax / unit / integration テストを実行する
-   - dotfiles の場合は `tests/` と `chezmoi apply` 系確認を優先する
-7. コミットと push を行う。
-   - Conventional Commits を使い、説明はプロジェクトの CLAUDE.md に従い、指定がない場合は日本語にする
-8. PR を作成する。
-   - `gh-pr-target-repo.sh` で PR 作成先のリポジトリを解決する
-   - `upstream` remote が存在する場合は、それを既定の PR 作成先にする
-   - `gh-pr-reviewer.sh <owner/repo>` で reviewer を解決し、book000 が出力された場合は `gh pr create` に `--reviewer` で指定する(出力が空なら指定しない)。非ゼロ終了した場合は PR を作成せず停止して報告する
-   - PR 本文はプロジェクトの CLAUDE.md に従い、指定がない場合は日本語で、最新状態のみを記載する
-   - 更新履歴の羅列は含めない
-   - **重要**: PR のタイトル・本文には Jira チケットキーや Jira への言及を含めない
-9. Jira チケットに完了コメントを投稿する。
-   - `mcp__atlassian__addCommentToJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>", commentBody: "<PR URL を含む完了メッセージ>" })` で投稿
-10. PR 作成後は直ちに `$pr-health-monitor` を使う。
-    - 例: `$pr-health-monitor 456`
-    - restart、agent capacity 不足、または watcher 停止後は `$resume-pr-monitor <PR URL>` で pending event を再確認して処理する。
+   - Prefer `origin/master` as the base, and use the default branch if it does not exist
+   - Follow Conventional Branch for the branch name
+   - **Important**: do not include the Jira ticket key in the branch name (the branch name is shown on the GitHub PR page)
+   - Example: `feat/add-user-authentication`
+5. Implement.
+   - In dotfiles, update the chezmoi source under `home/`
+   - Keep related documentation in sync
+6. Verify.
+   - At minimum, run the syntax / unit / integration tests corresponding to the change
+   - For dotfiles, prioritize `tests/` and `chezmoi apply` checks
+7. Commit and push.
+   - Use Conventional Commits, and the language of the description follows the repository's language convention (`AGENTS.md` / `CLAUDE.md`, etc.); if there is none, ask the user (if non-interactive, leave the language undecided, defer, and report)
+8. Create the PR.
+   - Resolve the PR target repository with `gh-pr-target-repo.sh`
+   - If an `upstream` remote exists, make it the default PR target
+   - Resolve the reviewer with `gh-pr-reviewer.sh <owner/repo>`, and if book000 is output, specify it with `--reviewer` on `gh pr create` (do not specify one if the output is empty). If it exits non-zero, do not create the PR; stop and report
+   - The language of the PR body follows the repository's language convention (`AGENTS.md` / `CLAUDE.md`, etc.); if there is none, ask the user (if non-interactive, leave the language undecided, defer, and report). Describe only the latest state
+   - Do not include a list of update history
+   - **Important**: do not include the Jira ticket key or any mention of Jira in the PR title or body
+9. Post a completion comment on the Jira ticket.
+   - Post with `mcp__atlassian__addCommentToJiraIssue({ cloudId: "<cloud-id>", issueIdOrKey: "<key>", commentBody: "<completion message including the PR URL>" })`
+10. Use `$pr-health-monitor` immediately after PR creation.
+    - Example: `$pr-health-monitor 456`
+    - After a restart, insufficient agent capacity, or a watcher stop, re-check and handle pending events with `$resume-pr-monitor <PR URL>`.
 
-## 注意事項
+## Notes
 
-- Codex CLI の公式機能では、Claude Code のような任意の custom slash command を追加しない。コマンド相当は skill に置き換える。
-- レビュー待ちや CI 待ちの間に別作業へ逸れない。PR 後フローを最後まで回す。
-- Jira への言及は GitHub Issues や PR には含めない。Jira チケット側にのみ記録する。
+- Codex CLI's official features do not add arbitrary custom slash commands like Claude Code. Command equivalents are replaced by skills.
+- Do not drift to other work while waiting for review or CI. Run the post-PR flow to the end.
+- Do not include mentions of Jira in GitHub Issues or PRs. Record them only on the Jira ticket side.

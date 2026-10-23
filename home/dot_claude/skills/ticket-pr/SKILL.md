@@ -238,10 +238,10 @@ In dotfiles, prefer verifying with `chezmoi apply`.
 
 ```bash
 git add <files>
-git commit -m "<type>: <Japanese description>"
+git commit -m "<type>: <description>"
 ```
 
-Follow Conventional Commits. `<description>` language: follow the project CLAUDE.md if specified; otherwise Japanese.
+Follow Conventional Commits. `<description>` language: follow the target repository's language convention (check the root `AGENTS.md`, then `CLAUDE.md`; see the `Language` section of `~/.claude/CLAUDE.md`). If there is none, ask the user; in a non-interactive run, defer the commit and report the language as undetermined.
 
 ### Create PR
 
@@ -258,9 +258,9 @@ gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title
 ```
 
 **Important**: do not include the Jira ticket key or any reference to Jira in the PR title or body.
-PR body: follow the project CLAUDE.md language if specified; otherwise Japanese. Current state only, no update history.
+PR body: follow the target repository's language convention (same rule as the commit description; ask the user if there is none, defer if non-interactive). Current state only, no update history.
 
-Example PR body structure (section headings in the project language; Japanese shown as default):
+Example PR body structure (section headings in the repository's language; Japanese shown only as an example):
 ```markdown
 ## 概要
 

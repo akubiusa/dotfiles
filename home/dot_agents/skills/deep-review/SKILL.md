@@ -1,6 +1,6 @@
 ---
 name: deep-review
-description: GitHub PR またはローカル差分を複数観点で深くレビューするときに使う。`$deep-review [--fix] [PR番号またはURL]`。
+description: Use to deeply review a GitHub PR or the local diff from multiple perspectives. `$deep-review [--fix] [PR number or URL]`.
 ---
 
 # Deep Review
@@ -19,9 +19,9 @@ Shared helpers: `~/.agents/skills/deep-review/scripts/{ledger,render-comment,val
 8. PR-mode developer comment (only if verified findings exist): generate with `render-comment.sh "$SID" <repo-dir>` (never hand-write); check with `validate-comment.sh <body-file> "$SID" <repo-dir>` and do not post on failure. Immediately before posting re-check `headRefOid`; if it differs from `baseline.head_sha` redo verification once, then report without posting. Update an existing `<!-- deep-review:v1 -->` comment by the current user via `render-comment.sh --update "$SID" <repo-dir> <existing-body-file>` and `gh api -X PATCH` (post a new comment if its markers are unreadable). Because `validate-comment.sh` requires every active block's permalink SHA to equal the ledger head SHA and `--update` keeps existing blocks verbatim, validation fails for retained findings if the PR head moved since the existing comment was posted; in that case do not force-post: re-render the retained findings as new blocks (re-verify them against the new head first) or, if that is not possible, post a new comment instead of patching. Post with `--body-file`, re-fetch, and confirm the body matches. The comment has no Score, confidence, scoring history, personal rules, or reasoning process.
 9. Final user report from `ledger.sh show "$SID"`: counts of verified, `unverified`, and `out-of-scope` findings, and unavailable reviewers.
 10. Final quality gate (every run, review or fix mode; not fix-only): stop when unresolved merge-blocker findings remain. Handoff rules:
-   - final quality gate の handoff では、開始時に記録した HEAD、index、worktree の tracked、staged、untracked と evidence ID を含む snapshot を返す。
-   - 各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する。
-   - 差分、status、evidence のいずれかが変われば review を含む最終ゲート全体を最初からやり直す。
-   - unresolved finding がないことを確認してから Conventional Commit、SSH push、PR 本文の現状更新を行う。他者の PR はコメント候補として報告するだけにする。
+   - In the final quality gate handoff, return the snapshot recorded at the start, containing HEAD, the index, the worktree's tracked, staged, and untracked state, and evidence IDs.
+   - After each substep, and again after final evidence confirmation and immediately before commit/PR creation, compare against the same snapshot.
+   - If any of the diff, status, or evidence changes, restart the entire final gate, including review, from the beginning.
+   - Only after confirming there are no unresolved findings, make the Conventional Commit, SSH push, and PR body update to reflect the current state. For another author's PR, only report comment candidates.
 
 Codex has no Claude Cron/Agent/Haiku pinning. Use whatever sub-agents are available, and record a non-responding reviewer as unavailable in the final report.

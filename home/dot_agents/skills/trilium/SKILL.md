@@ -1,15 +1,15 @@
 ---
 name: trilium
-description: GitHub Issue に紐付かないローカル Markdown を self-hosted Trilium に ETAPI 経由でアップロードするときに使う。
+description: Use to upload a local Markdown document not tied to a GitHub Issue to self-hosted Trilium via ETAPI.
 ---
 
-# Trilium 文書アップロード
+# Trilium Document Upload
 
-1. Issue に紐付く文書には使用しない。その場合は Issue コメントへ投稿する。
-2. `noteId` は `[a-zA-Z0-9_]{4,32}`、`topic` は `[a-zA-Z0-9_-]{1,25}`、`docType` は `spec` / `plan` / `investigation` に検証する。
-3. アップロード前に `bash ~/bin/trilium-search.sh <topic>` を実行し、既存文書があれば改訂か新規かをユーザーに確認する。
-4. API token、パスワード、内部 URL、認証情報を含まないことを確認する。
-5. `bash ~/bin/trilium-upload.sh <file-path> <noteId> <topic> <docType> <title> [--folder-title <title>]` を実行する。初回 topic だけ `--folder-title` を付ける。
-6. 失敗時はエラーをそのまま報告して停止する。成功時は share URL だけを報告する。
+1. Do not use this for documents tied to an Issue; post those as an Issue comment instead.
+2. Validate `noteId` as `[a-zA-Z0-9_]{4,32}`, `topic` as `[a-zA-Z0-9_-]{1,25}`, and `docType` as one of `spec` / `plan` / `investigation`.
+3. Before uploading, run `bash ~/bin/trilium-search.sh <topic>`, and if a document already exists, ask the user whether to revise it or create a new one.
+4. Confirm that the document contains no API token, password, internal URL, or credentials.
+5. Run `bash ~/bin/trilium-upload.sh <file-path> <noteId> <topic> <docType> <title> [--folder-title <title>]`. Add `--folder-title` only for the first document of a topic.
+6. On failure, report the error as is and stop. On success, report only the share URL.
 
-アップロードは外部状態を変更するため、ユーザーが明示していない限り実行前に確認する。
+Uploading changes external state, so confirm with the user before running it unless they have explicitly asked for it.

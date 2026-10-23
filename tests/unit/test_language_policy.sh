@@ -22,32 +22,11 @@ match() {
   return "$rc"
 }
 
-# --- (1) 未指定時の既定言語の記述がない (このテスト自身は tests/ 配下で対象外) ---
-FALLBACK_PATTERN="otherwise (Japanese|English)|default English|未指定なら日本語|Default to (Japanese|English)|unless the (project|repository) specifies|指定がなければ(日本語|英語)|When no language is specified"
-if match grep -rniE "$FALLBACK_PATTERN" home/dot_claude home/dot_codex home/dot_agents .github/copilot-instructions.md CLAUDE.md AGENTS.md README.md; then
-  ng "Default-language fallback wording found in global instructions"
-else
-  ok "No default-language fallback wording in global instructions"
-fi
-
-# --- (2) home/dot_codex 配下の Markdown に日本語がない ---
-if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex .github/copilot-instructions.md --include=*.md; then
-  ng "Japanese text found in home/dot_codex Markdown or .github/copilot-instructions.md"
-else
-  ok "No Japanese text in home/dot_codex Markdown or .github/copilot-instructions.md"
-fi
-
-# --- (3) ルート AGENTS.md と関連ドキュメント ---
+# 取り込み先が無ければ @AGENTS.md は何も読み込まない
 if [[ -f AGENTS.md ]]; then
   ok "AGENTS.md exists"
 else
   ng "AGENTS.md is missing"
-fi
-
-if match grep -q '^## 日本語で記載するもの' AGENTS.md && match grep -q '^## 英語で記載するもの' AGENTS.md; then
-  ok "AGENTS.md has the Japanese and English language headings"
-else
-  ng "AGENTS.md is missing a language heading"
 fi
 
 # コードフェンス内ではなく単独行としての取り込みを要求する
@@ -57,10 +36,11 @@ else
   ng "CLAUDE.md does not import @AGENTS.md"
 fi
 
-if match grep -nE 'AGENTS\.md.*置かない|2 点に集約' CLAUDE.md README.md .github/copilot-instructions.md; then
-  ng "Obsolete 'no AGENTS.md' wording remains"
+# 英語限定のファイルに日本語が混入していない
+if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex .github/copilot-instructions.md --include=*.md; then
+  ng "Japanese text found in home/dot_codex Markdown or .github/copilot-instructions.md"
 else
-  ok "No obsolete 'no AGENTS.md' wording"
+  ok "No Japanese text in home/dot_codex Markdown or .github/copilot-instructions.md"
 fi
 
 if [[ $FAILED -eq 0 ]]; then

@@ -323,7 +323,7 @@ done
 
 # Codex グローバル指示は英語で書かれているため、スキルとは別に英語の文言で検証する。
 assert_ordered_policy "$CODEX_AGENTS" "PR monitoring precondition" \
-  'Do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+  'do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
   'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
 
 for skill in "${ISSUE_PR_SKILLS[@]}"; do
@@ -333,6 +333,8 @@ for skill in "${ISSUE_PR_SKILLS[@]}"; do
   esac
   assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
     'snapshot containing HEAD, the index, the tracked, staged, and untracked state of the worktree, and evidence IDs' \
+    'Never re-capture or update the snapshot' \
+    'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
     'Run the latest full verification' \
     'Run the secret check immediately afterward' \
     "$review_gate" \
@@ -342,11 +344,11 @@ for skill in "${ISSUE_PR_SKILLS[@]}"; do
 done
 
 assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
-  'record one snapshot containing HEAD, the index, the worktree' \
-  'Compare against the same snapshot after each substep and after the final evidence check, right before commit/PR creation' \
+  'record one reviewed snapshot' \
+  'never re-capture or update it' \
+  'restart the entire final gate from the beginning' \
   'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
-  'Never re-capture or update the snapshot' \
-  'restart the entire final gate from the beginning'
+  'Stop if there are unresolved findings of 50 or more, P1, or P2, a verification failure, a secret, or an unintended diff'
 
 for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
   if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$policy" \

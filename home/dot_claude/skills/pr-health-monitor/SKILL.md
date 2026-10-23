@@ -155,17 +155,15 @@ This is a one-shot snapshot at PR-creation time, not continuous monitoring. When
 
 ### Task D: Update PR Body
 
-Following CLAUDE.md rules, write the PR body with the current final state of the branch only — no history. Language: follow the target repository's language convention (match the language of the existing PR body; if the repository has no convention, ask the user, or leave the body unchanged and report the language as undetermined in a non-interactive run).
+Following CLAUDE.md rules, write the PR body with the current final state of the branch only — no history. Language: follow the target repository's language convention (match the language of the existing PR body; if the repository has no convention, ask the user, or leave the body unchanged and report the language as undetermined in a non-interactive run). Localize the headings to the repository language, e.g. `## 概要` / `## 変更内容` for Japanese.
 
 ```bash
 gh pr edit "$PR_NUMBER" --body "$(cat <<'BODY'
 ## Summary
-(or the equivalent heading in the repository's language, e.g. ## 概要 for Japanese)
 
 ...
 
 ## Changes
-(or the equivalent heading in the repository's language, e.g. ## 変更内容 for Japanese)
 
 ...
 BODY

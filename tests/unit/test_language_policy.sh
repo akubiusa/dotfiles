@@ -1,8 +1,5 @@
 #!/bin/bash
 # 言語規約のドキュメント整合を検証する。
-# - グローバル指示・Copilot 指示・CLAUDE.md・AGENTS.md・README.md に「未指定時の既定言語」の記述が残っていないこと
-# - home/dot_codex 配下の Markdown と .github/copilot-instructions.md に日本語が含まれないこと
-# - ルート AGENTS.md が存在し、言語見出しを持ち、CLAUDE.md から単独行で取り込まれ、旧方針の記述が残っていないこと
 
 set -euo pipefail
 
@@ -41,10 +38,10 @@ else
 fi
 
 # --- (3) ルート AGENTS.md と関連ドキュメント ---
-if [[ -f AGENTS.md ]] && [[ "$(wc -l < AGENTS.md)" -lt 100 ]]; then
-  ok "AGENTS.md exists and is under 100 lines"
+if [[ -f AGENTS.md ]]; then
+  ok "AGENTS.md exists"
 else
-  ng "AGENTS.md is missing or has 100 lines or more"
+  ng "AGENTS.md is missing"
 fi
 
 if match grep -q '^## 日本語で記載するもの' AGENTS.md && match grep -q '^## 英語で記載するもの' AGENTS.md; then

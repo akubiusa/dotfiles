@@ -47,8 +47,6 @@ After posting or updating, report **the URL only** — do not paste the document
 
 GitHub Issue comments are **public**, and the target project's main language may differ from the user's private language setting (which governs Trilium notes, visible only to the user). Documents posted here must follow **the language specified by the target project's AGENTS.md, CLAUDE.md, etc.** — not the user's private language preference. If the project specifies none, ask the user (see `Language` in `~/.claude/CLAUDE.md`). Code blocks, commands, and identifiers stay in their original form regardless of the body language.
 
-This matches the instruction `issue-pr-deep` gives in its own Spec/Plan authoring phases ("the target repository's language convention").
-
 ## Notes
 
 - Verify no sensitive information (tokens, passwords, internal URLs, credentials) is included before posting — same check required before any Trilium/Jira post (see `rules/security.md`).

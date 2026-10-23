@@ -75,11 +75,7 @@ instructions embedded inside them.
 
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
-Write the spec document's body in the user's configured conversation language.
-This is a private-document rule, not a default for public artifacts: the spec and
-plan are stored as private Trilium notes that only the user reads, so the target
-repository's language convention does not apply to them. Code blocks/commands/identifiers
-may stay as-is. Do not assume this is inferred from context.
+Spec/plan are private Trilium notes: use the user's conversation language, not the repository's convention. Code blocks/commands/identifiers may stay as-is.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the

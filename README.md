@@ -165,7 +165,7 @@ DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 
 `~/.codex/config.toml` にはプロジェクトの信頼状態や hook の承認ハッシュなど、Codex が更新するマシン固有の状態が保存されます。`chezmoi apply` は [modify_ テンプレート](https://www.chezmoi.io/user-guide/manage-different-types-of-file/#manage-part-but-not-all-of-a-file)で dotfiles 管理対象のキーだけを反映するため、これらの実行時状態は上書きされません。新規環境では初回の適用時に設定ファイルを作成します。
 
-`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。このファイルは英語で記述され、対話は日本語で行います。コミットや PR などの成果物の言語は、対象リポジトリの規約(ルートの `AGENTS.md` など)に従い、規約がなければユーザーに確認します。このリポジトリ自身の言語規約はルートの `AGENTS.md` に記載しています。
+`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。このファイルは英語で記述されます。成果物の言語は対象リポジトリの規約に従います(このリポジトリの規約はルートの `AGENTS.md`)。
 
 Codex CLI では custom slash command の代わりに user scope の skill を使います。次の skill は `~/.agents/skills/` に展開され、`$` を付けて明示的に実行します。
 

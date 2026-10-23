@@ -174,6 +174,13 @@ if [ "$PROFILE_HOME_BIN_COUNT" -ne 1 ]; then
   echo "❌ .profile must add ~/bin to PATH exactly once (found $PROFILE_HOME_BIN_COUNT)"
   exit 1
 fi
+case "$PROFILE_PATH" in
+  *":$HOME/bin") ;;
+  *)
+    echo "❌ .profile must append ~/bin to the end of PATH so it cannot shadow system commands"
+    exit 1
+    ;;
+esac
 
 BASHRC_PATH=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" bash -c ". \"\$HOME/.bashrc.d/00-path.sh\"; printf '%s\n' \"\$PATH\"")
 BASHRC_LOCAL_BIN_COUNT=$(printf '%s\n' "$BASHRC_PATH" | tr ':' '\n' | grep -Fxc "$HOME/.local/bin" || true)

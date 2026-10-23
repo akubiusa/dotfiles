@@ -14,9 +14,9 @@
 ## Language
 
 - Respond in Japanese. Intermediate steps in English to save context. This is independent of the language of deliverables (commit descriptions, PR/Issue titles, bodies and review comments, code comments/docstrings, documents, spec/plan posts).
-- Deliverable language: the target repository's own convention wins. Check the root `AGENTS.md` explicitly (Claude Code does not auto-read it when a `CLAUDE.md` exists), then `CLAUDE.md`, then `.github/copilot-instructions.md` and similar.
+- Deliverable language: the target repository's own convention wins. Check the root `AGENTS.md` explicitly (Claude Code does not auto-read it when a `CLAUDE.md` exists), then `CLAUDE.md`, then `.github/copilot-instructions.md` and similar. A clear convention in a higher-priority file wins even if a lower-priority file disagrees; that is not a reason to ask.
 - No convention, or an ambiguous one: ask the user via AskUserQuestion. Never infer from owner, organization, visibility, or README language. For a new repository, ask and record the answer in a concise `AGENTS.md`.
-- Non-interactive runs: do not decide the language or create/rewrite `AGENTS.md`. Defer language-dependent public deliverables and report the language as undetermined.
+- Non-interactive runs: do not decide the language or create/rewrite `AGENTS.md`. Defer language-dependent deliverables and report the language as undetermined.
 - A visibility change alone never changes the language; confirm explicitly.
 - Exceptions: localized UI strings, quotations, technical identifiers, generated files, external source text. Never rewrite Git history.
 - Error messages: English unless the repository convention says otherwise.

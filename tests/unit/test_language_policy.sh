@@ -1,8 +1,8 @@
 #!/bin/bash
 # 言語規約のドキュメント整合を検証する。
-# - グローバル指示に「未指定時の既定言語」の記述が残っていないこと
+# - グローバル指示・Copilot 指示・CLAUDE.md・AGENTS.md・README.md に「未指定時の既定言語」の記述が残っていないこと
 # - home/dot_codex 配下の Markdown に日本語が含まれないこと
-# - ルート AGENTS.md が存在し、CLAUDE.md から取り込まれ、旧方針の記述が残っていないこと
+# - ルート AGENTS.md が存在し、言語見出しを持ち、CLAUDE.md から単独行で取り込まれ、旧方針の記述が残っていないこと
 
 set -euo pipefail
 
@@ -26,7 +26,8 @@ match() {
 }
 
 # --- (1) 未指定時の既定言語の記述がない (このテスト自身は tests/ 配下で対象外) ---
-if match grep -rniE "otherwise (Japanese|English)|default English|未指定なら日本語" home/dot_claude home/dot_codex home/dot_agents; then
+FALLBACK_PATTERN="otherwise (Japanese|English)|default English|未指定なら日本語|Default to (Japanese|English)|unless the (project|repository) specifies|指定がなければ(日本語|英語)|When no language is specified"
+if match grep -rniE "$FALLBACK_PATTERN" home/dot_claude home/dot_codex home/dot_agents .github/copilot-instructions.md CLAUDE.md AGENTS.md README.md; then
   ng "Default-language fallback wording found in global instructions"
 else
   ok "No default-language fallback wording in global instructions"
@@ -46,7 +47,14 @@ else
   ng "AGENTS.md is missing or has 100 lines or more"
 fi
 
-if match grep -q '^@AGENTS.md' CLAUDE.md; then
+if match grep -q '^## 日本語で記載するもの' AGENTS.md && match grep -q '^## 英語で記載するもの' AGENTS.md; then
+  ok "AGENTS.md has the Japanese and English language headings"
+else
+  ng "AGENTS.md is missing a language heading"
+fi
+
+# コードフェンス内ではなく単独行としての取り込みを要求する
+if match grep -qE '^@AGENTS\.md$' CLAUDE.md; then
   ok "CLAUDE.md imports @AGENTS.md"
 else
   ng "CLAUDE.md does not import @AGENTS.md"

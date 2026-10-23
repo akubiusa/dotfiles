@@ -16,7 +16,7 @@ paths:
 
 ## Documentation
 
-- Write and maintain JSDoc (docstring) for all functions, interfaces, and classes. Language: follow the project CLAUDE.md if it specifies one; otherwise English
+- Write and maintain JSDoc (docstring) for all functions, interfaces, and classes. Language: follow the repository language convention
 
   ```typescript
   /**

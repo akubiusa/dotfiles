@@ -45,9 +45,9 @@ After posting or updating, report **the URL only** — do not paste the document
 
 ## Document Language
 
-GitHub Issue comments are **public**, and the target project's main language may differ from the user's private language setting (which governs Trilium notes, visible only to the user). Documents posted here must follow **the language specified by the target project's CLAUDE.md (or AGENTS.md, etc.)** — not the user's private language preference. Default to English only if the project specifies no language. Code blocks, commands, and identifiers stay in their original form regardless of the body language.
+GitHub Issue comments are **public**, and the target project's main language may differ from the user's private language setting (which governs Trilium notes, visible only to the user). Documents posted here must follow **the language specified by the target project's AGENTS.md, CLAUDE.md, etc.** — not the user's private language preference. If the project specifies none, ask the user (see `Language` in `~/.claude/CLAUDE.md`). Code blocks, commands, and identifiers stay in their original form regardless of the body language.
 
-This matches the instruction `issue-pr-deep`/`glitchtip-pr-deep` already give in their own Spec/Plan authoring phases ("the language required by the target project's CLAUDE.md").
+This matches the instruction `issue-pr-deep` gives in its own Spec/Plan authoring phases ("the target repository's language convention").
 
 ## Notes
 

@@ -16,7 +16,7 @@ description: 小規模で曖昧さの少ない GitHub Issue を直接実装し�
    5. final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する。commit と PR 作成はこの reviewed snapshot だけを使う。
    6. 差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す。
 5. Issue ごとの review evidence を scope/acceptance criteria と対応付け、各 Issue の文書、review evidence、closing keyword が確認済みであることを確認する。すべての Issue の aggregate 最終ゲートが通るまで PR を作成しない。品質ゲートが通った後にのみ、各 Issue に実際に行った実装と検証の結果をコメントとして投稿する。
-6. 日本語 Conventional Commit を作成して SSH push する。PR には概要、変更内容、検証を含める。検証済みの各 Issue にだけ `Closes #<issue>` を含める。`--owner`/`--repo` で解決済みの target repository に明示して作成する。
+6. Conventional Commit を作成して SSH push する。コミット description と PR 本文の言語はリポジトリの言語規約(`AGENTS.md` / `CLAUDE.md` など)に従い、無ければユーザーに質問する(非対話なら言語を確定せず保留して報告する)。PR には概要、変更内容、検証を含める。検証済みの各 Issue にだけ `Closes #<issue>` を含める。`--owner`/`--repo` で解決済みの target repository に明示して作成する。
 7. PR 作成直後に `$pr-health-monitor <PR 番号または URL>` を実行する。monitor 初期化が失敗した場合の failure report には canonical PR URL、失敗した stage、fresh な evidence、正確な recovery command `$resume-pr-monitor <PR_URL>` を含め、incomplete/unmonitored と報告する。start 成功後の initial CI/review observation の失敗は active な watcher と区別して報告する。XDG state の watcher は close、CI failure、conflict、Copilot review を durable event として記録する。
 
 この skill は仕様/計画の承認ゲートを持たない。曖昧または高リスクな変更に対しては使わない。

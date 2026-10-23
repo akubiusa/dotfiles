@@ -47,12 +47,12 @@ paths:
 
 - Provide a `stylecop.json` next to the `.csproj` and reference it with
   `<AdditionalFiles Include="stylecop.json" />`
-- Set `settings.documentationRules.documentationCulture` to `"ja-JP"` and
-  `settings.documentationRules.xmlHeader` to `false` unless the project's
-  CLAUDE.md specifies a different documentation language:
+- Set `settings.documentationRules.documentationCulture` to the culture of the
+  repository language convention (e.g. `"ja-JP"` or `"en-US"`) and
+  `settings.documentationRules.xmlHeader` to `false`:
 
   ```json
-  { "settings": { "documentationRules": { "documentationCulture": "ja-JP", "xmlHeader": false } } }
+  { "settings": { "documentationRules": { "documentationCulture": "<repository language culture>", "xmlHeader": false } } }
   ```
 
 ## `.editorconfig`
@@ -85,8 +85,8 @@ paths:
   between using groups
 - Prefer expression-bodied members (`=>`) when the body fits on one line; prefer
   pattern matching, switch expressions, and target-typed `new()`
-- XML doc comments on public/exposed members, written in English unless the
-  project's own CLAUDE.md says otherwise
+- XML doc comments on public/exposed members, written in the repository
+  language convention
 - Suppress a specific, justified diagnostic with
   `[SuppressMessage("Category", "RuleId:Name", Justification = "...")]` rather than a
   blanket `#pragma warning disable`

@@ -315,11 +315,16 @@ assert_ordered_policy() {
   done
 }
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
   assert_ordered_policy "$policy" "PR monitoring precondition" \
     'canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない' \
     '永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する'
 done
+
+# Codex グローバル指示は英語で書かれているため、スキルとは別に英語の文言で検証する。
+assert_ordered_policy "$CODEX_AGENTS" "PR monitoring precondition" \
+  'Do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+  'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
 
 for skill in "${ISSUE_PR_SKILLS[@]}"; do
   case "$skill" in
@@ -337,13 +342,13 @@ for skill in "${ISSUE_PR_SKILLS[@]}"; do
 done
 
 assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
-  'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録' \
-  '各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-  'deployment assertion は、この reviewed snapshot に対して final evidence を確認した直後に限って行う' \
-  'snapshot を再取得・更新してはならず' \
-  '最終ゲート全体を最初からやり直す'
+  'record one snapshot containing HEAD, the index, the worktree' \
+  'Compare against the same snapshot after each substep and after the final evidence check, right before commit/PR creation' \
+  'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
+  'Never re-capture or update the snapshot' \
+  'restart the entire final gate from the beginning'
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
   if ! grep -Fq 'すべての Issue が一意、open、target repository 所属であることを検証する' "$policy" \
     || ! grep -Fq 'scope と acceptance criteria' "$policy" \
     || ! grep -Fq '文書' "$policy" \
@@ -355,7 +360,17 @@ for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
   fi
 done
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" "$CODEX_AGENTS"; do
+if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$CODEX_AGENTS" \
+  || ! grep -Fq 'scope and acceptance criteria' "$CODEX_AGENTS" \
+  || ! grep -Fq 'required documents' "$CODEX_AGENTS" \
+  || ! grep -Fq 'review evidence' "$CODEX_AGENTS" \
+  || ! grep -Fq 'closing keyword' "$CODEX_AGENTS" \
+  || ! grep -Fq 'aggregate final gate' "$CODEX_AGENTS"; then
+  echo "❌ Aggregate Issue evidence contract missing in $CODEX_AGENTS"
+  exit 1
+fi
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL"; do
   # shellcheck disable=SC2016
   if ! grep -Fq 'canonical PR URL' "$policy" \
     || ! grep -Fq '失敗した stage' "$policy" \
@@ -365,6 +380,15 @@ for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" 
     exit 1
   fi
 done
+
+# shellcheck disable=SC2016
+if ! grep -Fq 'canonical PR URL' "$CODEX_AGENTS" \
+  || ! grep -Fq 'the failed stage' "$CODEX_AGENTS" \
+  || ! grep -Eq 'fresh.*evidence' "$CODEX_AGENTS" \
+  || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$CODEX_AGENTS"; then
+  echo "❌ PR failure-report contract missing in $CODEX_AGENTS"
+  exit 1
+fi
 
 # shellcheck disable=SC2016
 assert_ordered_policy "$PR_HEALTH_SKILL" "post-create monitor recovery" \

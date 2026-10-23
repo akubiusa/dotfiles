@@ -86,6 +86,11 @@ jobs:
         background: true
         run: bash tests/unit/test_tmux_selector_preview.sh
 
+      - name: Run language policy unit test
+        id: run-language-policy-unit-test
+        background: true
+        run: bash tests/unit/test_language_policy.sh
+
       - name: Wait for unit tests
         wait:
           - run-install-sh-unit-test
@@ -101,3 +106,4 @@ jobs:
           - run-pr-monitor-unit-test
           - run-trilium-validation-unit-test
           - run-tmux-selector-preview-unit-test
+          - run-language-policy-unit-test

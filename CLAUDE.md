@@ -2,6 +2,10 @@
 
 Claude Code の作業方針と、このリポジトリ固有のルールを示します。
 
+@AGENTS.md
+
+言語規約(成果物の言語・表記ルール)は `AGENTS.md` を参照してください。
+
 ## プロジェクト概要
 
 - 目的: chezmoi で dotfiles と AI エージェント設定を管理する。
@@ -54,16 +58,14 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
 ## コーディング規約
 
 - 言語: Bash / Zsh。
-- コミットメッセージは Conventional Commits に従い、`<description>` は日本語で記載する。
-- コード内コメントは日本語、エラーメッセージは英語で記載する。
-- 日本語と英数字の間には半角スペースを挿入する。
+- コミットメッセージは Conventional Commits に従う(`<description>` などの言語は `AGENTS.md` を参照)。
 - 既存ファイルの構成・命名パターンに合わせる。
 
 ## テスト
 
 - `tests/` 配下にシェルスクリプトのテストがあり、以下の 3 系統に分かれる:
   - `tests/syntax/`: `test_bash_syntax.sh` / `test_shellcheck.sh` / `test_json_schema.sh`(構文・shellcheck・JSON スキーマ)。
-  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_deep_review_layout.sh` / `test_measure_usage.sh`(単体テスト)。
+  - `tests/unit/`: `test_install.sh` / `test_update.sh` / `test_notifications.sh` / `test_hooks.sh` / `test_deep_review_ledger.sh` / `test_deep_review_comment.sh` / `test_deep_review_layout.sh` / `test_measure_usage.sh` / `test_language_policy.sh`(単体テスト。`test_language_policy.sh` は言語規約のドキュメント整合を検証)。
   - `tests/integration/`: `test_chezmoi_apply.sh`(`chezmoi apply` の統合テスト) / `test_gitleaks.sh`(固定した gitleaks 実バイナリの回帰テスト)。
 - CI は `.github/workflows/` の `unit-test.yml` / `integration-test.yml` / `pr-checks.yml` で pull_request 時に自動実行される(`unit-test.yml` / `integration-test.yml` は master への push 時にも実行)。
 - 通知・フック関連スクリプト(`home/dot_claude/scripts/`、`home/dot_claude/hooks/`、`home/dot_codex/` 等)や `home/bin/` のヘルパーを変更・削除した場合、対応するテストの参照が古くなっていないか確認する。
@@ -75,7 +77,7 @@ chezmoi はソース側のプレフィックスを解釈してデプロイする
   - `README.md`: 利用者向けの手順・機能説明。
   - `CLAUDE.md`: Claude Code 向けの作業方針(このファイル)。
   - `.github/copilot-instructions.md`: GitHub Copilot のコードレビュー観点。
-- リポジトリ向けのエージェント指示は `CLAUDE.md` と `.github/copilot-instructions.md` の 2 点に集約する(リポジトリ直下の `AGENTS.md` は置かない)。Codex CLI のグローバル指示は `home/dot_codex/AGENTS.md`(デプロイ後 `~/.codex/AGENTS.md`)で別管理する。
+- リポジトリ向けのエージェント指示は `AGENTS.md`(言語規約のみ) / `CLAUDE.md` / `.github/copilot-instructions.md` の 3 点に集約する。Codex CLI のグローバル指示は `home/dot_codex/AGENTS.md`(デプロイ後 `~/.codex/AGENTS.md`)で別管理する。
 
 ## リポジトリ固有
 

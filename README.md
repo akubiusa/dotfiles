@@ -165,7 +165,7 @@ DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 
 `~/.codex/config.toml` にはプロジェクトの信頼状態や hook の承認ハッシュなど、Codex が更新するマシン固有の状態が保存されます。`chezmoi apply` は [modify_ テンプレート](https://www.chezmoi.io/user-guide/manage-different-types-of-file/#manage-part-but-not-all-of-a-file)で dotfiles 管理対象のキーだけを反映するため、これらの実行時状態は上書きされません。新規環境では初回の適用時に設定ファイルを作成します。
 
-`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。
+`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。このファイルは英語で記述され、対話は日本語で行います。コミットや PR などの成果物の言語は、対象リポジトリの規約(ルートの `AGENTS.md` など)に従い、規約がなければユーザーに確認します。このリポジトリ自身の言語規約はルートの `AGENTS.md` に記載しています。
 
 Codex CLI では custom slash command の代わりに user scope の skill を使います。次の skill は `~/.agents/skills/` に展開され、`$` を付けて明示的に実行します。
 
@@ -406,7 +406,7 @@ fix モードの ledger に未解決の マージ前必須 指摘が残ってい
 - **ハイブリッド調査**: `references/best-practices.md` に静的なベストプラクティス集を保持しつつ、実行のたびに WebSearch/WebFetch で最新動向の差分を補完する
 - **乖離度に応じた判断**: 既存 `CLAUDE.md` とベストプラクティスとの乖離が大きい場合は全面的に書き直し、小さい場合は部分修正にとどめる（既存ファイルがない場合は新規作成）
 - **承認フローなし**: 対象ディレクトリが git 管理下であることを前提に、変更内容は `git diff`（新規作成時は `git status`）で事後確認する運用とし、実行前の承認は求めない
-- **対象は CLAUDE.md のみ**: `AGENTS.md` 等の他のエージェント設定ファイルは対象外（将来の拡張候補）
+- **対象は CLAUDE.md のみ**: `AGENTS.md` の保守は Codex 向けの `$agents-md-maintainer` が担当し、このスキルの対象外
 
 ## `rtk` スキル
 

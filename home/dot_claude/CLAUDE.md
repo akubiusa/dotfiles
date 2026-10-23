@@ -13,8 +13,13 @@
 
 ## Language
 
-- Respond in Japanese. Intermediate steps in English to save context.
-- Code comments: follow project CLAUDE.md; default English. Error messages: English.
+- Respond in Japanese. Intermediate steps in English to save context. This is independent of the language of deliverables (commit descriptions, PR/Issue titles, bodies and review comments, code comments/docstrings, documents, spec/plan posts).
+- Deliverable language: the target repository's own convention wins. Check the root `AGENTS.md` explicitly (Claude Code does not auto-read it when a `CLAUDE.md` exists), then `CLAUDE.md`, then `.github/copilot-instructions.md` and similar.
+- No convention, or an ambiguous one: ask the user via AskUserQuestion. Never infer from owner, organization, visibility, or README language. For a new repository, ask and record the answer in a concise `AGENTS.md`.
+- Non-interactive runs: do not decide the language or create/rewrite `AGENTS.md`. Defer language-dependent public deliverables and report the language as undetermined.
+- A visibility change alone never changes the language; confirm explicitly.
+- Exceptions: localized UI strings, quotations, technical identifiers, generated files, external source text. Never rewrite Git history.
+- Error messages: English unless the repository convention says otherwise.
 - Half-width space between Japanese and alphanumeric characters.
 - **All Markdown under `~/.claude/` must be written in English.**
 - **No mid-sentence line breaks**: within a single prose paragraph (chat responses, generated Markdown documents/articles, PR/commit/comment bodies, etc.), do not insert a manual line break (hard-wrapping, e.g. at a fixed column width) in the middle of a sentence. Write each sentence as one continuous line in the source text; let the renderer wrap it. This applies to prose paragraphs, not to intentionally structured content (bullet lists, code blocks, tables), where one item/line per line is expected.
@@ -22,7 +27,7 @@
 ## Git
 
 - Push via **SSH** only. Handle auth autonomously.
-- Commits: [Conventional Commits](https://www.conventionalcommits.org/) — description language follows project CLAUDE.md, otherwise Japanese.
+- Commits: [Conventional Commits](https://www.conventionalcommits.org/) — description language follows the repository language convention (see Language).
 - Branches: [Conventional Branch](https://conventional-branch.github.io) short-form (`feat`, `fix`, …).
 - Do not modify `GH_CONFIG_DIR`, `GIT_*`, or `GIT_SSH_COMMAND` env vars without permission.
 - No `git config` username/email changes.

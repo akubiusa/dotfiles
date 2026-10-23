@@ -14,9 +14,9 @@
 ## Language
 
 - Respond in Japanese. Intermediate steps in English to save context. This is independent of the language of deliverables (commit descriptions, PR/Issue titles, bodies and review comments, code comments/docstrings, documents, spec/plan posts).
-- Deliverable language: the target repository's own convention wins. Check, in order, the root `AGENTS.md`, `CLAUDE.md`, then `.github/copilot-instructions.md` and similar.
-- No convention, or an ambiguous one: ask the user via AskUserQuestion. Never infer from owner, organization, visibility, or README language, and a visibility change alone never changes it. For a new repository, ask and record the answer in a concise `AGENTS.md`.
-- Non-interactive runs: do not decide the language or create/rewrite `AGENTS.md`. Defer language-dependent deliverables and report the language as undetermined.
+- Deliverable language: the target repository's own convention wins. The nearest `AGENTS.md`/`CLAUDE.md` covering the target path wins over the root one; within one scope check, in order, `AGENTS.md`, `CLAUDE.md`, then `.github/copilot-instructions.md` and similar. Resolve per deliverable type (commit descriptions, PR/Issue text, code comments, documents): use the first file that specifies that type, and consult lower-priority files only for types it leaves unspecified.
+- No convention, or an ambiguous one: ask the user via AskUserQuestion. Never infer from owner, organization, visibility, or README language, and a visibility change alone never changes it. For a new repository, ask and record the answer in a concise `AGENTS.md`. Once the user has answered or `AGENTS.md` records the language, reuse it and do not ask again unless the user changes it.
+- Non-interactive runs: do not decide the language or create/rewrite `AGENTS.md`. Defer only language-dependent deliverables and report the language as undetermined; reading, investigation and tests may continue.
 - Exceptions: localized UI strings, quotations, technical identifiers, generated files, external source text. Never rewrite Git history.
 - Error messages: English unless the repository convention says otherwise.
 - Half-width space between Japanese and alphanumeric characters.

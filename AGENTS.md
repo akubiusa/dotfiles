@@ -15,6 +15,7 @@
 - 技術識別子、コマンド、設定キー。
 - `home/dot_claude/`(展開先 `~/.claude/`)配下の Markdown。
 - `home/dot_codex/`(展開先 `~/.codex/`)配下の Markdown。
+- `.github/copilot-instructions.md`。
 
 ## 表記ルール
 

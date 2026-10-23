@@ -1,7 +1,7 @@
 #!/bin/bash
 # 言語規約のドキュメント整合を検証する。
 # - グローバル指示・Copilot 指示・CLAUDE.md・AGENTS.md・README.md に「未指定時の既定言語」の記述が残っていないこと
-# - home/dot_codex 配下の Markdown に日本語が含まれないこと
+# - home/dot_codex 配下の Markdown と .github/copilot-instructions.md に日本語が含まれないこと
 # - ルート AGENTS.md が存在し、言語見出しを持ち、CLAUDE.md から単独行で取り込まれ、旧方針の記述が残っていないこと
 
 set -euo pipefail
@@ -34,10 +34,10 @@ else
 fi
 
 # --- (2) home/dot_codex 配下の Markdown に日本語がない ---
-if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex --include=*.md; then
-  ng "Japanese text found in home/dot_codex Markdown"
+if match env LC_ALL=C.UTF-8 grep -rP "[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]" home/dot_codex .github/copilot-instructions.md --include=*.md; then
+  ng "Japanese text found in home/dot_codex Markdown or .github/copilot-instructions.md"
 else
-  ok "No Japanese text in home/dot_codex Markdown"
+  ok "No Japanese text in home/dot_codex Markdown or .github/copilot-instructions.md"
 fi
 
 # --- (3) ルート AGENTS.md と関連ドキュメント ---

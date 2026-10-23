@@ -169,6 +169,12 @@ if [ "$PROFILE_LOCAL_BIN_COUNT" -ne 1 ]; then
   exit 1
 fi
 
+PROFILE_HOME_BIN_COUNT=$(printf '%s\n' "$PROFILE_PATH" | tr ':' '\n' | grep -Fxc "$HOME/bin" || true)
+if [ "$PROFILE_HOME_BIN_COUNT" -ne 1 ]; then
+  echo "❌ .profile must add ~/bin to PATH exactly once (found $PROFILE_HOME_BIN_COUNT)"
+  exit 1
+fi
+
 BASHRC_PATH=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" bash -c ". \"\$HOME/.bashrc.d/00-path.sh\"; printf '%s\n' \"\$PATH\"")
 BASHRC_LOCAL_BIN_COUNT=$(printf '%s\n' "$BASHRC_PATH" | tr ':' '\n' | grep -Fxc "$HOME/.local/bin" || true)
 if [ "$BASHRC_LOCAL_BIN_COUNT" -ne 1 ]; then

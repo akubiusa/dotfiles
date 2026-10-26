@@ -85,8 +85,9 @@ paths:
   between using groups
 - Prefer expression-bodied members (`=>`) when the body fits on one line; prefer
   pattern matching, switch expressions, and target-typed `new()`
-- XML doc comments on public/exposed members, written in the repository
-  language convention
+- XML doc comments on public/exposed members where they add contract value
+  (preconditions, side effects, exceptions, units), written in the repository
+  language convention; omit content that only restates the member name or type
 - Suppress a specific, justified diagnostic with
   `[SuppressMessage("Category", "RuleId:Name", Justification = "...")]` rather than a
   blanket `#pragma warning disable`

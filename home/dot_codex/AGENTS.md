@@ -28,7 +28,7 @@
 
 ## Implementation and Verification
 
-- Match the existing structure and naming, and do not duplicate in comments what the code already makes clear. Use comments only for reasons, constraints, and assumptions that may break in the future, and do not leave change history.
+- Match the existing structure and naming, and do not duplicate in comments what the code already makes clear. Aim for zero code comments: first express intent through naming, types, structure, or tests, and keep a comment only for a reason, constraint, dangerous assumption, or why-not the code cannot show, as a conclusion in 1-2 lines as a guideline. Never narrate the work or leave change history, deliberation, Issue/PR numbers, spec/plan paths, or verification steps. JSDoc/docstrings are separate API contracts, written only when they add contract value. Machine-readable comments a tool requires and lint/type-check suppression reasons are out of scope.
 - When changing the repository layout, usage instructions, tests, or security policy, check whether the README, the project instructions, and the Copilot instructions need updating.
 - Run the syntax, unit, and integration tests that correspond to the change. When a notification, hook, or helper is changed or removed, also check the references inside the tests.
 - In chezmoi, the `executable_` prefix is stripped on deployment. When a configuration references a script, use the deployed name.

@@ -12,6 +12,7 @@ Read code comments and docstrings in changed files. These checks are explicitly 
 Judge each comment against the Content layer "Code comments" allow/deny conditions in `~/.claude/rules/coding-common.md` — Read that file yourself first (it is not passed to you), then apply those conditions as given rather than assuming what they say from memory. Flag any comment that does not satisfy an allow condition, or that matches a deny condition, for example:
 
 - Redundant comments that merely restate what the code already makes obvious (e.g. a comment saying "increment i by 1" directly above `i++`).
+- Comments that read the code aloud or state what a name or type already makes obvious (the zero-comment baseline), explanations far beyond the 1-2 line guideline, and comments that narrate deliberation, the work, or edit history.
 - Obvious descriptions or comments that can be removed without issue.
 - "What" comments and temporary progress-report comments left in the diff.
 - A comment whose justification is a GitHub Issue/PR number or a spec/plan file path rather than the code itself — flag this regardless of whether the reference still resolves, since it makes the comment's meaning depend on an external system that can change independently of the code.
@@ -27,6 +28,6 @@ Also flag the following mechanical defects, independent of the allow/deny judgme
   This applies to comments in source files and to prose in Markdown instruction files (e.g. `SKILL.md`) alike.
 - Redundant multi-line padding: an explanation stretched across unnecessarily many lines (rough guideline: 3+ lines) through synonymous restatement or repeated qualifiers, where the same content could be stated in far fewer lines.
   Do not flag intentional multi-line structures where each line could be given its own distinct one-line label naming what sets it apart from the others (e.g. one line per distinct branch, argument, or condition) — that is enumeration, not padding, even if it spans many lines.
-  Also do not flag structured/boilerplate blocks such as JSDoc `@param`/`@returns` tags or license headers.
+  Also do not flag structured/boilerplate blocks such as license headers. Do flag a JSDoc/docstring (including `@param`/`@returns` tags) that only restates the name or type; contract information (preconditions, side effects, exceptions, units) is acceptable.
 
 If the same redundant/stale-prone/line-break/padding pattern repeats many times in the diff, report it once with one or two representative `file:line` examples rather than listing every occurrence.

@@ -24,7 +24,7 @@ TARGET_DIR="${1:-$(pwd)}"
 COMPOSE_DIRS_OUTPUT=$(bash ~/.claude/skills/check-container-status/scripts/list-compose-dirs.sh "$TARGET_DIR" 2>&1)
 LIST_EXIT_CODE=$?
 if [ "$LIST_EXIT_CODE" -ne 0 ]; then
-  echo "$COMPOSE_DIRS_OUTPUT"  # 例: "ERROR: not a directory: ..." をそのままユーザーに提示する
+  echo "$COMPOSE_DIRS_OUTPUT"  # e.g. "ERROR: not a directory: ..." is shown to the user as-is
   exit 1
 fi
 mapfile -t COMPOSE_DIRS <<< "$COMPOSE_DIRS_OUTPUT"

@@ -1,6 +1,6 @@
 ---
 name: pr-health-monitor
-description: Automates the post-PR monitoring workflow. Runs CI check, Copilot review wait, code review, conflict check, and PR body update in parallel. Use with /pr-health-monitor <PR number or URL> immediately after creating a PR.
+description: Automates the post-PR monitoring workflow. Runs CI check, Copilot review wait, conflict check, and PR body update in parallel. Use with /pr-health-monitor <PR number or URL> immediately after creating a PR.
 argument-hint: "[PR number or URL]"
 disable-model-invocation: false
 ---
@@ -70,7 +70,7 @@ gh pr view "$PR_NUMBER" --json url --jq '.url'
 
 ## Step 1: Parallel Execution Phase
 
-**Use the Task tool to run all of the following in parallel.** Do not ask
+**Start all of the following in parallel, in a single turn.** Do not ask
 the user for confirmation before starting any of these — they are the
 mechanical follow-through of an already-approved PR creation, not new
 decisions.
@@ -155,17 +155,15 @@ This is a one-shot snapshot at PR-creation time, not continuous monitoring. When
 
 ### Task D: Update PR Body
 
-Following CLAUDE.md rules, write the PR body with the current final state of the branch only — no history. Language: follow the project CLAUDE.md if it specifies one; otherwise Japanese.
+Following CLAUDE.md rules, write the PR body with the current final state of the branch only — no history. Language: follow the target repository's language convention first; only if the repository has no convention, match the language of the existing PR body; if neither applies, ask the user, or leave the body unchanged and report the language as undetermined in a non-interactive run. Localize the headings to the repository language, e.g. `## 概要` / `## 変更内容` for Japanese.
 
 ```bash
 gh pr edit "$PR_NUMBER" --body "$(cat <<'BODY'
 ## Summary
-(or ## 概要 if project language is Japanese)
 
 ...
 
 ## Changes
-(or ## 変更内容 if project language is Japanese)
 
 ...
 BODY
@@ -207,5 +205,5 @@ happen in the same conversation.
 - Both Copilot review and CI checks run as `Monitor(persistent: true)`
   instances in this session — if the session ends before either completes,
   the wait is lost and must be resumed manually later
-- CI can take a long time — always use the Task tool to run it in parallel
-  alongside the other Monitor-based waits
+- CI can take a long time — it runs as a `Monitor` alongside the other waits,
+  so nothing blocks on it

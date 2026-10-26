@@ -23,7 +23,8 @@ curl -fsSL "$URL" -o "$ARCHIVE"
 tar -xzf "$ARCHIVE" -C "$TMP_DIR" gitleaks
 
 FIXTURE="$TMP_DIR/fixture.txt"
-printf 'token = "ghp_%s%s"\n' 'aBcDeFgHiJkLmNoPqRsT' 'uVwXyZ0123456789' > "$FIXTURE"
+# gitleaks 8.30 以降は連番に近い文字列を除外するため、連番を含まない文字列を使う
+printf 'token = "ghp_%s%s"\n' 'R8x2KpQ7mZ4vN1cB9t' 'Lw3YdF6hJ0sGaE5uXo' > "$FIXTURE"
 set +e
 "$TMP_DIR/gitleaks" detect --no-git --source "$FIXTURE" --no-banner --redact > "$TMP_DIR/output" 2>&1
 RC=$?

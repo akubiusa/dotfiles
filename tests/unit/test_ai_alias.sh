@@ -98,6 +98,16 @@ HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" CLAUDE_ENV_FILE="$WRAPPER_ENV" 
 grep -Fq 'claude:--permission-mode auto --version' "$EVENT_LOG" || { echo "❌ wrapped Claude command was not launched"; exit 1; }
 echo "✅ claude wrapper warning order test passed"
 
+echo "Testing clauded wrapper launches Claude with --dangerously-skip-permissions..."
+: > "$EVENT_LOG"
+HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" clauded --version 2> "$TEST_ROOT/clauded.err"
+[[ "$(grep -c '^claude:' "$EVENT_LOG")" == "1" ]] || { echo "❌ clauded launched Claude an unexpected number of times"; exit 1; }
+grep -Fxq 'claude:--dangerously-skip-permissions --version' "$EVENT_LOG" || { echo "❌ clauded did not pass --dangerously-skip-permissions"; exit 1; }
+: > "$EVENT_LOG"
+HOME="$FAKE_HOME" PATH="$FAKE_BIN:/usr/bin:/bin" clauded rc 2> "$TEST_ROOT/clauded-rc.err"
+grep -Fxq 'claude:rc' "$EVENT_LOG" || { echo "❌ clauded injected flags into remote-control subcommand"; exit 1; }
+echo "✅ clauded wrapper test passed"
+
 
 echo "Testing codex wrapper auto-connects only TUI launches to running app-server..."
 declare -F codex >/dev/null || { echo "❌ codex wrapper function is not defined"; exit 1; }
@@ -108,7 +118,9 @@ mkdir -p "$CODEX_HOME/.local/share/chezmoi" "$CODEX_BIN"
 printf '#!/bin/bash\nexit 0\n' > "$CODEX_HOME/.local/share/chezmoi/update.sh"
 cat > "$CODEX_BIN/codex" <<'EOF'
 #!/bin/bash
-printf 'codex:%s\n' "$*" >> "$CODEX_LOG"
+printf 'codex' >> "$CODEX_LOG"
+printf ' <%s>' "$@" >> "$CODEX_LOG"
+printf '\n' >> "$CODEX_LOG"
 if [[ "$*" == "app-server daemon version" ]]; then
   if [[ "${FAKE_CODEX_DAEMON_STATUS:-running}" == "running" ]]; then
     printf '{"status":"running"}\n'
@@ -119,26 +131,51 @@ fi
 EOF
 chmod +x "$CODEX_HOME/.local/share/chezmoi/update.sh" "$CODEX_BIN/codex"
 export CODEX_LOG
+CODEX_WORKDIR="$TEST_ROOT/codex workdir"
+mkdir -p "$CODEX_WORKDIR"
+CODEX_OVERRIDE_DIR="$TEST_ROOT/codex-override"
 
 : > "$CODEX_LOG"
-HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--remote unix:// --yolo resume session-123" ]] || {
-  echo "❌ running daemon did not route Codex TUI through unix remote"
+(
+  cd "$CODEX_WORKDIR"
+  HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex resume session-123
+)
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--cd> <$CODEX_WORKDIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume retained a permission override or did not preserve the working directory"
   cat "$CODEX_LOG"
   exit 1
 }
 
 : > "$CODEX_LOG"
-HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=stopped codex resume session-123
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--yolo resume session-123" ]] || {
+(
+  cd "$CODEX_WORKDIR"
+  HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=stopped codex resume session-123
+)
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--yolo> <resume> <session-123>" ]] || {
   echo "❌ stopped daemon did not fall back to local Codex TUI"
   cat "$CODEX_LOG"
   exit 1
 }
 
 : > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex --cd "$CODEX_OVERRIDE_DIR" resume session-123
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <--cd> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume with explicit --cd retained a permission override or changed the directory"
+  cat "$CODEX_LOG"
+  exit 1
+}
+
+: > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex -C "$CODEX_OVERRIDE_DIR" resume session-123
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--remote> <unix://> <-C> <$CODEX_OVERRIDE_DIR> <resume> <session-123>" ]] || {
+  echo "❌ remote resume with explicit -C retained a permission override or changed the directory"
+  cat "$CODEX_LOG"
+  exit 1
+}
+
+: > "$CODEX_LOG"
 HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex app-server daemon version >/dev/null
-[[ "$(tail -n 1 "$CODEX_LOG")" == "codex:--yolo app-server daemon version" ]] || {
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <--yolo> <app-server> <daemon> <version>" ]] || {
   echo "❌ app-server management command was unexpectedly remote-routed"
   cat "$CODEX_LOG"
   exit 1
@@ -149,3 +186,12 @@ HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=runn
   exit 1
 }
 echo "✅ codex wrapper routing test passed"
+
+: > "$CODEX_LOG"
+HOME="$CODEX_HOME" PATH="$CODEX_BIN:/usr/bin:/bin" FAKE_CODEX_DAEMON_STATUS=running codex agents
+[[ "$(tail -n 1 "$CODEX_LOG")" == "codex <agents>" ]] || {
+  echo "❌ agents command received wrapper-injected options"
+  cat "$CODEX_LOG"
+  exit 1
+}
+echo "✅ codex agents command bypasses wrapper-injected options"

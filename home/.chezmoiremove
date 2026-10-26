@@ -26,3 +26,13 @@ bin/tmux-ipc-receive.sh
 bin/tmux-ipc-register.sh
 bin/tmux-ipc-send.sh
 .claude/rules/superpowers.md
+.claude/rules/workflow.md
+.claude/rules/workflow-sub-agents.md
+.claude/rules/design-workflow.md
+.claude/rules/issue-comment-docs.md
+.claude/skills/deep-review/reviewers/g-performance.md
+.claude/skills/deep-review/reviewers/h-error-handling.md
+.claude/skills/deep-review/reviewers/i-type-design-tests.md
+.agents/skills/deep-review/reviewers/g-performance.md
+.agents/skills/deep-review/reviewers/h-error-handling.md
+.agents/skills/deep-review/reviewers/i-type-design-tests.md

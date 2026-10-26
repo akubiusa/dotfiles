@@ -22,18 +22,14 @@ the PR's destination repository is resolved by
 `~/bin/gh-pr-target-repo.sh`), exactly as `ticket-pr` does.
 
 Where approval is needed further down this flow (e.g. `glitchtip-pr-deep`'s
-spec sign-off), it is done via **AskUserQuestion**, not Claude Code's
+spec sign-off, when there is a significant choice), it is done via **AskUserQuestion**, not Claude Code's
 native Plan Mode — Plan Mode only allows a single
 read-only-until-ExitPlanMode gate, and blocks the Write/Bash/MCP calls this
 skill needs starting at Phase 1. This dispatcher's own Phase 2.5 scale
 judgment is not one of those approval points — it is made automatically,
 without asking the user (see Phase 2.5 below).
 
-**Do not call ExitPlanMode to work around this.** It exists to get sign-off
-on a concrete plan, not to escape Plan Mode. If Plan Mode is active when this
-skill starts, stop immediately and tell the user to exit it themselves and
-re-run `/glitchtip-pr`. "I'll just exit once, it's harmless" is exactly the
-workaround this forbids. No exceptions.
+Do not call ExitPlanMode to get around Plan Mode; it exists to get sign-off on a concrete plan. If Plan Mode is active when this skill starts, stop and tell the user to exit it themselves and re-run `/glitchtip-pr`.
 
 ## Prerequisites
 
@@ -156,15 +152,12 @@ Judge "small-scale" only if **all** of the following hold:
 
 When unsure, do **not** judge it small-scale — default to the safe
 (`glitchtip-pr-deep`) side. Detailed root-cause investigation across the
-codebase happens inside whichever skill is invoked next (brainstorming's
-own exploration in `glitchtip-pr-deep`'s Phase 3, or direct investigation
+codebase happens inside whichever skill is invoked next (spec
+authoring in `glitchtip-pr-deep`'s Phase 3, or direct investigation
 in `glitchtip-pr-lite`'s Phase 3) — this judgment only uses what the
 exception/stack trace already shows.
 
-**Make the call yourself. Do not confirm this judgment with the user via
-AskUserQuestion, under any circumstance.** Briefly state which path was
-chosen and why (one or two sentences) before invoking it, so the decision
-is visible, but do not turn that statement into a question.
+Make the call yourself and state the chosen path and why in one or two sentences before invoking it, so the decision is visible. This is the dispatcher's own scale assessment, not a clarifying question about what the user wants, so it does not go through AskUserQuestion (that rule covers genuine ambiguity in the user's intent).
 
 Based on the judgment, invoke the chosen skill via the Skill tool
 (`glitchtip-pr-deep` or `glitchtip-pr-lite`). The worktree and the fetched
@@ -185,7 +178,7 @@ whichever skill is invoked here.
 
 - Do not drift to other tasks while waiting for review or CI.
 - Record the decision log in the spec/plan files under `.agent-work/`
-  (already required by `rules/design-workflow.md`) or in the PR body — not
+  (already required by `~/.claude/docs/design-workflow.md`) or in the PR body — not
   in extra ad-hoc Markdown files.
 - `disable-model-invocation: true` is intentional: this skill hands off to
   a branch-and-PR-creating flow (`glitchtip-pr-deep`/`glitchtip-pr-lite`),

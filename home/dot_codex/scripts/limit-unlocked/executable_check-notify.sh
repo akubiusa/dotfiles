@@ -42,40 +42,38 @@ collect_descendant_pids() {
     '
 }
 
-# tmux セッション名から、対応する codex プロセス群が書き込んでいる rollout jsonl の
-# パスを特定する。Codex には Claude Code の sessions/<pid>.json のような
-# pid→セッション対応表が存在しないため、pane の pid とその子孫すべての
-# オープン fd を走査し、rollout-*.jsonl を指しているものを集めた上で、
-# 親セッションの rollout を subagent の rollout より優先し、同種の候補内では
-# 最終更新時刻が最も新しいもの(実際に追記され続けている rollout)を選ぶ。
-# fd ごとに readlink -f を fork する方式は procfs 上のソケット・パイプ等の
-# 無関係な fd も含めて全数チェックしてしまい低速なため、find -lname による
-# シンボリックリンク先パターンマッチ 1 回にまとめている
-resolve_rollout_path() {
-    local session="$1" pane_pid home_real fd_dirs=() pid best_path best_mtime best_is_subagent
+# fd_dirs (/proc/<pid>/fd の並び) の中から rollout-*.jsonl を指す fd を集め、
+# 最有力候補を 1 つ選ぶ。標準出力: 選ばれたパス(候補がなければ何も出力しない)。
+#
+# require_cwd が非空の場合、ファイル内容にその文字列を含まない候補は除外する。
+# session_meta.cwd は daemon 経由だと実際の pane cwd を反映しないため使えず、
+# 代わりにツール呼び出しの本文中に現れる cwd 文字列を頼りにしている。
+# これは、複数セッション分の rollout を同時に保持する daemon 経由の探索で、
+# 無関係なセッションを誤って選ばないための絞り込みである。
+#
+# 候補が複数残った場合は、親セッションの rollout を subagent の rollout より優先する。
+# 同種の候補内では最終更新時刻が最も新しいもの(実際に追記され続けている rollout)を選ぶ。
+#
+# fd ごとに readlink -f を fork する方式は、procfs 上の無関係な fd も全数チェックし低速。
+# そのため find -lname によるシンボリックリンク先パターンマッチ 1 回にまとめている。
+select_best_rollout() {
+    local home_real="$1" require_cwd="$2"
+    shift 2
+    local fd_dirs=("$@")
     local target mtime thread_source is_subagent
+    local best_path="" best_mtime=-1 best_is_subagent=1
 
-    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
-    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
-    # ため、末尾に ":" を付けてセッション名指定であることを明示する
-    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
-    [ -n "$pane_pid" ] || return 1
+    [ "${#fd_dirs[@]}" -gt 0 ] || return 0
 
-    # readlink -f はシンボリックリンクを最後まで解決した絶対パスを返すため、$HOME 自体に
-    # シンボリックリンク成分が含まれる環境ではそのまま比較すると常に不一致になる。
-    # 比較対象も同じ readlink -f で正規化しておく
-    home_real=$(readlink -f "$HOME" 2>/dev/null) || home_real="$HOME"
-
-    for pid in $(collect_descendant_pids "$pane_pid"); do
-        [ -d "/proc/$pid/fd" ] && fd_dirs+=("/proc/$pid/fd")
-    done
-    [ "${#fd_dirs[@]}" -gt 0 ] || return 1
-
-    best_path=""
-    best_mtime=-1
-    best_is_subagent=1
     while IFS= read -r target; do
         [ -n "$target" ] || continue
+        # cwd を単純な部分一致で探すと、cwd が他セッションのより深いパスの
+        # プレフィックスに過ぎない場合まで誤ってマッチしてしまう。cwd の直後が
+        # パス構成文字(英数字・"_"・"."・"-"・"/")でないことを要求し、
+        # cwd がファイル内容中で完結した単独のパスとして現れる場合だけに絞る
+        if [ -n "$require_cwd" ] && ! grep -qP -- "\\Q${require_cwd}\\E(?![A-Za-z0-9_./-])" "$target" 2>/dev/null; then
+            continue
+        fi
         mtime=$(stat -c %Y "$target" 2>/dev/null) || continue
 
         # multi-agent 実行では親と subagent の rollout が同時に開かれる。subagent が
@@ -95,20 +93,105 @@ resolve_rollout_path() {
         fi
     done < <(find "${fd_dirs[@]}" -lname "${home_real}/.codex/sessions/*/*/*/rollout-*.jsonl" -printf '%l\n' 2>/dev/null)
 
+    [ -n "$best_path" ] && echo "$best_path"
+    return 0
+}
+
+# ペインの子孫 pid の中に、共有 app-server daemon へ接続する codex クライアント
+# (`codex --remote ...`) が存在するかを調べる。
+#
+# claude など codex 以外のセッションが daemon フォールバックの対象になると、
+# pane の cwd の偶然の一致だけで無関係な rollout に誤って紐付きうる。
+# この関数はその発動条件を絞り込むためのものである。
+has_remote_codex_client() {
+    local pid comm cmdline
+    for pid in "$@"; do
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null) || continue
+        [ "$comm" = "codex" ] || continue
+        cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+        case "$cmdline" in
+            *--remote*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# tmux セッション名から、対応する codex プロセス群が書き込んでいる rollout jsonl の
+# パスを特定する。
+#
+# Codex には Claude Code の sessions/<pid>.json のような pid→セッション対応表が
+# 存在しないため、まず pane の pid とその子孫すべてのオープン fd を走査する。
+# 90-ai-alias.sh の codex() ラッパーが直接起動したセッションはここで見つかる。
+#
+# 同ラッパーは共有 app-server daemon (codex app-server --remote-control) が
+# 稼働中だと `codex --remote unix://` で接続する。
+# この場合 TUI は daemon への薄いクライアントになる。
+# この場合 rollout fd はペインの子孫プロセスではなく daemon プロセス側に開かれる。
+# そのため子孫 fd 走査だけでは見つからない。
+#
+# そのため daemon プロセスの fd を対象に、ペインの cwd を含む rollout だけに絞って
+# select_best_rollout を再実行する。
+# daemon は複数セッション分の rollout を同時に保持しうるため、
+# この cwd 絞り込みが必須である。
+resolve_rollout_path() {
+    local session="$1" pane_pid pane_cwd home_real fd_dirs=() daemon_fd_dirs=() pid best_path
+    local descendant_pids=()
+
+    # tmux はターゲットが "0" のような裸の数字だと、セッション名ではなく
+    # 「未指定」とみなして現在アクティブなセッションへフォールバックしてしまう
+    # ため、末尾に ":" を付けてセッション名指定であることを明示する
+    pane_pid=$(tmux display-message -t "${session}:" -p '#{pane_pid}' 2>/dev/null) || return 1
+    [ -n "$pane_pid" ] || return 1
+    pane_cwd=$(tmux display-message -t "${session}:" -p '#{pane_current_path}' 2>/dev/null)
+
+    # readlink -f はシンボリックリンクを最後まで解決した絶対パスを返すため、$HOME 自体に
+    # シンボリックリンク成分が含まれる環境ではそのまま比較すると常に不一致になる。
+    # 比較対象も同じ readlink -f で正規化しておく
+    home_real=$(readlink -f "$HOME" 2>/dev/null) || home_real="$HOME"
+
+    mapfile -t descendant_pids < <(collect_descendant_pids "$pane_pid")
+    for pid in "${descendant_pids[@]}"; do
+        [ -d "/proc/$pid/fd" ] && fd_dirs+=("/proc/$pid/fd")
+    done
+    if [ "${#fd_dirs[@]}" -gt 0 ]; then
+        best_path=$(select_best_rollout "$home_real" "" "${fd_dirs[@]}")
+        if [ -n "$best_path" ]; then
+            echo "$best_path"
+            return 0
+        fi
+    fi
+
+    # ペインに codex --remote クライアントがいないなら daemon フォールバックの対象外
+    # (claude セッションなど、そもそも codex と無関係なペインを除外する)
+    has_remote_codex_client "${descendant_pids[@]}" || return 1
+
+    # ponytail: cwd が単独パスとして現れるかで候補を絞ってはいるが、なお誤選択の
+    # 余地は残るヒューリスティクスである。
+    # 同一ディレクトリで複数の tmux セッションが同時に --remote 接続している場合や、
+    # 複数の daemon プロセスが同時に生き残っている場合が該当する。
+    # 必要になれば daemon 側の JSON-RPC でセッション⇔接続の対応を
+    # 直接問い合わせる方式に upgrade する。
+    [ -n "$pane_cwd" ] || return 1
+    for pid in $(pgrep -f 'app-server --remote-control' 2>/dev/null); do
+        [ -d "/proc/$pid/fd" ] && daemon_fd_dirs+=("/proc/$pid/fd")
+    done
+    [ "${#daemon_fd_dirs[@]}" -gt 0 ] || return 1
+
+    best_path=$(select_best_rollout "$home_real" "$pane_cwd" "${daemon_fd_dirs[@]}")
     [ -n "$best_path" ] || return 1
     echo "$best_path"
 }
 
 # rollout jsonl の直近のイベントを見て、リミット到達中かどうかと再開予定時刻(epoch)を
-# 判定する。標準出力: "<status:0|1|2>\t<reset_epoch>\t<reset_text>"
+# 判定する。標準出力: "<status:0|1|2>\t<reset_epoch>\t<reset_text>\t<turn_id>"
 # status: 0 = リミットなし、1 = リミット到達中、2 = 判定不能(jsonl の走査対象範囲を
 # jq が解析できなかった等)。2 を 0 と区別せず返すと、解析エラーを「解除」と誤判定して
 # しまうため、呼び出し元(detect_limited_sessions)は 2 を resolve 失敗と同様に扱う
 check_limit_status() {
     local jsonl="$1" tail_lines last_task_complete last_task_complete_line jq_exit is_err text completed_at
-    local token_line later_token_line reset_epoch date_text
+    local token_line later_token_line reset_epoch date_text turn_id
 
-    [ -f "$jsonl" ] || { printf '0\t-\t-\n'; return; }
+    [ -f "$jsonl" ] || { printf '0\t-\t-\t-\n'; return; }
 
     # jsonl は会話全体で大きくなりうるが直近のイベントが分かればよいため、
     # 末尾のみを走査対象にして cron の定期実行での毎回フルパースを避ける
@@ -117,17 +200,17 @@ check_limit_status() {
     last_task_complete=$(echo "$tail_lines" | jq -c 'select(.type == "event_msg" and .payload.type == "task_complete") | {event: ., line: input_line_number}' 2>/dev/null)
     jq_exit=$?
     if [ "$jq_exit" -ne 0 ]; then
-        printf '2\t-\t-\n'
+        printf '2\t-\t-\t-\n'
         return
     fi
     last_task_complete=$(echo "$last_task_complete" | tail -1)
-    [ -n "$last_task_complete" ] || { printf '0\t-\t-\n'; return; }
+    [ -n "$last_task_complete" ] || { printf '0\t-\t-\t-\n'; return; }
     last_task_complete_line=$(echo "$last_task_complete" | jq -r '.line' 2>/dev/null)
     last_task_complete=$(echo "$last_task_complete" | jq -c '.event' 2>/dev/null)
 
     is_err=$(echo "$last_task_complete" | jq -r '(.payload.error != null) and (.payload.error.codex_error_info == "usage_limit_exceeded")' 2>/dev/null)
     if [ "$is_err" != "true" ]; then
-        printf '0\t-\t-\n'
+        printf '0\t-\t-\t-\n'
         return
     fi
 
@@ -137,6 +220,10 @@ check_limit_status() {
     # 通知文言としての可読性は保ったまま、区切り文字だけを空白に置き換える
     text=$(echo "$text" | tr '\t\n' '  ')
     completed_at=$(echo "$last_task_complete" | jq -r '.payload.completed_at // empty' 2>/dev/null)
+    # resume 重複排除キーとして使う(下記 resume_key_for を参照)。text と同様、
+    # タブ区切りの状態ファイルへそのまま埋め込むとレコード構造が壊れるためサニタイズする
+    turn_id=$(echo "$last_task_complete" | jq -r '.payload.turn_id // empty' 2>/dev/null)
+    turn_id=$(printf '%s' "$turn_id" | tr '\t\n' '  ')
 
     later_token_line=$(echo "$tail_lines" | jq -c --argjson task_complete_line "$last_task_complete_line" 'select(input_line_number > $task_complete_line and .type == "event_msg" and .payload.type == "token_count")' 2>/dev/null | tail -1)
     if [ -n "$later_token_line" ] && [ "$(echo "$later_token_line" | jq -r '
@@ -151,7 +238,7 @@ check_limit_status() {
             and all($windows[]; (.used_percent? | type) == "number" and .used_percent < 100)
           end
     ' 2>/dev/null)" = "true" ]; then
-        printf '0\t-\t-\n'
+        printf '0\t-\t-\t-\n'
         return
     fi
 
@@ -191,7 +278,7 @@ check_limit_status() {
         fi
     fi
 
-    printf '1\t%s\t%s\n' "${reset_epoch:--}" "$text"
+    printf '1\t%s\t%s\t%s\n' "${reset_epoch:--}" "$text" "${turn_id:--}"
 }
 
 # resolve_rollout_path の特定失敗(または check_limit_status の判定不能)が
@@ -239,18 +326,18 @@ carry_forward_previous_entry() {
     fi
     set_resolve_failure_count "$session" "$failure_count"
 
-    awk -F'\t' -v s="$session" '$1 == s { print $1"\t"$2"\t"$3"\t"$4"\t0"; exit }' "$STATE_FILE" >> "$NEW_STATE_FILE"
+    awk -F'\t' -v s="$session" '$1 == s { print $1"\t"$2"\t"$3"\t"$4"\t0\t"$6; exit }' "$STATE_FILE" >> "$NEW_STATE_FILE"
 }
 
 # 現在リミット中の tmux セッション一覧を検出し、$NEW_STATE_FILE に書き出す。
-# 各行は "<session>\t<cwd>\t<reset_epoch>\t<reset_text>\t<confirmed:0|1>" の形式。
+# 各行は "<session>\t<cwd>\t<reset_epoch>\t<reset_text>\t<confirmed:0|1>\t<turn_id>" の形式。
 # confirmed=1 は今回のポーリングで実際に is_limited=1 と確認できたことを示し、
 # confirmed=0 は特定失敗・判定不能により前回の記録を引き継いだだけであることを示す
 # (呼び出し元は confirmed=1 の場合のみ resume_session を試みる)。
 # tmux セッション一覧の取得自体に失敗した場合は終了コード 1 を返し、
 # $NEW_STATE_FILE を書き換えない(呼び出し元は前回の STATE_FILE をそのまま使う)
 detect_limited_sessions() {
-    local sessions list_exit jsonl status_line status reset_epoch reset_text cwd session
+    local sessions list_exit jsonl status_line status reset_epoch reset_text turn_id cwd session
 
     sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null)
     list_exit=$?
@@ -273,7 +360,7 @@ detect_limited_sessions() {
         fi
 
         status_line=$(check_limit_status "$jsonl")
-        IFS=$'\t' read -r status reset_epoch reset_text <<< "$status_line"
+        IFS=$'\t' read -r status reset_epoch reset_text turn_id <<< "$status_line"
         if [ "$status" = "2" ]; then
             # jq がこのポーリングの走査対象範囲を解析できなかった(判定不能)。
             # 「リミットなし」と誤判定すると解除通知が誤って飛んでしまうため、
@@ -285,7 +372,7 @@ detect_limited_sessions() {
         set_resolve_failure_count "$session" 0
 
         cwd=$(tmux display-message -t "${session}:" -p '#{pane_current_path}' 2>/dev/null || echo "unknown")
-        printf '%s\t%s\t%s\t%s\t1\n' "$session" "$cwd" "$reset_epoch" "$reset_text" >> "$NEW_STATE_FILE"
+        printf '%s\t%s\t%s\t%s\t1\t%s\n' "$session" "$cwd" "$reset_epoch" "$reset_text" "$turn_id" >> "$NEW_STATE_FILE"
     done
 
     sort -u "$NEW_STATE_FILE" -o "$NEW_STATE_FILE"
@@ -347,8 +434,8 @@ record_notified_for() {
     mv "$tmp_file" "$file"
 }
 
-# 同一の再開予定(reset_epoch)に対して resume_session を再送していないかを
-# reset_epoch 単位で記録するファイルのパス。Codex の check_limit_status は
+# resume_session を同一キー(resume_key_for の結果、通常は turn_id)に対して
+# 再送していないかを記録するファイルのパス。Codex の check_limit_status は
 # event_msg/task_complete のみを見ており、送信した再開メッセージ自体は
 # task_complete を発生させないため、ターン完了までは最後の task_complete が
 # usage_limit_exceeded のまま残り続ける。この記録がないと、ターン完了までの間
@@ -375,24 +462,27 @@ record_resumed_for() {
     mv "$tmp_file" "$file"
 }
 
-# rollout の直近の Goal 状態が usageLimited か確認する。
-# Codex の Goal runtime は usage limit 到達時に thread_goal_updated を記録して
-# Goal を usageLimited に遷移させるため、この状態だけは通常メッセージではなく
-# /goal resume で active に戻す必要がある。
+# rollout が Goal 付きスレッドかどうかを確認する。実運用で観測したところ、Codex は
+# usage limit 到達時に thread_goal_updated を status=usageLimited で記録するとは
+# 限らず(この診断で status が一度も "active" 以外にならないまま limit に到達した
+# 実例が確認された)、一方で Goal 付きスレッドが limit から復帰する際は通常メッセージ
+# では TUI 側の Goal 状態が解除されず /goal resume が必須だったため、
+# status の値ではなく thread_goal_updated が一度でも記録されているか(=このスレッドが
+# Goal 付きかどうか)だけを見る。tail 等で走査範囲を絞ると、開始直後の
+# thread_goal_updated が長時間セッションの末尾から外れて見落とされるため、
+# ファイル全体を対象にする
 goal_resume_required() {
-    local jsonl="$1" goal_statuses last_goal_status
+    local jsonl="$1" goal_events
 
     [ -f "$jsonl" ] || return 1
 
-    if ! goal_statuses=$(
-        tail -n 200 "$jsonl" \
-            | jq -r 'select(.type == "event_msg" and .payload.type == "thread_goal_updated") | .payload.goal.status // empty' 2>/dev/null
+    if ! goal_events=$(
+        jq -r 'select(.type == "event_msg" and .payload.type == "thread_goal_updated") | 1' "$jsonl" 2>/dev/null
     ); then
         return 1
     fi
-    last_goal_status=$(printf '%s\n' "$goal_statuses" | tail -1)
 
-    [ "$last_goal_status" = "usageLimited" ]
+    [ -n "$goal_events" ]
 }
 
 # 指定した tmux セッションに再開入力を送る。
@@ -419,6 +509,27 @@ resume_session() {
     tmux send-keys -t "${session}:" Enter
 }
 
+# reset_epoch 到達直後は解除がまだ反映されていないことがあるため、
+# 一定時間 (RESUME_DELAY_SECONDS) 経過してから再開する
+RESUME_DELAY_SECONDS=60
+
+# reset_epoch から RESUME_DELAY_SECONDS 経過しているか判定する
+resume_due() {
+    local reset_epoch="$1" now="$2"
+    [ "$now" -ge "$((reset_epoch + RESUME_DELAY_SECONDS))" ]
+}
+
+# resume の重複排除キーを決定する。turn_id は task_complete イベントごとに一意なため、
+# これをキーにすると reset_epoch の推定が外れて resume に失敗した場合でも、
+# 次に発生する新しい turn_id を「別の失敗」として検知し再試行できる。
+# turn_id が取得できない(空/"-")場合のみ、従来通り reset_epoch にフォールバックする
+resume_key_for() {
+    local reset_epoch="$1" turn_id="$2" key
+    key="${turn_id:--}"
+    [ "$key" != "-" ] || key="$reset_epoch"
+    printf '%s\n' "$key"
+}
+
 # セッション名が対象ファイルに存在するか確認する
 session_recorded_in() {
     local session="$1" file="$2"
@@ -443,7 +554,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         now=$(date +%s)
 
         # 新規にリミットへ到達したセッションを通知する
-        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed; do
+        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed turn_id; do
             [ -n "$session" ] || continue
             if ! already_notified_for "$session" "$reset_epoch"; then
                 echo "Limit detected: $session ($cwd)"
@@ -461,17 +572,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
             # confirmed=1(このポーリングで実際にリミット中と確認できた)場合のみ
             # 再開を試みる。confirmed=0 の引き継ぎ行は未検証のため対象にしない
-            if [ "$confirmed" = "1" ] && [[ "$reset_epoch" =~ ^[0-9]+$ ]] && [ "$now" -ge "$reset_epoch" ]; then
-                if ! already_resumed_for "$session" "$reset_epoch"; then
+            if [ "$confirmed" = "1" ] && [[ "$reset_epoch" =~ ^[0-9]+$ ]] && resume_due "$reset_epoch" "$now"; then
+                resume_key=$(resume_key_for "$reset_epoch" "$turn_id")
+                if ! already_resumed_for "$session" "$resume_key"; then
                     echo "Resuming: $session ($cwd)"
                     resume_session "$session"
-                    record_resumed_for "$session" "$reset_epoch"
+                    record_resumed_for "$session" "$resume_key"
                 fi
             fi
         done < "$NEW_STATE_FILE"
 
         # リミットが解除された(前回は記録されていたが今回は検出されなかった)セッションを通知する
-        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed; do
+        while IFS=$'\t' read -r session cwd reset_epoch reset_text confirmed turn_id; do
             [ -n "$session" ] || continue
             session_recorded_in "$session" "$NEW_STATE_FILE" && continue # まだリミット中
 

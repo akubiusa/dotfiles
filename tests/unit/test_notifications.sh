@@ -116,7 +116,7 @@ RESULT=$(
     check_limit_status "'"$FIXTURE_JSONL"'"
   '
 )
-IFS=$'\t' read -r is_limited reset_epoch reset_text <<< "$RESULT"
+IFS=$'\t' read -r is_limited reset_epoch reset_text turn_id <<< "$RESULT"
 
 if [[ "$is_limited" != "1" ]]; then
   echo "❌ check_limit_status did not detect a usage_limit_exceeded task_complete (got: '$RESULT')"
@@ -139,6 +139,13 @@ else
   echo "✅ check_limit_status carried through the error message text"
 fi
 
+if [[ "$turn_id" != "t1" ]]; then
+  echo "❌ check_limit_status did not carry through the task_complete turn_id (got: '$turn_id')"
+  FAILED=1
+else
+  echo "✅ check_limit_status carried through the task_complete turn_id"
+fi
+
 echo "Testing Codex check_limit_status treats error:null task_complete as not limited..."
 FIXTURE_JSONL_OK="$TEST_HOME/fixture-rollout-ok.jsonl"
 cat > "$FIXTURE_JSONL_OK" <<'EOF'
@@ -152,7 +159,7 @@ RESULT_OK=$(
   '
 )
 
-if [[ "$RESULT_OK" != $'0\t-\t-' ]]; then
+if [[ "$RESULT_OK" != $'0\t-\t-\t-' ]]; then
   echo "❌ check_limit_status incorrectly reported a limited state for an error:null task_complete (got: '$RESULT_OK')"
   FAILED=1
 else
@@ -173,7 +180,7 @@ RESULT_STALE_LIMIT=$(
   '
 )
 
-if [[ "$RESULT_STALE_LIMIT" != $'0\t-\t-' ]]; then
+if [[ "$RESULT_STALE_LIMIT" != $'0\t-\t-\t-' ]]; then
   echo "❌ check_limit_status did not clear a stale usage_limit_exceeded state (got: '$RESULT_STALE_LIMIT')"
   FAILED=1
 else
@@ -278,6 +285,239 @@ fi
 
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
+echo "Testing Codex resolve_rollout_path falls back to the shared app-server daemon's fd when the pane's own codex --remote client holds no rollout fd..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+PANE_CWD="/fake/project/path"
+DAEMON_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-daemon.jsonl"
+printf '%s\n%s\n' \
+  '{"type":"session_meta","payload":{"id":"daemon-thread","session_id":"daemon-thread","source":"cli","thread_source":"user"}}' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"note\",\"text\":\"working in $PANE_CWD\"}}" \
+  > "$DAEMON_ROLLOUT"
+
+# daemon プロセス: rollout fd を保持するが pane の子孫ではない
+# (`codex()` ラッパーが接続する共有 app-server --remote-control daemon を模す)
+bash -c "exec 3<'$DAEMON_ROLLOUT'; sleep 60" &
+DAEMON_PID=$!
+
+cat > "$TEST_BIN_DIR/codex" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/codex"
+
+# pane プロセス: codex --remote クライアントを子に持つが、そのクライアント自身は
+# rollout fd を一切開かない(daemon に接続するだけの薄いクライアントを模す)
+cat > "$TEST_BIN_DIR/pane-launcher.sh" <<EOF
+#!/bin/bash
+"$TEST_BIN_DIR/codex" --remote unix:// --yolo &
+wait
+EOF
+chmod +x "$TEST_BIN_DIR/pane-launcher.sh"
+"$TEST_BIN_DIR/pane-launcher.sh" &
+PANE_PID=$!
+sleep 0.3
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$DAEMON_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *pane_current_path*) echo "$PANE_CWD"; exit 0 ;;
+    esac
+  done
+  echo "$PANE_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path "dummy-session"
+  '
+)
+
+kill "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+wait "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+
+if [[ "$RESULT" != "$DAEMON_ROLLOUT" ]]; then
+  echo "❌ resolve_rollout_path did not fall back to the daemon's rollout fd (got: '$RESULT', want: '$DAEMON_ROLLOUT')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path fell back to the shared app-server daemon's rollout fd, filtered by pane cwd"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
+echo "Testing Codex resolve_rollout_path's daemon-fallback cwd filter does not match a rollout that only mentions a deeper subdirectory of the pane's cwd..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+PANE_CWD="/fake/project/path"
+UNRELATED_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-unrelated.jsonl"
+printf '%s\n%s\n' \
+  '{"type":"session_meta","payload":{"id":"unrelated-thread","session_id":"unrelated-thread","source":"cli","thread_source":"user"}}' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"note\",\"text\":\"working in ${PANE_CWD}/subdir/deep\"}}" \
+  > "$UNRELATED_ROLLOUT"
+
+# daemon プロセス: pane の cwd の "より深いサブディレクトリ" だけを含む、無関係なセッションの
+# rollout fd を保持する(cwd の単純な部分一致では誤って一致してしまうケース)
+bash -c "exec 3<'$UNRELATED_ROLLOUT'; sleep 60" &
+DAEMON_PID=$!
+
+cat > "$TEST_BIN_DIR/codex" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/codex"
+
+cat > "$TEST_BIN_DIR/pane-launcher.sh" <<EOF
+#!/bin/bash
+"$TEST_BIN_DIR/codex" --remote unix:// --yolo &
+wait
+EOF
+chmod +x "$TEST_BIN_DIR/pane-launcher.sh"
+"$TEST_BIN_DIR/pane-launcher.sh" &
+PANE_PID=$!
+sleep 0.3
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$DAEMON_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *pane_current_path*) echo "$PANE_CWD"; exit 0 ;;
+    esac
+  done
+  echo "$PANE_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT_NESTED_DIR=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    if resolve_rollout_path "dummy-session"; then
+      :
+    else
+      printf "%s\n" not-resolved
+    fi
+  '
+)
+
+kill "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+wait "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+
+if [[ "$RESULT_NESTED_DIR" != "not-resolved" ]]; then
+  echo "❌ resolve_rollout_path's cwd filter matched a rollout that only mentions a deeper subdirectory of the pane's cwd (got: '$RESULT_NESTED_DIR')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path's cwd filter correctly rejected a rollout that only mentions a deeper subdirectory of the pane's cwd"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
+echo "Testing Codex resolve_rollout_path does not fall back to the daemon for a non-codex pane, even if its cwd happens to match daemon rollout content..."
+TEST_HOME=$(mktemp -d)
+TEST_HOME=$(readlink -f "$TEST_HOME")
+TEST_BIN_DIR=$(mktemp -d)
+mkdir -p "$TEST_HOME/.codex/sessions/2026/08/02"
+
+PANE_CWD="/fake/project/path"
+DAEMON_ROLLOUT="$TEST_HOME/.codex/sessions/2026/08/02/rollout-daemon.jsonl"
+printf '%s\n%s\n' \
+  '{"type":"session_meta","payload":{"id":"daemon-thread","session_id":"daemon-thread","source":"cli","thread_source":"user"}}' \
+  "{\"type\":\"event_msg\",\"payload\":{\"type\":\"note\",\"text\":\"working in $PANE_CWD\"}}" \
+  > "$DAEMON_ROLLOUT"
+
+bash -c "exec 3<'$DAEMON_ROLLOUT'; sleep 60" &
+DAEMON_PID=$!
+
+cat > "$TEST_BIN_DIR/claude" <<'EOF'
+#!/bin/bash
+sleep 60
+EOF
+chmod +x "$TEST_BIN_DIR/claude"
+
+# pane プロセス: codex ではない別 CLI (claude) のセッションを模す。
+# cwd が daemon の rollout 内容とたまたま一致していても、daemon フォールバックの
+# 対象になってはならない
+cat > "$TEST_BIN_DIR/pane-launcher.sh" <<EOF
+#!/bin/bash
+"$TEST_BIN_DIR/claude" --permission-mode auto &
+wait
+EOF
+chmod +x "$TEST_BIN_DIR/pane-launcher.sh"
+"$TEST_BIN_DIR/pane-launcher.sh" &
+PANE_PID=$!
+sleep 0.3
+
+cat > "$TEST_BIN_DIR/pgrep" <<EOF
+#!/bin/bash
+echo "$DAEMON_PID"
+EOF
+chmod +x "$TEST_BIN_DIR/pgrep"
+
+cat > "$TEST_BIN_DIR/tmux" <<EOF
+#!/bin/bash
+if [[ "\$1" == "display-message" ]]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      *pane_current_path*) echo "$PANE_CWD"; exit 0 ;;
+    esac
+  done
+  echo "$PANE_PID"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+RESULT_NON_CODEX=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    if resolve_rollout_path "dummy-session"; then
+      :
+    else
+      printf "%s\n" not-resolved
+    fi
+  '
+)
+
+kill "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+wait "$PANE_PID" "$DAEMON_PID" 2>/dev/null || true
+
+if [[ "$RESULT_NON_CODEX" != "not-resolved" ]]; then
+  echo "❌ resolve_rollout_path wrongly matched a non-codex pane to the daemon's rollout via cwd content (got: '$RESULT_NON_CODEX')"
+  FAILED=1
+else
+  echo "✅ resolve_rollout_path correctly refused to resolve a non-codex pane against the daemon's rollouts"
+fi
+
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 echo "Testing Codex check_limit_status reports status=2 (undetermined) when jq fails to parse the scanned window..."
 TEST_HOME=$(mktemp -d)
 FIXTURE_JSONL_BROKEN="$TEST_HOME/fixture-rollout-broken.jsonl"
@@ -290,7 +530,7 @@ RESULT_BROKEN=$(
   '
 )
 
-if [[ "$RESULT_BROKEN" != $'2\t-\t-' ]]; then
+if [[ "$RESULT_BROKEN" != $'2\t-\t-\t-' ]]; then
   echo "❌ check_limit_status did not report status=2 for an unparseable jsonl window (got: '$RESULT_BROKEN')"
   FAILED=1
 else
@@ -312,7 +552,7 @@ RESULT_SECONDARY=$(
     check_limit_status "'"$FIXTURE_JSONL_SECONDARY"'"
   '
 )
-IFS=$'\t' read -r _ reset_epoch_secondary _ <<< "$RESULT_SECONDARY"
+IFS=$'\t' read -r _ reset_epoch_secondary _ _ <<< "$RESULT_SECONDARY"
 
 if [[ "$reset_epoch_secondary" != "2222222222" ]]; then
   echo "❌ check_limit_status did not prefer the secondary window's resets_at even though only secondary is at 100% used_percent (got: '$reset_epoch_secondary')"
@@ -399,6 +639,145 @@ else
 fi
 rm -rf "$TEST_HOME"
 
+echo "Testing Codex resume_session sends /goal resume for a goal thread whose logged status never reached usageLimited..."
+TEST_HOME=$(mktemp -d)
+FIXTURE_JSONL_GOAL_ALWAYS_ACTIVE="$TEST_HOME/fixture-rollout-goal-always-active.jsonl"
+cat > "$FIXTURE_JSONL_GOAL_ALWAYS_ACTIVE" <<'EOF'
+{"timestamp":"2026-08-08T05:00:00.000Z","type":"event_msg","payload":{"type":"thread_goal_updated","threadId":"thread-1","goal":{"threadId":"thread-1","objective":"finish the task","status":"active","tokensUsed":100,"timeUsedSeconds":60,"createdAt":1,"updatedAt":2}}}
+{"timestamp":"2026-08-08T05:10:00.000Z","type":"event_msg","payload":{"type":"thread_goal_updated","threadId":"thread-1","goal":{"threadId":"thread-1","objective":"finish the task","status":"active","tokensUsed":200,"timeUsedSeconds":120,"createdAt":1,"updatedAt":3}}}
+{"timestamp":"2026-08-08T05:20:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"error":{"message":"usage limit hit","codex_error_info":"usage_limit_exceeded"},"started_at":1,"completed_at":2,"duration_ms":1000}}
+EOF
+
+RESULT_GOAL_ALWAYS_ACTIVE=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path() { printf "%s\n" "'"$FIXTURE_JSONL_GOAL_ALWAYS_ACTIVE"'"; }
+    sleep() { :; }
+    tmux() { printf "%s\n" "$*"; }
+    resume_session "sess-1"
+  '
+)
+EXPECTED_GOAL_ALWAYS_ACTIVE=$'send-keys -t sess-1: /goal resume\nsend-keys -t sess-1: Enter'
+if [[ "$RESULT_GOAL_ALWAYS_ACTIVE" != "$EXPECTED_GOAL_ALWAYS_ACTIVE" ]]; then
+  echo "❌ resume_session did not use /goal resume for a goal thread that never logged status=usageLimited (got: '$RESULT_GOAL_ALWAYS_ACTIVE')"
+  FAILED=1
+else
+  echo "✅ resume_session used /goal resume for a goal thread even though its logged status never reached usageLimited"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex resume_due delays resume until RESUME_DELAY_SECONDS after reset_epoch..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_DUE=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resume_due "1700000000" "1700000000" && echo "unexpected-due-at-reset-epoch"
+    resume_due "1700000000" "1700000059" && echo "unexpected-due-before-delay-elapsed"
+    resume_due "1700000000" "1700000060" && echo "due-once-delay-elapsed"
+  '
+)
+if [[ "$RESULT_RESUME_DUE" != "due-once-delay-elapsed" ]]; then
+  echo "❌ resume_due did not wait RESUME_DELAY_SECONDS after reset_epoch (got: '$RESULT_RESUME_DUE')"
+  FAILED=1
+else
+  echo "✅ resume_due waits RESUME_DELAY_SECONDS after reset_epoch before allowing resume"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex resume_key_for prefers turn_id and falls back to reset_epoch only when turn_id is missing..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_KEY=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resume_key_for "1700000000" "turn-a"
+    resume_key_for "1700000000" "-"
+    resume_key_for "1700000000" ""
+  '
+)
+EXPECTED_RESUME_KEY=$'turn-a\n1700000000\n1700000000'
+if [[ "$RESULT_RESUME_KEY" != "$EXPECTED_RESUME_KEY" ]]; then
+  echo "❌ resume_key_for did not prefer turn_id / fall back to reset_epoch as expected (got: '$RESULT_RESUME_KEY')"
+  FAILED=1
+else
+  echo "✅ resume_key_for prefers turn_id and falls back to reset_epoch only when turn_id is missing"
+fi
+
+RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    record_resumed_for "sess-2" "$(resume_key_for "1700000000" "-")"
+    already_resumed_for "sess-2" "1700000000" && echo "fallback-key-matches-reset-epoch"
+  '
+)
+if [[ "$RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP" != "fallback-key-matches-reset-epoch" ]]; then
+  echo "❌ resume_key_for's reset_epoch fallback did not round-trip through already_resumed_for/record_resumed_for (got: '$RESULT_RESUME_KEY_FALLBACK_ROUNDTRIP')"
+  FAILED=1
+else
+  echo "✅ resume_key_for's reset_epoch fallback round-trips through already_resumed_for/record_resumed_for"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex already_resumed_for / record_resumed_for dedup resume attempts per turn_id, so a new failing turn after a failed resume is retried..."
+TEST_HOME=$(mktemp -d)
+RESULT_RESUME_DEDUP_BY_TURN=$(
+  HOME="$TEST_HOME" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    # reset_epoch の推定値は同じだが、resume 前後で turn_id が異なる2つの失敗turnを想定する
+    already_resumed_for "sess-1" "turn-a" && echo "unexpected-already-resumed-turn-a"
+    record_resumed_for "sess-1" "turn-a"
+    already_resumed_for "sess-1" "turn-a" && echo "resumed-for-same-turn"
+    already_resumed_for "sess-1" "turn-b" || echo "not-resumed-for-new-turn-after-failed-resume"
+  '
+)
+EXPECTED_RESUME_DEDUP_BY_TURN=$'resumed-for-same-turn\nnot-resumed-for-new-turn-after-failed-resume'
+if [[ "$RESULT_RESUME_DEDUP_BY_TURN" != "$EXPECTED_RESUME_DEDUP_BY_TURN" ]]; then
+  echo "❌ already_resumed_for/record_resumed_for did not correctly dedup resume attempts per turn_id (got: '$RESULT_RESUME_DEDUP_BY_TURN')"
+  FAILED=1
+else
+  echo "✅ already_resumed_for/record_resumed_for correctly dedup resume attempts per turn_id, allowing retry after a new failing turn"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex detect_limited_sessions writes a 6-field NEW_STATE_FILE whose confirmed field parses standalone (not concatenated with turn_id)..."
+TEST_HOME=$(mktemp -d)
+TEST_BIN_DIR=$(mktemp -d)
+FIXTURE_JSONL_CONFIRMED_FIELD="$TEST_HOME/fixture-rollout-confirmed-field.jsonl"
+cat > "$FIXTURE_JSONL_CONFIRMED_FIELD" <<'EOF'
+{"timestamp":"2026-08-08T05:00:00.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-confirmed-check","last_agent_message":null,"error":{"message":"usage limit hit","codex_error_info":"usage_limit_exceeded"},"started_at":1,"completed_at":2,"duration_ms":1000}}
+EOF
+
+cat > "$TEST_BIN_DIR/tmux" <<'EOF'
+#!/bin/bash
+case "$1" in
+  list-sessions) echo "sess-confirmed-check" ;;
+  display-message) echo "/tmp/proj" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$TEST_BIN_DIR/tmux"
+
+STATE_FILE_CONFIRMED_FIELD="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_CONFIRMED_FIELD="${STATE_FILE_CONFIRMED_FIELD}.new"
+touch "$STATE_FILE_CONFIRMED_FIELD"
+
+RESULT_CONFIRMED_FIELD=$(
+  PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" \
+  STATE_FILE="$STATE_FILE_CONFIRMED_FIELD" NEW_STATE_FILE="$NEW_STATE_FILE_CONFIRMED_FIELD" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    resolve_rollout_path() { printf "%s\n" "'"$FIXTURE_JSONL_CONFIRMED_FIELD"'"; }
+    detect_limited_sessions
+    IFS=$'"'"'\t'"'"' read -r session cwd reset_epoch reset_text confirmed turn_id < "$NEW_STATE_FILE"
+    printf "confirmed=[%s] turn_id=[%s]\n" "$confirmed" "$turn_id"
+  '
+)
+if [[ "$RESULT_CONFIRMED_FIELD" != "confirmed=[1] turn_id=[turn-confirmed-check]" ]]; then
+  echo "❌ detect_limited_sessions' NEW_STATE_FILE did not parse as 6 independent fields (got: '$RESULT_CONFIRMED_FIELD')"
+  FAILED=1
+else
+  echo "✅ detect_limited_sessions' NEW_STATE_FILE parses confirmed/turn_id as independent fields"
+fi
+rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
+
 echo "Testing Codex already_resumed_for / record_resumed_for dedup resume_session for the same reset_epoch..."
 TEST_HOME=$(mktemp -d)
 RESULT_RESUME_DEDUP=$(
@@ -480,6 +859,29 @@ if [[ -n "$RESULT_STALE" ]]; then
   FAILED=1
 else
   echo "✅ carry_forward_previous_entry stopped carrying a session forward after the consecutive-failure threshold was reached"
+fi
+rm -rf "$TEST_HOME"
+
+echo "Testing Codex carry_forward_previous_entry preserves the turn_id column (6th field) when carrying a session forward..."
+TEST_HOME=$(mktemp -d)
+STATE_FILE_TURN_ID="$TEST_HOME/limited_sessions.txt"
+NEW_STATE_FILE_TURN_ID="${STATE_FILE_TURN_ID}.new"
+printf 'carried-sess\t/tmp/proj\t1111111111\tsome text\t1\tturn-carried\n' > "$STATE_FILE_TURN_ID"
+: > "$NEW_STATE_FILE_TURN_ID"
+
+RESULT_CARRIED_TURN_ID=$(
+  HOME="$TEST_HOME" STATE_FILE="$STATE_FILE_TURN_ID" NEW_STATE_FILE="$NEW_STATE_FILE_TURN_ID" bash -c '
+    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
+    carry_forward_previous_entry "carried-sess"
+    IFS=$'"'"'\t'"'"' read -r session cwd reset_epoch reset_text confirmed turn_id < "$NEW_STATE_FILE"
+    printf "confirmed=[%s] turn_id=[%s]\n" "$confirmed" "$turn_id"
+  '
+)
+if [[ "$RESULT_CARRIED_TURN_ID" != "confirmed=[0] turn_id=[turn-carried]" ]]; then
+  echo "❌ carry_forward_previous_entry did not correctly carry the turn_id column forward (got: '$RESULT_CARRIED_TURN_ID')"
+  FAILED=1
+else
+  echo "✅ carry_forward_previous_entry correctly carries the turn_id column forward"
 fi
 rm -rf "$TEST_HOME"
 

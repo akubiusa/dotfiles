@@ -14,18 +14,14 @@ implementation, no spec/plan) — see Phase 2.5. It has no Phase 3-onward
 logic of its own.
 
 Where approval is needed further down this flow (e.g. `issue-pr-deep`'s
-spec sign-off), it is done via **AskUserQuestion**, not Claude Code's
+spec sign-off, when there is a significant choice), it is done via **AskUserQuestion**, not Claude Code's
 native Plan Mode — Plan Mode only allows a single
 read-only-until-ExitPlanMode gate, and blocks the Write/Bash/MCP calls this
 skill needs starting at Phase 1. This dispatcher's own Phase 2.5 scale
 judgment is not one of those approval points — it is made automatically,
 without asking the user (see Phase 2.5 below).
 
-**Do not call ExitPlanMode to work around this.** It exists to get sign-off
-on a concrete plan, not to escape Plan Mode. If Plan Mode is active when this
-skill starts, stop immediately and tell the user to exit it themselves and
-re-run `/issue-pr`. "I'll just exit once, it's harmless" is exactly the
-workaround this forbids. No exceptions.
+Do not call ExitPlanMode to get around Plan Mode; it exists to get sign-off on a concrete plan. If Plan Mode is active when this skill starts, stop and tell the user to exit it themselves and re-run `/issue-pr`.
 
 ## Prerequisites
 
@@ -96,7 +92,7 @@ Extract `ISSUE_OWNER` and `ISSUE_REPO` from the returned `url` field
 (`https://github.com/<owner>/<repo>/issues/<number>`):
 
 ```bash
-# grep -oP（PCRE）は macOS の BSD grep では動かないため sed -E で移植可能な形にする
+# grep -oP (PCRE) does not work with macOS's BSD grep, so use sed -E for a portable form
 ISSUE_URL=$(gh issue view "$ARGUMENTS" --json url -q .url)
 ISSUE_OWNER=$(echo "$ISSUE_URL" | sed -E 's#.*github\.com/([^/]+)/.*#\1#')
 ISSUE_REPO=$(echo "$ISSUE_URL" | sed -E 's#.*github\.com/[^/]+/([^/]+)/issues/.*#\1#')
@@ -108,7 +104,7 @@ fi
 
 If extraction fails, stop and report it to the user — every later phase
 that targets a specific repository (`gh issue comment`, `gh pr create`,
-`gh pr view` from the new `wait-for-pr-close` phase) depends on
+`gh pr view`, `wait-for-pr-close`) depends on
 `ISSUE_OWNER`/`ISSUE_REPO` being correct. **`ISSUE_OWNER`/`ISSUE_REPO` is
 the repository the Issue actually lives in — this is what determines the PR
 destination in every later phase, regardless of whether the local checkout
@@ -177,23 +173,7 @@ Judge "small-scale" only if **all** of the following hold:
 When unsure, do **not** judge it small-scale — default to the safe
 (`issue-pr-deep`) side.
 
-**Make the call yourself. Do not confirm this judgment with the user via
-AskUserQuestion, under any circumstance** — there is no exception for "the
-judgment feels uncertain" or "the user might want a say." Briefly state
-which path was chosen and why (one or two sentences) before invoking it,
-so the decision is visible, but do not turn that statement into a
-question.
-
-If you find yourself drafting an AskUserQuestion call with options
-resembling "issue-pr-lite で進める" / "issue-pr-deep で進める" (or any
-English equivalent, e.g. "Proceed with issue-pr-lite" / "Proceed with
-issue-pr-deep"), stop — that is exactly the anti-pattern this rule
-forbids, not a legitimate checkpoint.
-
-This judgment is not the kind of "clarifying question" the global
-CLAUDE.md's "Use AskUserQuestion for all clarifying questions directed at
-the user" rule refers to — that rule governs genuine ambiguity in what
-the user wants, not this dispatcher's own internal scale assessment.
+Make the call yourself and state the chosen path and why in one or two sentences before invoking it, so the decision is visible. This is the dispatcher's own scale assessment, not a clarifying question about what the user wants, so it does not go through AskUserQuestion (that rule covers genuine ambiguity in the user's intent).
 
 Based on the judgment, invoke the chosen skill via the Skill tool
 (`issue-pr-deep` or `issue-pr-lite`). The worktree, `ISSUE_OWNER`,
@@ -213,7 +193,7 @@ invoked here.
 
 - Do not drift to other tasks while waiting for review or CI.
 - Record the decision log in the spec/plan files under `.agent-work/`
-  (already required by `rules/design-workflow.md`) or in the Issue comment /
+  (already required by `~/.claude/docs/design-workflow.md`) or in the Issue comment /
   PR body — not in extra ad-hoc Markdown files.
 - `disable-model-invocation: true` is intentional: this skill hands off to
   a branch-and-PR-creating flow (`issue-pr-deep`/`issue-pr-lite`), which

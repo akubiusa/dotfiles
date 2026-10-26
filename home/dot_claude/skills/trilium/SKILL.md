@@ -16,13 +16,13 @@ investigations, spec/plan documents not posted as Issue comments).
 - Applies to: `ticket-pr` requirements documents, standalone investigations, spec/plan
   documents for work **not** tied to a GitHub Issue.
 - Does not apply to: documents tied to a GitHub Issue — those follow
-  `rules/issue-comment-docs.md` instead (posted directly as an Issue comment, no Trilium
+  `~/.claude/docs/issue-comment-docs.md` instead (posted directly as an Issue comment, no Trilium
   upload).
 
 ## Procedure
 
 1. **Scope check**: confirm the document is not tied to a GitHub Issue (see "When to
-   Apply" above). If it is, stop and follow `rules/issue-comment-docs.md` instead.
+   Apply" above). If it is, stop and follow `~/.claude/docs/issue-comment-docs.md` instead.
 2. **Determine `noteId` / `topic` / `docType`**: the caller (this skill's invoker) is
    responsible for constructing these:
    - `noteId`: must match `^[a-zA-Z0-9_]{4,32}$`. Recommended (not required) convention:
@@ -37,12 +37,14 @@ investigations, spec/plan documents not posted as Issue comments).
 4. **Sensitive information check**: before uploading, verify the document contains no
    secrets (tokens, passwords, internal URLs, credentials) — same standard as
    `rules/security.md`.
-5. **Run the upload**:
+5. **Confirm, then run the upload**: uploading changes external state, so confirm with
+   the user via AskUserQuestion before running the upload unless the user has explicitly
+   asked for this upload in the current request. Then run:
    `bash ~/bin/trilium-upload.sh <file-path> <noteId> <topic> <docType> <title> [--folder-title <title>]`
    and capture the share URL from its final line of stdout. `--folder-title` is required
    only the first time a given `topic` is uploaded (when its folder note doesn't exist
    yet) — omit it for subsequent uploads to the same `topic`.
-6. **On failure**: if the script exits non-zero, report the error verbatim to the user and
-   ask how to proceed. There is no retry or fallback destination.
+6. **On failure**: if the script exits non-zero, stop and report the error verbatim to the
+   user. There is no retry or fallback destination.
 7. **Reporting**: after a successful upload, report only the share URL to the user — do
    not paste the document body again in chat or elsewhere.

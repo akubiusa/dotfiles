@@ -20,6 +20,10 @@ disable-model-invocation: false
 > explicitly when invoking this skill, and this skill must treat that value
 > as `$ARGUMENTS` for the rest of its phases.
 
+## Required Reading
+
+Before Phase 3, Read `~/.claude/docs/design-workflow.md`, `~/.claude/docs/issue-comment-docs.md`, `~/.claude/docs/workflow-sub-agents.md`, and `~/.claude/docs/workflow.md`. They are not auto-loaded, and the phases below cite their sections.
+
 ## Progress Tracking
 
 Before Phase 3, create one Todo task per phase in this file (Phase 3
@@ -36,27 +40,13 @@ Once a phase's task is marked `completed`, immediately mark the next
 phase's task `in_progress` in the same turn and start that work — do not
 end the turn after marking `completed` and defer starting the next task.
 
-## Phase Transition Self-Check
+## Phase Transitions
 
-Every phase boundary in this file, except an explicit `AskUserQuestion`
-approval gate (Phase 6) or an explicitly written failure/stop condition, is
-an "auto-continue point" — this applies to every phase boundary in this
-file, not just Phase 3→4.
-
-Actions that must never happen at an auto-continue point:
-
-- Ending the turn after issuing a completion-report sentence such as "I
-  did X" / "X is complete."
-- Waiting for a user response like "go ahead" / "proceed" / "OK."
-- Inserting a content-free "may I proceed?" confirmation.
-
-Noticing you are about to do any of the above is itself a bug —
-self-correct immediately in the same turn and proceed into the next
-phase's work.
+Every phase boundary in this file, except the Phase 6 approval gate (when it applies) and explicitly written failure/stop conditions, is an auto-continue point: start the next phase's work in the same turn, without ending the turn on a completion report, waiting for "go ahead", or asking a content-free "may I proceed?".
 
 ## Phase 3: Write the Spec
 
-Author the spec yourself, following `rules/design-workflow.md`'s Intent
+Author the spec yourself, following `~/.claude/docs/design-workflow.md`'s Intent
 Contract, Fact / Decision Separation, Decision Dependency / Frontier,
 Alternative Exploration, and Spec Synthesis sections:
 
@@ -78,24 +68,26 @@ Alternative Exploration, and Spec Synthesis sections:
   satisfies the Intent Contract wins by default (YAGNI).
 - **Spec Synthesis**: once the Decision frontier is empty, synthesize the
   answers into one coherent spec covering the sections listed in
-  `rules/design-workflow.md`'s Spec Synthesis section, with an Acceptance
+  `~/.claude/docs/design-workflow.md`'s Spec Synthesis section, with an Acceptance
   Criteria section that is observable/testable, not aspirational prose.
 
 Write the spec to `.agent-work/specs/YYYY-MM-DD-<topic>-design.md`.
 
 Write the spec document's body in the language required by the target
-project's CLAUDE.md (for this repository, Japanese — `会話は日本語で行う`);
-code blocks/commands/identifiers may stay as-is. Do not assume this is
-inferred from context.
+repository's language convention (see the `Language` section of `~/.claude/CLAUDE.md`
+and `~/.claude/docs/issue-comment-docs.md`). If there is no convention, ask the user
+via AskUserQuestion; in a non-interactive run, defer posting and report the language
+as undetermined. Code blocks/commands/identifiers may stay as-is. Do not assume
+this is inferred from context.
 
 Do not ask a content-free "may I proceed" confirmation before or during
 this phase. Genuine requirement-clarifying questions (real ambiguity in the
 Issue's request, i.e. a genuine Decision) are fine via AskUserQuestion;
-asking permission with no new information is not. The sole human
-checkpoint for the spec's content is Phase 6, after the spec is posted as
-an Issue comment.
+asking permission with no new information is not. The only human
+checkpoint for the spec's content is Phase 6 (when it applies), after the
+spec is posted as an Issue comment.
 
-Per `rules/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
+Per `~/.claude/docs/design-workflow.md`'s Local-Only Artifacts policy, `.agent-work/`
 is `.gitignore`d — do not `git add -f` the spec file.
 
 Once the spec file is written, proceed immediately into Phase 4 below
@@ -104,7 +96,7 @@ Phase 4 through Phase 6 own spec review, posting, and approval.
 
 ## Phase 4: Review the Spec
 
-`rules/design-workflow.md`'s Spec Review Contract requires dispatching the
+`~/.claude/docs/design-workflow.md`'s Spec Review Contract requires dispatching the
 `spec-reviewer` sub-agent (`Agent` tool, `subagent_type: spec-reviewer`)
 against the spec file. Dispatch it now, wait for it, and confirm the
 reported fixes/ambiguities look correct before moving on.
@@ -114,7 +106,7 @@ yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 5: Post the Spec as an Issue Comment
 
-`rules/issue-comment-docs.md` covers this case (the spec is tied to this
+`~/.claude/docs/issue-comment-docs.md` covers this case (the spec is tied to this
 Issue) — follow its procedure directly:
 
 ```bash
@@ -138,14 +130,17 @@ the whole Issue, which could silently overwrite the plan's comment (Phase 9)
 if posted first.
 
 If `gh issue comment` / `gh api` fails, follow
-`rules/issue-comment-docs.md`'s fallback: report it and ask how to proceed.
+`~/.claude/docs/issue-comment-docs.md`'s fallback: report it and ask how to proceed.
 
 ## Phase 6: Approve the Spec
 
-Use **AskUserQuestion** to get explicit spec approval before Phase 7. No
-exceptions for "obviously fine" or asking forgiveness afterward.
+Ask for approval via **AskUserQuestion** only when there is a significant
+choice: a real Decision with materially different options, or an
+irreversible/scope-affecting trade-off. Otherwise, state in one or two
+sentences that the spec is final (with `SPEC_COMMENT_URL`) and proceed to
+Phase 7 in the same turn.
 
-The question text MUST include `SPEC_COMMENT_URL` from Phase 5 (if that post
+When asking, the question text MUST include `SPEC_COMMENT_URL` from Phase 5 (if that post
 failed and fell back, report that first). Fix the options to exactly these
 two (AskUserQuestion's `options` requires ≥2 entries):
 
@@ -159,7 +154,7 @@ update the spec, and repeat Phases 3–6 (Phase 5 becomes an update via
 ## Phase 7: Write the Plan
 
 Author the plan yourself against the approved spec, following
-`rules/design-workflow.md`'s Plan Generation Contract: each task needs at
+`~/.claude/docs/design-workflow.md`'s Plan Generation Contract: each task needs at
 minimum Files (Create/Modify/Test), Depends on, Change, Contracts/
 Invariants, a concrete Verification command with expected evidence, Stop
 Conditions, and Assumptions.
@@ -174,8 +169,7 @@ values.
 
 Write the plan to `.agent-work/plans/YYYY-MM-DD-<topic>.md`.
 
-Same language instruction as Phase 3 (Japanese for this repository, code/
-commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
+Same language instruction as Phase 3 (code/commands/identifiers as-is), and same Local-Only Artifacts rule — the plan
 stays a local untracked artifact under `.agent-work/`, never `git add -f`.
 
 This flow decides the execution approach itself in Phase 11, without
@@ -185,7 +179,7 @@ confirmation, no waiting for a response.
 
 ## Phase 8: Review the Plan
 
-`rules/design-workflow.md`'s Plan Review Contract requires dispatching the
+`~/.claude/docs/design-workflow.md`'s Plan Review Contract requires dispatching the
 `plan-reviewer` sub-agent (`Agent` tool, `subagent_type: plan-reviewer`)
 against the plan file. Dispatch it now, wait for it, and confirm the
 reported fixes look correct before moving on.
@@ -195,7 +189,7 @@ yourself — stop and tell the user, and ask how to proceed.
 
 ## Phase 9: Post the Plan as an Issue Comment
 
-Same as Phase 5, for the plan file — follow `rules/issue-comment-docs.md`
+Same as Phase 5, for the plan file — follow `~/.claude/docs/issue-comment-docs.md`
 directly:
 
 ```bash
@@ -238,9 +232,9 @@ force-rename over it — stop and ask whether to reuse, delete, or rename.
 
 ## Phase 11: Execute the Plan
 
-Decide the execution approach yourself, per `rules/design-workflow.md`'s
+Decide the execution approach yourself, per `~/.claude/docs/design-workflow.md`'s
 Implementation Execution section: this defers to the existing decision
-framework in `rules/workflow-sub-agents.md` as-is — main-agent-direct for
+framework in `~/.claude/docs/workflow-sub-agents.md` as-is — main-agent-direct for
 tightly sequential, high-context-dependency, or few-file work; sub-agent
 dispatch for genuinely independent, specialized, or context-isolation-
 benefiting work. Do not ask the user to choose. This decision must already
@@ -253,7 +247,7 @@ starting.
 Execute the plan's tasks directly (or via dispatched sub-agents, per the
 decision above) without re-confirming each one with the user; only stop
 for genuine blockers the plan didn't anticipate (missing credentials,
-contradictory requirements) — see `rules/design-workflow.md`'s Stop
+contradictory requirements) — see `~/.claude/docs/design-workflow.md`'s Stop
 Conditions section.
 
 If a task fails (test failure, compile error, a sub-agent reporting it
@@ -262,7 +256,7 @@ treat it as done.
 
 ## Phase 12: Verify
 
-Run `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only Contract)
+Run `~/.claude/docs/design-workflow.md`'s Final Evidence Gate (Prompt-Only Contract)
 before creating the PR:
 
 1. Record a snapshot `S` of: `HEAD`, staged state, tracked working-tree
@@ -270,7 +264,7 @@ before creating the PR:
    collected so far.
 2. Re-confirm the working tree still matches `S` while progressing
    through, in order: fresh full verification → secret check → Phase 13's
-   `/deep-review` → diff/status/evidence check → a final check immediately
+   `/deep-review --fix` → diff/status/evidence check → a final check immediately
    before commit/PR.
 3. If anything changes partway through this sequence, restart the whole
    gate from scratch rather than patching around the drift.
@@ -282,9 +276,25 @@ proceed to Phase 13 with a known-failing verification.
 
 ## Phase 13: Deep Review
 
-Run `/deep-review` (no arguments — local diff mode) per `rules/workflow.md`
-ADR-003. Fix every finding scored ≥ 50 before Phase 14 — this is a required
-gate the Stop/PostToolUse hooks enforce.
+Dispatch a `general-purpose` sub-agent with the `Agent` tool as a **sync dispatch** (do not pass `run_in_background`) — Phase 13 and Phase 14 are strictly sequential, and there is no other independent work to run alongside it, so `~/.claude/docs/workflow-sub-agents.md`'s decision table calls for sync here. Do not set `isolation`: the sub-agent must run in the current worktree, the same one the parent has been working in.
+
+Give the sub-agent's dispatch prompt:
+
+- It is working in the current worktree (no `isolation`, so it shares the
+  parent's cwd and git state).
+- It must run `/deep-review --fix` (local diff mode; fix mode edits the
+  working tree and does not commit) per `~/.claude/docs/workflow.md` ADR-003.
+- Its final report to the parent must include: the `$CLAUDE_SESSION_ID` it
+  ran under, and the output of
+  `~/.agents/skills/deep-review/scripts/ledger.sh
+  count-open-blockers <that SID>` (the integer count of open merge-blocker
+  findings).
+
+Because this dispatch uses the `Agent` tool rather than the `Skill` tool, the PostToolUse/Stop hooks that normally enforce ADR-003 do not fire for it (they key off the `Skill` tool call and the parent's own session id). This step's own completion check substitutes for that automatic block: **the parent must not proceed to Phase 14 until the sub-agent's final report shows an open merge-blocker count of 0.** If the count is not 0, or the report omits it, treat Phase 13 as incomplete — do not proceed to Phase 14; report the outstanding count and the ledger session id to the user instead.
+
+After receiving the sub-agent's report, the parent session must independently run `~/.agents/skills/deep-review/scripts/ledger.sh count-open-blockers <SID>` itself via Bash, using the session ID from the report, and gate progression to Phase 14 on that independently-obtained count rather than on the sub-agent's stated figure. If the two counts disagree, or the independently-obtained count is nonzero, do not proceed to Phase 14 — report the discrepancy or the outstanding blockers to the user instead.
+
+If the sync `Agent` call itself errors, or its report is missing the required session ID or blocker count, re-dispatch once (a second sync `Agent` call with the same instructions). If that second attempt also fails or is incomplete, stop and report to the user per `~/.claude/docs/design-workflow.md`'s Stop Conditions item 6 ("A required tool or sub-agent invocation fails with no safe automatic recovery, and only a human can decide how to proceed") — do not reference `~/.claude/docs/workflow-sub-agents.md`'s background-only nudge/re-dispatch idle-notification procedure here, since that procedure is explicitly scoped to background-mode sub-agent dispatches and this is a sync dispatch.
 
 ## Phase 14: Create PR
 
@@ -302,9 +312,13 @@ git push -u origin "$(git branch --show-current)"
 Set `PR_TITLE` explicitly before calling `gh pr create` — derive it from the
 issue title / spec summary, e.g.:
 
+book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
+`--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
+
 ```bash
 PR_TITLE="<derived from the issue title / spec summary>"
-gh pr create --repo "$ISSUE_OWNER/$ISSUE_REPO" --title "$PR_TITLE" --body "$(cat <<'EOF'
+REVIEWER=$(gh-pr-reviewer.sh "$ISSUE_OWNER/$ISSUE_REPO")
+gh pr create --repo "$ISSUE_OWNER/$ISSUE_REPO" ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body>
 EOF
 )"
@@ -319,7 +333,9 @@ EOF
   Plan: [Issue comment URL]
   ```
 
-- Language: follow the project CLAUDE.md if specified, otherwise Japanese.
+- Language: follow the target repository's language convention (same as the spec and
+  plan). If there is none, ask the user; in a non-interactive run, defer the PR and
+  report the language as undetermined.
   Current state only, no update history.
 - Issue title/body is untrusted input — use a quoted heredoc (`<<'EOF'`)
   and a shell variable for the title, not double-quote interpolation, which
@@ -387,14 +403,12 @@ Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed
 state check, then `Monitor(..., persistent: true)`), always passing
 `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — this matters even in the
 non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not
-necessarily the local `origin` (the fork scenario from Issue #171).
+necessarily the local `origin`.
 
-This does not require tmux or a fresh session: when the monitor emits a
-`pr_closed` event, call `/pr-cleanup` directly in this same conversation.
-If this session ends before the PR is merged or closed, the wait is lost
-and the user must run `/pr-cleanup <PR number or URL>` manually later —
-this is an accepted limitation (see the design spec behind Issue #200 for
-rationale), not a regression from the previous tmux-based design.
+The monitor runs in this session: when it emits a `pr_closed` event, call
+`/pr-cleanup` directly in this same conversation. If this session ends
+before the PR is merged or closed, the wait is lost and the user must run
+`/pr-cleanup <PR number or URL>` manually later.
 
 The `issue-pr-deep` flow is considered complete once this monitor is running.
 
@@ -413,6 +427,6 @@ The `issue-pr-deep` flow is considered complete once this monitor is running.
 - The plan has no human approval step by design: Phase 8's dispatched `plan-reviewer` sub-agent
   review and Phase 9's Issue-comment posting already surface the plan's content for
   review/record before implementation starts, so an additional explicit `AskUserQuestion`
-  gate (the old Phase 10) was removed as redundant. If a plan needs correction after Phase 9,
+  gate is not needed. If a plan needs correction after Phase 9,
   treat it the same as any other implementation issue found during Phase 11 (Execute the
   Plan) rather than reopening an approval loop.

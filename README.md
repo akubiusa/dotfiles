@@ -4,7 +4,7 @@
 
 chezmoi 管理から削除・rename した旧ファイルは `home/.chezmoiremove` に旧 target path を記録し、次回の `chezmoi apply` / `chezmoi update` で自動削除します。Claude Code / Codex の session・cache・plugin などの runtime state は対象外です。
 
-AI CLI 起動時に `update.sh` が chezmoi を更新し、反映後に `~/.config/mise/config.toml` の宣言に対して `mise install` を実行します。更新は24時間に1回へ制限され、updater のロックにより同時実行は直列化されます。systemd による定期更新は dotfiles の管理対象外です。
+Linux では chezmoi 管理下の user-level systemd timer が `update.sh --force` を日次実行し、停止中に予定時刻を逃すと user manager の次回起動時に補完します。service は AI CLI 起動時の更新と共通の `flock` を使うため、同時実行は直列化されます。AI CLI 起動時の更新は24時間に1回へ制限され、反映後に `~/.config/mise/config.toml` の宣言に対して `mise install` を実行します。TTY がない更新では、ローカル変更された managed file を `~/.cache/chezmoi-update/drift-backups/` に権限 `0700` の日時付きディレクトリで退避してから反映します。退避は自動削除されません。
 
 ## インストール方法
 
@@ -69,6 +69,22 @@ vim ~/.env
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+### 4. Chrome MCP Router
+
+Chrome MCP Router を使う場合は、最初にローカル release を作成します。MCP 設定が `--project` を使う場合は、同じ project を指定して bootstrap してください。これにより smoke test も router の project 設定から browser URL を解決します。
+
+```bash
+CHROME_MCP_PROJECT=<project> ~/bin/update-ai-agents.sh --only chrome-mcp-router
+```
+
+project を使わず browser URL を直接指定する構成では `CHROME_MCP_BROWSER_URL` を使用します。どちらも未指定の場合は `http://127.0.0.1:9222` を使用します。
+
+```bash
+CHROME_MCP_BROWSER_URL=http://127.0.0.1:9222 ~/bin/update-ai-agents.sh --only chrome-mcp-router
+```
+
+ホスト固有の MCP 設定では `npx` ではなく `/home/<user>/bin/chrome-mcp-router.sh` のような絶対 path を command に指定してください。launcher は `~/.local/share/chrome-mcp-router/current` の検証済み release だけを実行し、24 時間以上更新されていなければ別プロセスで更新を開始します。`--project` が指定されている場合、更新の smoke test も同じ project を `~/.config/chrome-mcp-router/config.json` から解決します。更新は staging で `initialize` を確認後に `current` を atomic に切り替えるため、実行中の MCP は再起動しません。
+
 ## サポート環境
 
 - **OS**: Ubuntu, Debian
@@ -81,6 +97,8 @@ macOS と Windows は現在サポートされていません。
 `mise`（https://mise.jdx.dev/）を使用して、`gh`・`ghq`・`roots`・`gitleaks`・`maven`・`ripgrep`・`yq`・`actionlint`・`hadolint`・`shfmt`・`devcontainer-cli`・`delta`・`lazydocker`・`oxker` などの CLI ツールおよび言語ランタイムのバージョンを管理しています。バージョンの宣言は `home/dot_config/mise/config.toml` で行います。CLI ツールは再現性のため exact version に固定し、Renovate が更新 PR を作成します。言語ランタイムは `node = "24"` のように意図したバージョン系列を宣言します。
 
 `mise.lock` は現時点では使用しません。CLI は config 自体で exact version に固定してバージョン再現性を確保し、Renovate の更新 PR で CI の CLI smoke test を通してから更新します。将来、download URL や checksum まで固定する必要が生じた場合は lockfile の導入を別途検討します。
+
+非対話の Bash と Codex の shell tool では、管理対象の `~/.bash_env` を通じて `mise env` を読み込みます。これにより、TUI を使わない `codex exec` でもカレントディレクトリに対応した `mise` のツールと環境変数を利用できます。
 
 ## セキュリティに関する注意事項
 
@@ -147,7 +165,7 @@ DISCORD_CLAUDE_MENTION_USER_ID=123456789012345678
 
 `~/.codex/config.toml` にはプロジェクトの信頼状態や hook の承認ハッシュなど、Codex が更新するマシン固有の状態が保存されます。`chezmoi apply` は [modify_ テンプレート](https://www.chezmoi.io/user-guide/manage-different-types-of-file/#manage-part-but-not-all-of-a-file)で dotfiles 管理対象のキーだけを反映するため、これらの実行時状態は上書きされません。新規環境では初回の適用時に設定ファイルを作成します。
 
-`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。
+`chezmoi apply` により `home/dot_codex/AGENTS.md` は `~/.codex/AGENTS.md` に展開されます。Codex CLI はこのファイルだけで、Git・PR・検証・chezmoi の共通方針を参照できます。Claude Code の設定ファイルを前提にはしません。このファイルは英語で記述されます。成果物の言語は対象リポジトリの規約に従います(このリポジトリの規約はルートの `AGENTS.md`)。
 
 Codex CLI では custom slash command の代わりに user scope の skill を使います。次の skill は `~/.agents/skills/` に展開され、`$` を付けて明示的に実行します。
 
@@ -158,6 +176,7 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 - tmux 内で実行中の Codex では、PR monitor が専用 tmux window を起動し、live watcher lock と同じ PID の state を bounded interval で確認できた時だけ active とします。確認できない場合は新しい window を停止して `foreground_required` と watcher PID の clear を記録し、canonical PR URL を含む `$resume-pr-monitor <PR URL>` の fallback を報告します。active な watcher の後に initial CI/review observation が失敗した場合は、watcher を inactive とせず別の observation failure として報告します。dispatcher は pending event を固定形式の `$resume-pr-monitor` prompt として登録済み pane へ配送できます。dispatcher は prompt 入力後に短く待って Enter を送り、同じ event を再注入しない at-most-once delivery を使います。`UserPromptSubmit` hook が一致する prompt を確認した場合だけ delivery を submitted と記録します。Codex が ready と記録された直後に user が入力を始めると text が混在し得るため、この mode はその race を許容する場合だけ使用します。tmux 外または pane registration が失敗した場合は、monitor を開始せず manual resume fallback を報告します。
 - `$resume-pr-monitor <pr-number-or-url>`: restart、agent capacity 不足、tmux 非対応、watcher 停止後に fresh GitHub state から event を reconcile し、lease を取得した pending action だけを処理します。watcher は action を実行しません。ChatGPT Desktop/Web の Scheduled Tasks を利用できる場合は project context の resume を予定できますが、local shell の detached watcher として扱いません。
 - `$handle-pr-reviews <pr-number-or-url>`: 未解決の PR レビュースレッドを処理します。
+- `$i-have-adhd`: ADHD の読み手向けに、行動優先・番号付き手順・進捗明示の出力へ切り替えます。`stop adhd mode` または `normal mode` で解除します。
 - `$deep-review <pr-number-or-url>`: 複数観点で変更をレビューします。
 - `$lite-review <pr-number-or-url>`: 重点観点を短時間でレビューします。
 - `$issue-pr-deep <issue-number-or-url>` / `$issue-pr-lite <issue-number-or-url>`: 規模に応じて Issue から PR を作成します。
@@ -172,6 +191,10 @@ Codex CLI では custom slash command の代わりに user scope の skill を�
 skill を更新しても Codex CLI の一覧に反映されない場合は、Codex を再起動してください。
 
 ## Claude Code コマンド
+
+### i-have-adhd
+
+`/i-have-adhd` を実行すると、行動優先・番号付き手順・進捗明示の出力へ切り替えます。`stop adhd mode` または `normal mode` で解除します。スキルは `home/dot_claude/skills/i-have-adhd/SKILL.md` として管理されます。
 
 ### issue-pr
 
@@ -300,35 +323,44 @@ GlitchTip の issue を調査し、対応のためのブランチを作成して
 
 # ローカル diff をレビューする（引数なし）
 /deep-review
+
+# 自動修正モード（自分の PR またはローカル diff のみ）
+/deep-review --fix
+
 ```
 
 ### 特徴
 
 - **外部依存なし**: `code-review@claude-plugins-official` や `pr-review-toolkit@claude-plugins-official` を一切使用しない
-- **独自パイプライン**: 独立したサブエージェントを並列起動して観点別にレビューし、確信度スコア 0-100 でフィルタリング（スコア 50 未満は除外）
+- **独自パイプライン**: 独立したサブエージェントを並列起動して観点別に候補を出し、別のサブエージェントが各候補を検証する。検証結果は マージ前必須 / 後続対応 / 未検証 / 対象外 の 4 分類で ledger に記録する（確信度は内部用で、スコアによる除外はしない）
 - **PR/ローカル diff 両対応**: 引数ありで PR モード、引数なしでローカル diff モード
-- **自動修正（自分の PR のみ）**: スコア 50 以上の指摘を自動修正 → コミット → push → PR 本文更新
+- **既定は review モード**: コミット・push・PR 本文更新・作業ツリー変更を行わず、フックもブロックしない。書き込みは ledger と PR モードの開発者向けコメントのみ
+- **`--fix` モード（自分の PR またはローカル diff のみ）**: 検証済みの マージ前必須 指摘だけを自動修正する。PR モードではコミット → push を行い、ローカル diff モードでは作業ツリーのみ編集してコミットしない
+- **開発者向け PR コメント**: スキルディレクトリ内 `scripts/` の `render-comment.sh` で生成し、`validate-comment.sh` で検証してから投稿する（`ledger.sh` が指摘の状態を管理する）
 - **偽陽性抑制**: 各エージェントに「無視すべきもの」を明示して精度を確保
 
 ### レビュー観点
 
-固定レビュアー 9 件は `home/dot_claude/skills/deep-review/reviewers/*.md` に 1 ファイル 1 観点で定義されており、`chezmoi apply` で `~/.claude/skills/deep-review/reviewers/*.md` にデプロイされる。
+固定レビュアー 6 件は `home/dot_claude/skills/deep-review/reviewers/*.md` に 1 ファイル 1 観点で定義されており、`chezmoi apply` で `~/.claude/skills/deep-review/reviewers/*.md` にデプロイされる。
+
+#### ZIP でのインポート
+
+`home/dot_claude/skills/deep-review/` ディレクトリは、補助スクリプト（`scripts/`）、検証用リファレンス（`references/regression-cases.md`）、レビュアー定義（`reviewers/`）をすべて内包しており、このディレクトリだけを ZIP 化して Claude にインポートしても動作する。`SKILL.md` は `${CLAUDE_SKILL_DIR}` 基準でファイルを参照し、スクリプトは実行ビットに依存しないよう `bash "$SKILL_DIR/scripts/<name>.sh"` で呼び出す（`scripts/` 配下は `executable_` プレフィックスを付けず、リポジトリ上と展開後でファイル名が一致するようにしている）。
+
+Codex 向け（`home/dot_agents/skills/deep-review/`）にも同じスクリプトと `references/regression-cases.md` が置かれているため、変更時は両方を同期させる（`tests/unit/test_deep_review_layout.sh` が内容一致を検証する）。
 
 | 観点 | 内容 | 定義ファイル |
 |---|---|---|
 | CLAUDE.md 準拠 | CLAUDE.md / rules の指示との整合性 | `reviewers/a-claude-md-compliance.md` |
 | バグ・正確性 | 変更差分中心の大きなバグの検出 | `reviewers/b-bugs-correctness.md` |
-| git 履歴 | blame・log を踏まえた問題 | `reviewers/c-git-history.md` |
-| 過去 PR コメント | 同ファイルへの過去の指摘との照合（PR モードのみ）| `reviewers/d-past-pr-comments.md` |
+| 履歴コンテキスト | blame・log を踏まえた問題、同ファイルへの過去 PR の指摘との照合（PR モードのみ）| `reviewers/c-history-context.md` |
 | コード内コメント整合 | docstring・コメントの指示との整合 | `reviewers/e-code-comment-quality.md` |
 | セキュリティ | 入力検証・認可・シークレット漏洩・AI-PR 固有リスク | `reviewers/f-security.md` |
-| パフォーマンス | 不要ループ・N+1・ホットパスへの影響 | `reviewers/g-performance.md` |
-| サイレント障害 | エラー握り潰し・不適切なフォールバック | `reviewers/h-error-handling.md` |
-| 型設計・テスト | 不変条件の表現・重要パスのテスト欠如 | `reviewers/i-type-design-tests.md` |
+| パフォーマンス・サイレント障害・型設計/テスト | 不要ループ・N+1・ホットパスへの影響、エラー握り潰し・不適切なフォールバック、不変条件の表現・重要パスのテスト欠如 | `reviewers/g-performance-errors-types.md` |
 
 ### プロジェクト固有レビュアーの追加
 
-`deep-review` を使う各リポジトリは、固定 9 観点に加えて自リポジトリ独自のレビュー観点を追加できる。レビュー対象リポジトリのルート（`git rev-parse --show-toplevel` で解決）に `.claude/deep-review-reviewers/*.md` を配置すると、`/deep-review` 実行時に自動検出されて既存レビュアーと並列に起動される。
+`deep-review` を使う各リポジトリは、固定 6 観点に加えて自リポジトリ独自のレビュー観点を追加できる。レビュー対象リポジトリのルート（`git rev-parse --show-toplevel` で解決）に `.claude/deep-review-reviewers/*.md` を配置すると、`/deep-review` 実行時に自動検出されて既存レビュアーと並列に起動される。
 
 ```markdown
 ---
@@ -348,7 +380,7 @@ applies_to: all        # all | pr-only（省略時は all）
 
 `~/.claude/hooks/deep-review-immediate-fix.sh`（PostToolUse）と
 `~/.claude/hooks/deep-review-require-fixes.sh`（Stop）が設定されており、
-スコア 50 以上の指摘が未対応の場合は Claude の処理を一時ブロックして対応を促す。
+fix モードの ledger に未解決の マージ前必須 指摘が残っている場合だけ Claude の処理を一時ブロックして対応を促す（review モードでは一切ブロックしない）。`lite-review` も同じ ledger で判定する。
 
 また、`~/.claude/hooks/detect-leaked-toolcall.sh`（Stop / SubagentStop）は、Claude Code の既知の不具合によりツールコールの XML マークアップがプレーンテキストとして最終アシスタントメッセージに漏れ出していないかを検出し、検出時は自己模倣による再発を防ぐよう促すメッセージでブロックする。
 
@@ -374,7 +406,7 @@ applies_to: all        # all | pr-only（省略時は all）
 - **ハイブリッド調査**: `references/best-practices.md` に静的なベストプラクティス集を保持しつつ、実行のたびに WebSearch/WebFetch で最新動向の差分を補完する
 - **乖離度に応じた判断**: 既存 `CLAUDE.md` とベストプラクティスとの乖離が大きい場合は全面的に書き直し、小さい場合は部分修正にとどめる（既存ファイルがない場合は新規作成）
 - **承認フローなし**: 対象ディレクトリが git 管理下であることを前提に、変更内容は `git diff`（新規作成時は `git status`）で事後確認する運用とし、実行前の承認は求めない
-- **対象は CLAUDE.md のみ**: `AGENTS.md` 等の他のエージェント設定ファイルは対象外（将来の拡張候補）
+- **対象は CLAUDE.md のみ**: `AGENTS.md` の保守は Codex 向けの `$agents-md-maintainer` が担当し、このスキルの対象外
 
 ## `rtk` スキル
 

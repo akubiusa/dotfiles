@@ -1,15 +1,15 @@
 ---
 name: wait-for-pr-close
-description: GitHub PR の close/merge と conflict を durable event として監視するときに使う。`$wait-for-pr-close <PR番号またはURL>`。
+description: Use to monitor a GitHub PR's close/merge and conflicts as durable events. `$wait-for-pr-close <PR number or URL>`.
 ---
 
 # PR Close Wait
 
-`$wait-for-pr-close <PR 番号または URL>` は `$pr-health-monitor` の foreground watcher 部分を案内する。watcher は PR state、checks、conflict、Copilot review を poll して XDG state に event を記録するだけで、`$pr-cleanup`、Git 操作、GlitchTip callback は実行しない。
+`$wait-for-pr-close <PR number or URL>` guides the foreground watcher part of `$pr-health-monitor`. The watcher polls PR state, checks, conflict, and review feedback regardless of actor and only records events in the XDG state; it does not run `$pr-cleanup`, Git operations, or a GlitchTip callback.
 
-1. `gh pr view` で canonical `PR_URL` を取得する。番号の repository 解決には `gh-pr-target-repo.sh` と GitHub の `upstream` remote を優先する。
-2. detached start は使わない。external scheduler がない場合、`start` は `foreground_required` を記録して終了する。持続した terminal を user が明示的に用意できる場合だけ `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh watch --pr-url "$PR_URL"` を foreground で実行する。それ以外は resume fallback に進む。
-3. merge/close、CI failure、conflict、Copilot review は pending event として `${XDG_STATE_HOME:-~/.local/state}/codex-pr-monitor/` に保存される。連続 5 回の API failure で watcher は停止する。
-4. terminal state、agent capacity 不足、tmux 非対応、Codex restart、watcher 停止後は `$resume-pr-monitor <PR_URL>` を実行する。ChatGPT Desktop/Web の Scheduled Tasks を利用できる場合は project context で resume を予定できるが、local shell の background 監視ではない。resume はまず fresh GitHub state から event を reconcile し、lease を取得できた action だけを処理する。
+1. Get the canonical `PR_URL` with `gh pr view`. To resolve the repository for a bare number, prefer `gh-pr-target-repo.sh` and the GitHub `upstream` remote.
+2. `start` launches a supervisor in a dedicated tmux window if a tmux pane is registered via `$pr-health-monitor`. Only if the pane is unregistered or the launch/readiness check fails, record `foreground_required` and exit. Only when the user can explicitly provide a persistent terminal, run `~/.agents/skills/pr-health-monitor/scripts/watch-pr.sh watch --pr-url "$PR_URL"` in the foreground. Otherwise, proceed to the resume fallback.
+3. Merge/close, CI failure, conflict, and review feedback are stored as pending events in `${XDG_STATE_HOME:-~/.local/state}/codex-pr-monitor/`. Review feedback is sent to `$handle-pr-reviews`. The watcher stops on 5 consecutive API failures.
+4. After a terminal state, insufficient agent capacity, lack of tmux support, a Codex restart, or a watcher stop, run `$resume-pr-monitor <PR_URL>`. If ChatGPT Desktop/Web Scheduled Tasks are available, the resume can be scheduled in the project context, but this is not background monitoring in a local shell. The resume first reconciles events from fresh GitHub state and processes only the actions whose lease it could acquire.
 
-GlitchTip callback descriptor は durable state に保存しない。GlitchTip Resolve は user が明示的に要求した verified flow で、`MERGED`、`get_issue`、permalink、PR body を再照合できた場合だけ実行する。`CLOSED` では実行しない。
+The GlitchTip callback descriptor is not stored in durable state. GlitchTip Resolve is performed only in a verified flow that the user explicitly requested, when `MERGED`, `get_issue`, the permalink, and the PR body can be re-verified. It is not performed for `CLOSED`.

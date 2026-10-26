@@ -16,15 +16,16 @@ paths:
 
 ## Documentation
 
-- Write and maintain JSDoc (docstring) for all functions, interfaces, and classes. Language: follow the project CLAUDE.md if it specifies one; otherwise English
+- Write JSDoc (docstring) when it adds contract value (preconditions, meaning of arguments and return values, side effects, exceptions, units); omit it when it would only restate the name or type. Use `@param` / `@returns` only when they carry contract information. Language: follow the repository language convention
 
   ```typescript
   /**
-   * Checks whether the user is authenticated.
-   * @param userId - The ID of the user to check
-   * @returns true if authenticated, false otherwise
+   * Waits for the job to finish, polling until it settles.
+   * @param timeoutMs - Upper bound in milliseconds; must be positive
+   * @returns The final status, or `null` if the timeout elapsed
+   * @throws If the job was cancelled by another caller
    */
-  function isAuthenticated(userId: string): boolean { ... }
+  function waitForJob(jobId: string, timeoutMs: number): Promise<JobStatus | null> { ... }
   ```
 
 ## Lint / Format

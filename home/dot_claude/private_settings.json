@@ -1,12 +1,14 @@
 {
   "env": {
     "CLAUDE_AFK_TIMEOUT_MS": "2147483647",
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT": "1",
     "CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS": "0",
     "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1",
+    "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "false",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "60",
+    "CLAUDE_CODE_THRIFTY_SONIC": "0",
     "DISABLE_EXTRA_USAGE_COMMAND": "1",
     "ENABLE_TOOL_SEARCH": "auto",
     "IS_DEMO": "1"
@@ -20,7 +22,8 @@
       "Bash(git config user.name:*)",
       "Bash(git config user.email:*)",
       "Bash(git config --global user.name:*)",
-      "Bash(git config --global user.email:*)"
+      "Bash(git config --global user.email:*)",
+      "EnterPlanMode"
     ]
   },
   "hooks": {
@@ -31,22 +34,22 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-completion.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/deep-review-require-fixes.sh",
-            "onFailure": "fail"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/require-review-thread-fixes.sh",
-            "onFailure": "fail"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -58,7 +61,7 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/detect-leaked-toolcall.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -70,7 +73,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-askuserquestion.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       },
@@ -80,12 +83,12 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/rtk-rewrite.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "~/.claude/hooks/git-config-guard.sh",
-            "onFailure": "fail"
+            "onFailure": "block"
           }
         ]
       }
@@ -97,12 +100,12 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/deep-review-immediate-fix.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           },
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-post-tool-use.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       },
@@ -112,7 +115,7 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/trust-worktree-cwd.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -124,7 +127,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-permission-request.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -136,7 +139,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-notification.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -148,7 +151,7 @@
           {
             "type": "command",
             "command": "~/.claude/scripts/completion-notify/notify-user-prompt-submit.sh",
-            "onFailure": "ignore"
+            "onFailure": "continue"
           }
         ]
       }
@@ -167,7 +170,7 @@
       "source": {
         "source": "github",
         "repo": "DietrichGebert/ponytail",
-        "ref": "v4.8.4"
+        "ref": "v5.3.2"
       }
     }
   },

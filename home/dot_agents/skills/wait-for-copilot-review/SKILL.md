@@ -1,12 +1,12 @@
 ---
 name: wait-for-copilot-review
-description: GitHub Copilot の PR レビューを durable event として検出するときに使う。`$wait-for-copilot-review <PR番号またはURL>`。
+description: Use to detect a GitHub Copilot PR review as a durable event. `$wait-for-copilot-review <PR number or URL>`.
 ---
 
 # Copilot Review Wait
 
-1. canonical `PR_URL` を検証し、`~/.agents/skills/pr-health-monitor/scripts/wait-for-copilot-review.sh "$PR_URL" &` を best effort で開始する。
-2. script は GraphQL で Copilot review を検出すると、同じ PR の XDG state に `copilot_review` event を記録して通知するだけである。tmux command や `$handle-pr-reviews` の起動は行わない。
-3. `$resume-pr-monitor <PR_URL>` は fresh GraphQL query で review を再確認してから `$handle-pr-reviews` を実行する。agent capacity 不足、CLI 以外、restart 後、timeout 後の標準 fallback はこの resume skill であり、通知だけを完了扱いにしない。ChatGPT Desktop/Web の Scheduled Tasks を使う場合も project context の resume を予定し、local shell の detached watcher として扱わない。
+1. Validate the canonical `PR_URL`, and start `~/.agents/skills/pr-health-monitor/scripts/wait-for-copilot-review.sh "$PR_URL" &` on a best-effort basis.
+2. When the script detects a Copilot review via GraphQL, it only records a `copilot_review` event in the XDG state of the same PR and notifies. It does not start a tmux command or `$handle-pr-reviews`.
+3. `$resume-pr-monitor <PR_URL>` rechecks the review with a fresh GraphQL query and then runs `$handle-pr-reviews`. The standard fallback for insufficient agent capacity, a non-CLI environment, after a restart, or after a timeout is this resume skill, and a notification alone is not treated as completion. When using ChatGPT Desktop/Web Scheduled Tasks, also schedule the resume in the project context, and do not treat it as a detached watcher in a local shell.
 
-監視開始は既に承認された PR 後フローの一部である。GitHub 権限や通知の失敗は PR 作成自体の失敗として扱わない。
+Starting the monitoring is part of the already approved post-PR flow. A failure of GitHub permissions or notification is not treated as a failure of the PR creation itself.

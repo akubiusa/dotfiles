@@ -1,56 +1,60 @@
 # GitHub Copilot Instructions
 
-このリポジトリは chezmoi で管理する dotfiles および AI エージェント設定リポジトリです。
-コードレビュー時は以下の観点を優先的に確認してください。
+This repository manages dotfiles and AI agent settings with chezmoi.
+During code review, prioritize checking the points below.
 
-## プロジェクト概要
+## Project overview
 
-- 目的: chezmoi でシェル設定・tmux 設定・通知設定・AI エージェント設定をテンプレート化して管理する。
-- `tests/` 配下のシェルスクリプトで構文チェック・単体テスト・統合テストを行い、`.github/workflows/` (unit-test.yml / integration-test.yml / pr-checks.yml) により pull_request 時に CI で自動実行される。ローカルでは Docker 上で `chezmoi apply` を実行して結果を確認する。
+- Purpose: manage shell settings, tmux settings, notification settings, and AI agent settings as chezmoi templates.
+- Shell scripts under `tests/` run syntax checks, unit tests, and integration tests, and CI runs them automatically on pull_request via `.github/workflows/` (unit-test.yml / integration-test.yml / pr-checks.yml). Locally, run `chezmoi apply` on Docker and check the result.
 
-## レビューで特に確認すること
+## What to check in particular during review
 
-### chezmoi のファイル命名規則(誤りやすい)
+### chezmoi file naming rules (easy to get wrong)
 
-- `executable_foo.sh` はデプロイ後 `foo.sh` になり、`executable_` は除去される。`settings.json` など外部からパスを参照する設定で `executable_` を含めたパスを書いていないか確認する。
-- `dot_foo` はデプロイ後 `.foo` になる。
-- `symlink_foo` はシンボリックリンクになり、ファイル内容がリンク先を表す。
-- `symlink_executable_` のような回避策パターンは使用しない。
+- `executable_foo.sh` becomes `foo.sh` after deployment, so the `executable_` prefix is removed. Check that settings that reference a path from outside, such as `settings.json`, do not use a path containing `executable_`.
+- `dot_foo` becomes `.foo` after deployment.
+- `symlink_foo` becomes a symbolic link, and the file content is the link target.
+- Do not use workaround patterns such as `symlink_executable_`.
 
-### 秘密情報
+### Secrets
 
-- トークン・Webhook URL・パスワード等を平文でコミットしていないか確認する。
-- `~/.env` や `~/.gitconfig.local` はリポジトリ管理外。`.env.example` / `.gitconfig.local.example` などサンプルのみを含める。
-- pre-commit フック(`home/dot_config/git/hooks/executable_pre-commit`)や `home/dot_gitleaks.toml` の allowlist を変更する場合、誤検知抑制が広すぎて実際のシークレット検知を無効化していないか確認する。
-- `gitleaks` コマンド自体は `install.sh` に直接インストールロジックを持たず、mise 経由で固定バージョンをインストールする(下記「mise 管理下のツール」参照)。バージョン更新時は `tests/integration/test_gitleaks.sh` の実検知テストが通ることを確認する。
+- Check that tokens, webhook URLs, passwords, and the like are not committed in plain text.
+- `~/.env` and `~/.gitconfig.local` are outside repository management. Include only samples such as `.env.example` / `.gitconfig.local.example`.
+- When changing the pre-commit hook (`home/dot_config/git/hooks/executable_pre-commit`) or the allowlist in `home/dot_gitleaks.toml`, check that the false-positive suppression is not so broad that it disables detection of real secrets.
+- The `gitleaks` command itself has no direct install logic in `install.sh`; a pinned version is installed via mise (see "Tools managed by mise" below). When updating the version, check that the real-detection test in `tests/integration/test_gitleaks.sh` passes.
 
-### テストの追随
+### Keeping tests in sync
 
-- `update.sh` を変更する場合、AI CLI の throttle、同時実行ロック、`chezmoi update` 後の managed global config に対する `mise install` が維持されているか確認する。systemd の `chezmoi-update.service` / `.timer` は dotfiles の管理対象に戻さない。
-- `home/dot_codex/`、`home/dot_claude/scripts/` など通知・フック関連スクリプトを変更・削除した場合、`tests/unit/`、`tests/integration/`、`tests/syntax/` 配下の対応するテストが古い参照を残していないか確認する。
-- managed file の rename / delete では、旧 target が残らないよう `home/.chezmoiremove` の更新が必要か確認する。`.claude` / `.codex` 全体を `exact_` にして runtime state を削除しない。
+- When changing `update.sh` or the systemd updater unit, keep the AI CLI throttle, the concurrency lock, `Persistent=true` on the timer, the drift target backup before non-interactive updates, and `mise install` against the managed global config, and verify with `tests/unit/test_update.sh` and `tests/integration/test_chezmoi_apply.sh`. If the backup fails, do not apply, and manage the systemd unit as a chezmoi source under `home/dot_config/systemd/user/`.
+- When changing or deleting notification and hook scripts such as `home/dot_codex/` and `home/dot_claude/scripts/`, check that the corresponding tests under `tests/unit/`, `tests/integration/`, and `tests/syntax/` do not retain stale references.
+- When renaming or deleting a managed file, check whether `home/.chezmoiremove` needs an update so that the old target does not remain. Do not make the whole of `.claude` / `.codex` `exact_`, which would delete runtime state.
 
-### mise 管理下のツール
+### Tools managed by mise
 
-- `gh`・`ghq`・`roots`・`gitleaks` などの CLI ツールは `home/dot_config/mise/config.toml` の宣言に基づき `mise` 経由でインストールする。gitleaks は検証済みの exact version とし、Renovate の mise manager で更新する。`install.sh` に直接インストールロジックを追加していないか確認する。
-- `install.sh` に固定記述された mise 本体のバージョン(`MISE_VERSION`)を変更する場合、`renovate.json` の対応する `regexManagers` エントリと矛盾していないか確認する。
+- CLI tools such as `gh`, `ghq`, `roots`, and `gitleaks` are installed via `mise` based on the declarations in `home/dot_config/mise/config.toml`. gitleaks uses a verified exact version and is updated by Renovate's mise manager. Check that no direct install logic has been added to `install.sh`.
+- When changing the mise version hard-coded in `install.sh` (`MISE_VERSION`), check that it does not conflict with the corresponding `regexManagers` entry in `renovate.json`.
 
-### エージェント定義
+### Code comments
 
-- 新規追加されたエージェント定義 (`home/dot_claude/agents/*.md`) は、`tools` フィールドで許可するツールを必要最小限に絞っているか (例: 読み取り専用の状況確認エージェントに書き込み系ツールを不必要に許可していないか)。
+- Code comments are zero by default; keep only a non-obvious reason, constraint, or why-not. The canonical source is `home/dot_claude/rules/coding-common.md` and the root `AGENTS.md`.
 
-## コーディング規約
+### Agent definitions
 
-- コミットメッセージは Conventional Commits に従い、`<description>` は日本語で記載する。
-- コード内コメントは日本語、エラーメッセージは英語で記載する。
-- 日本語と英数字の間には半角スペースを挿入する。
-- 既存ファイルの構成・命名パターンに合わせる。
+- For newly added agent definitions (`home/dot_claude/agents/*.md`), check that the `tools` field restricts the allowed tools to the minimum necessary (for example, that a read-only status-check agent is not needlessly granted write tools).
 
-## 技術スタック
+## Coding conventions
 
-- 言語: Bash
-- ツール: chezmoi, git, tmux, jq, mise
+- This file is written entirely in English. The canonical language policy is the root `AGENTS.md`; the following is a summary of it.
+- Commit message `<description>`, code comments, PRs / Issues, and documentation are written in Japanese; error messages are written in English. Markdown under `home/dot_claude/` and `home/dot_codex/`, and this file, are written in English.
+- Insert a half-width space between Japanese and alphanumeric characters.
+- Match the structure and naming patterns of existing files.
 
-## ドキュメント整合性
+## Tech stack
 
-- 変更内容が `README.md` / `CLAUDE.md` に記載のルールと矛盾していないか確認する。
+- Language: Bash
+- Tools: chezmoi, git, tmux, jq, mise
+
+## Documentation consistency
+
+- Check that changes do not contradict the rules described in `README.md` / `CLAUDE.md`.

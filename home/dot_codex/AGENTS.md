@@ -1,67 +1,77 @@
-## 基本方針
+## Core Principles
 
-- ユーザーの明示的な承認なしに、フック・設定・PR を変更しない。PR は明示的な指示があるまでマージしない。
-- 前提・仮定・不確実性を明示し、実装を危険にする曖昧さがある場合は質問する。外部仕様は一次情報で確認する。
-- 最終回答は日本語、途中経過は簡潔な英語で記載する。コードコメントはリポジトリの指示に従い、未指定なら日本語、エラーメッセージは英語にする。日本語と英数字の間には半角スペースを入れる。
-- 判断記録はローカルの Markdown ファイルではなく、GitHub Issue コメントまたは PR 本文に残す。
-- 読み書きの対象が Codex 自身の指示・skill・hook・settings である場合は、影響範囲を分離するためサブエージェントに委譲する。chezmoi 管理対象は展開先ではなく `home/` 配下のソースを更新する。
+- Do not change hooks, settings, or PRs without the user's explicit approval. Do not merge a PR until explicitly instructed.
+- State assumptions and uncertainty, and ask when an ambiguity makes the implementation risky. Verify external specifications against primary sources.
+- Reply to the user in Japanese; keep intermediate steps in concise English. This is independent of the language of deliverables (commit descriptions, PR/Issue titles, bodies and review comments, code comments/docstrings, documents, spec/plan posts).
+- Deliverable language: the target repository's own convention wins. `AGENTS.md` files are concatenated root to cwd and a deeper one overrides, so the nearest `AGENTS.md` covering the target path wins over the root one; within one scope check, in order, `AGENTS.md`, `CLAUDE.md`, then `.github/copilot-instructions.md` and similar. Resolve per deliverable type (commit descriptions, PR/Issue text, code comments, documents): use the first file that specifies that type, and consult lower-priority files only for types it leaves unspecified; a mismatch with a lower-priority file is not a reason to treat the language as undetermined. Explicitly check the nearest `AGENTS.md` and the repository root `AGENTS.md` when determining the language.
+- No convention, or an ambiguous one: when interactive, ask the user with `request_user_input` if available, otherwise ask directly in plain text, and do not choose a language before the answer. Never infer the language from the owner, organization, visibility, or README language, and a visibility change alone never changes it. For a new repository, ask and record the answer in a concise `AGENTS.md`. Once the user has answered or `AGENTS.md` records the language, reuse it and do not ask again unless the user changes it.
+- Non-interactive runs: do not decide the language and do not create or rewrite `AGENTS.md`. Defer only language-dependent deliverables and report the language as undetermined; reading, investigation and tests may continue.
+- Exceptions: localized UI strings, quotations, technical identifiers, generated files, and external source text. Never rewrite Git history. Write error messages in English unless the repository convention says otherwise. Insert a half-width space between Japanese and alphanumeric characters.
+- Record decisions in GitHub Issue comments or the PR body, not in local Markdown files. The exception is a durable repository convention explicitly intended for `AGENTS.md`, such as the language convention for a new repository.
+- All Markdown under `~/.codex/` must be written in English.
+- When the target of reading or writing is Codex's own instructions, skills, hooks, or settings, delegate to a subagent to isolate the blast radius. For chezmoi-managed files, update the source under `home/`, not the deployed copy.
+- For work that spans multiple stages or runs long enough that compaction is likely, record a resume checkpoint in a GitHub Issue comment before the conversation grows long. It is unnecessary for trivial work that finishes quickly. The checkpoint concisely includes the goal and acceptance criteria, decisions and assumptions, branch and worktree state and changed paths, completed work and verification results, open items and blockers, and the concrete next action; it never includes secrets or raw logs. Do not guess the exact compaction point; record before important state would be lost. After compaction, re-read the checkpoint and verify the current repository and GitHub state before continuing, and do not treat stale statements as fact. For work not tied to an Issue, do not create a local Markdown checkpoint; record the same key points in a concise assistant conversation message before compaction, re-read that message after compaction, and re-verify the repository state.
+- Do not use `command_relay_mcp`. Try SSH to reach remote machines, and use the `gh` CLI, not MCP, to read or operate on GitHub. Available aliases differ per environment, so do not assume they are discoverable.
 
-## Git と PR
+## Git and PRs
 
-- ブランチは Conventional Branch の短縮形、コミットは Conventional Commits を使う。説明文の言語はリポジトリの指示に従い、未指定なら日本語にする。
-- SSH で push する。`GH_CONFIG_DIR`、`GIT_*`、`GIT_SSH_COMMAND` は許可なく変更せず、Git の username/email も変更しない。Renovate が作成した PR にはコミットしない。
-- 実装前に、リポジトリ構成、作業ブランチ、最新のリモート既定ブランチ、不要なローカルブランチ、必要な依存関係を確認する。調査目的の GitHub リポジトリは一時ディレクトリへ clone する。
-- コミット前に、秘密情報、lint/format エラー、必要な検証、期待どおりの動作を確認する。
-- PR 作成前に、ユーザーの依頼、秘密情報、競合リスク、変更内容に応じたローカルコードレビューを確認する。PR 作成先は `gh-pr-target-repo.sh` を優先し、GitHub の `upstream` remote があればそれを既定にする。
-- PR 本文には現在の状態のみを記載し、更新履歴を列挙しない。PR 作成前の monitor preflight は非変更で、起動能力または選択する fallback だけを確認する。canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない。`gh pr create` の前に、PR 作成後に開始できる永続的な terminal または `$resume-pr-monitor <PR URL>` の fallback を選択して維持する。永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する。PR 作成直後は `$pr-health-monitor` が canonical URL を取得して state を初期化し、nonce/register-pane、`watch-pr.sh start` の順に実行する。`start` は tmux window を作成しただけでは成功にせず、live watcher lock と同じ PID の state を bounded interval で確認してから active とする。確認できない場合は作成した window を停止して `foreground_required` と watcher PID の clear を記録する。monitor が失敗した場合は incomplete/unmonitored、canonical PR URL、失敗した stage、その failure を示す fresh evidence、`$resume-pr-monitor <canonical PR URL>` の正確な recovery command を報告し、complete、monitoring、または deployment-ready と報告しない。tmux 内の Codex は登録済み pane に専用 monitor window から固定の `$resume-pr-monitor` prompt を配送できる。ready state と配送の間に user input が始まる race は既知の制約である。watcher は Git/GitHub action を実行しない。未解決レビューの対応は `$handle-pr-reviews` を使う。
-- PR 作成直前の最終ゲートは fail-closed で、HEAD、index、worktree の tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録して全 substep で使う。各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する。差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す。commit、PR 作成、deployment-ready/deployed を含む deployment assertion は、この reviewed snapshot に対して final evidence を確認した直後に限って行う。snapshot を再取得・更新してはならず、差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す。50 以上、P1、P2 の未解決指摘、検証失敗、secret、意図しない差分があれば停止する。
-- 複数 Issue を 1 つの PR で扱う場合は、すべての Issue が一意、open、target repository 所属であることを検証する。Issue ごとに scope と acceptance criteria を確認し、必要な文書、review evidence、closing keyword を個別に用意・確認する。全 Issue の確認結果を集約し、すべてが aggregate 最終ゲートを通過するまで PR を作成しない。PR 本文の `Closes #<issue>` は、closing keyword を含み、検証済みの Issue だけを正確に列挙する。
+- Use Conventional Branch short forms for branches and Conventional Commits for commits.
+- Push over SSH. Do not change `GH_CONFIG_DIR`, `GIT_*`, or `GIT_SSH_COMMAND` without permission, and do not change the Git username/email. Do not commit to PRs created by Renovate.
+- When SSH reports `Bad owner or permissions on ...ssh_config...`, check the owner and permissions of the target file and the symlink target with `id` and `stat -L`, and run `ssh -G <host>` to tell whether the failure is in the config-loading stage. Do not assert without evidence that the Codex sandbox is the cause. `ssh -F "$HOME/.ssh/config"` skips the system-wide `/etc/ssh/ssh_config`, so do not use `-F /dev/null` / `none`. Only when the per-user config resolves the target host/alias and any needed system-wide aliases, known hosts, crypto policy, etc. are configured equivalently or confirmed unnecessary, run `ssh -F "$HOME/.ssh/config" -G <host>` and a read-only connection check. If that cannot be confirmed or the check fails, do not bypass the configuration; report the evidence and the error. If Git needs the same workaround and the conditions are confirmed, apply it to that command only with `git -c core.sshCommand="ssh -F \"$HOME/.ssh/config\"" <operation>`. Do not change environment variables, persistent SSH/Git configuration, file ownership or permissions, or the sandbox mode.
+- Before implementing, check the repository layout, the working branch, the latest remote default branch, unneeded local branches, and required dependencies. Clone GitHub repositories you only investigate into a temporary directory.
+- Before committing, check for secrets, lint/format errors, the required verification, and the expected behavior.
+- Before creating a PR, check the user's request, secrets, conflict risk, and a local code review appropriate to the change. Prefer `gh-pr-target-repo.sh` to choose the PR target, and default to the GitHub `upstream` remote if one exists.
+- The PR body states only the current state and does not list update history.
+- PR creation is fail-closed on monitoring. The monitor preflight before PR creation is non-mutating: do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained. Before `gh pr create`, select and keep a persistent terminal or the `$resume-pr-monitor <PR URL>` fallback. If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop. If the monitor fails, report incomplete/unmonitored with the canonical PR URL, the failed stage, fresh evidence, and the exact recovery command `$resume-pr-monitor <canonical PR URL>`, and never report complete, monitoring, or deployment-ready. Details are in `$issue-pr` and `$pr-health-monitor`.
+- The final gate right before PR creation is fail-closed: record one reviewed snapshot (HEAD, the index, the worktree's tracked, staged, and untracked state, and evidence IDs), and never re-capture or update it. If the diff, status, or evidence changes, restart the entire final gate from the beginning. A deployment assertion, including commit, PR creation, and deployment-ready/deployed, may be made only immediately after confirming the final evidence against this reviewed snapshot. Stop if there are unresolved findings of 50 or more, P1, or P2, a verification failure, a secret, or an unintended diff. Details are in `$issue-pr` and `$pr-health-monitor`.
+- When one PR covers multiple Issues, verify that every Issue is unique, open, and belongs to the target repository, and do not create the PR until all Issues pass the aggregate final gate (scope and acceptance criteria, required documents, review evidence, and closing keyword per Issue). `Closes #<issue>` in the PR body must contain a closing keyword and list exactly the verified Issues only. Details are in `$issue-pr`.
 
-## 実装と検証
+## Implementation and Verification
 
-- 既存の構成・命名に合わせ、コードで明らかな内容をコメントで重複させない。コメントは理由・制約・将来壊れうる前提だけに使い、変更履歴を残さない。
-- リポジトリ構成・利用手順・テスト・セキュリティ方針を変える場合は、README、プロジェクトの指示、Copilot 向け指示の更新要否を確認する。
-- 変更に対応する syntax、unit、integration テストを実行する。通知・フック・helper を変更または削除した場合は、テスト内の参照も確認する。
-- chezmoi では `executable_` 接頭辞が展開時に除去される。設定からスクリプトを参照するときは、展開後の名前を使う。
+- Match the existing structure and naming, and do not duplicate in comments what the code already makes clear. Aim for zero code comments: first express intent through naming, types, structure, or tests, and keep a comment only for a reason, constraint, dangerous assumption, or why-not the code cannot show, as a conclusion in 1-2 lines as a guideline. Never narrate the work or leave change history, deliberation, Issue/PR numbers, spec/plan paths, or verification steps. JSDoc/docstrings are separate API contracts, written only when they add contract value. Machine-readable comments a tool requires and lint/type-check suppression reasons are out of scope.
+- When changing the repository layout, usage instructions, tests, or security policy, check whether the README, the project instructions, and the Copilot instructions need updating.
+- Run the syntax, unit, and integration tests that correspond to the change. When a notification, hook, or helper is changed or removed, also check the references inside the tests.
+- In chezmoi, the `executable_` prefix is stripped on deployment. When a configuration references a script, use the deployed name.
 
-## 追加ガイダンス
+## Additional Guidance
 
-- 外部ライブラリやフレームワークの API、設定、互換性、非推奨化、バージョン差異を扱うときは、プロジェクトの lockfile 等から対象バージョンを特定し、一次情報で確認する。特定できなければ不明と明記して分岐を示す。
-- ユーザーへの確認は `request_user_input` ツールを使う。要件が複数に解釈できるときは、勝手に選ばない。
-- Markdown の段落途中で手動改行しない。箇条書き、表、見出し、コードブロックはこの制約の対象外とする。
-- GitHub Issue に紐付く仕様・計画・調査の成果物は、秘密情報を確認した上で Issue コメントへ投稿し、投稿後は URL のみを報告する。別々の文書は別コメントにし、更新時はそのコメント ID を指定する。Issue と無関係な文書の保存先は、利用可能な skill またはユーザーの指示に従う。
-- `docs/superpowers/specs/` または `docs/superpowers/plans/` を作成・更新した後、ユーザーへ提示する前に `spec_reviewer` または `plan_reviewer` agent にレビューと修正を依頼する。これらのローカル成果物が ignore 対象なら force-add しない。
+- When handling the API, configuration, compatibility, deprecation, or version differences of an external library or framework, determine the target version from the project's lockfile or similar and verify against primary sources. If it cannot be determined, state that it is unknown and show the branches.
+- Use the `request_user_input` tool to ask the user. When a requirement can be interpreted in several ways, do not choose on your own.
+- Do not insert a manual line break in the middle of a prose paragraph, in Markdown, chat responses, or PR/commit/comment bodies. Bullet lists, tables, headings, and code blocks are exempt from this constraint.
+- Post specs, plans, and investigation artifacts tied to a GitHub Issue as Issue comments after checking for secrets, and report only the URL after posting. Use separate comments for separate documents, and specify the comment ID when updating. For documents unrelated to an Issue, follow an available skill or the user's instructions for where to save them.
+- After creating or updating `.agent-work/specs/` or `.agent-work/plans/`, and before presenting it to the user, ask the `spec_reviewer` or `plan_reviewer` agent to review and fix it. If these local artifacts are ignored, do not force-add them.
 
-変更対象に応じて、以下の reference を先に読む。
+Read the following references first, depending on the change target.
 
-| 対象 | Reference |
+| Target | Reference |
 | --- | --- |
-| 共通のコード品質、秘密情報、破壊的操作、依存関係、入力処理 | `~/.codex/references/coding-and-security.md` |
+| Common code quality, secrets, destructive operations, dependencies, input handling | `~/.codex/references/coding-and-security.md` |
 | TypeScript / JavaScript | `~/.codex/references/typescript-javascript.md` |
-| Python、Shell、Dockerfile | `~/.codex/references/python-shell-docker.md` |
-| C#、`.csproj`、`.sln`、`.editorconfig` | `~/.codex/references/csharp.md` |
+| Python, Shell, Dockerfile | `~/.codex/references/python-shell-docker.md` |
+| C#, `.csproj`, `.sln`, `.editorconfig` | `~/.codex/references/csharp.md` |
 | GitHub Actions workflow | `~/.codex/references/github-actions.md` |
-| GitHub Issue 文書、Jira、GlitchTip、agent 委譲 | `~/.codex/references/workflow.md` |
+| GitHub Issue documents, Jira, GlitchTip, agent delegation | `~/.codex/references/workflow.md` |
 
 ## Codex Skills
 
-Codex CLI では任意の custom slash command ではなく、skill でコマンド相当のワークフローを提供する。Codex は repo / user / admin / system scope の skill を読み込む。この dotfiles は user scope の `~/.agents/skills` を管理する。
+Codex CLI provides command-equivalent workflows as skills, not arbitrary custom slash commands. Codex loads skills from the repo, user, admin, and system scopes. This dotfiles repository manages the user-scope `~/.agents/skills`.
 
-- この dotfiles が管理する skill は `~/.agents/skills` に配置する。
-- 明示的な実行には `$` で skill を指定する。
-- `$issue-pr`: GitHub Issue から実装、PR 作成、PR 後フロー開始までを行う。
-- `$ticket-pr`: Jira チケットから実装、PR 作成、PR 後フロー開始までを行う。
-- `$glitchtip-pr`: GlitchTip issue から実装、PR 作成、明示的な verified Resolve までを行う。
-- `$pr-health-monitor`: PR の CI、競合、本文、Codex/Copilot レビューを確認し、XDG state の観測専用 watcher を開始する。
-- `$resume-pr-monitor`: pending PR monitor event を fresh GitHub state で再確認し、成功した後処理だけを acknowledge する。
-- `$handle-pr-reviews`: 未解決レビュースレッドを修正、返信、resolve まで処理する。
-- `$deep-review` / `$lite-review`: 変更を複数観点または重点観点でレビューする。
-- `$issue-pr-deep` / `$issue-pr-lite`: 規模に応じて GitHub Issue から PR を作成する。
-- `$glitchtip-pr-deep` / `$glitchtip-pr-lite`: 規模に応じて GlitchTip issue から PR を作成する。
-- `$pr-cleanup`: マージ済み PR の後処理を行う。
-- `$wait-for-copilot-review` / `$wait-for-pr-close`: PR のレビューまたはクローズを durable event として監視する。
-- `$check-container-status`: Docker Compose プロジェクトの状態を確認する。
-- `$agents-md-maintainer`: `AGENTS.md` のエージェント向けガイダンスを保守する。
-- `$rtk`: RTK の利用手順を参照する。
-- `$trilium`: Trilium 連携の手順を実行する。
-- skill を更新しても一覧へ反映されない場合は Codex を再起動する。
+- Skills managed by this dotfiles repository are placed in `~/.agents/skills`.
+- Invoke a skill explicitly with `$` followed by its name.
+- `$issue-pr`: from a GitHub Issue, implement, create a PR, and start the post-PR flow.
+- `$ticket-pr`: from a Jira ticket, implement, create a PR, and start the post-PR flow.
+- `$glitchtip-pr`: from a GlitchTip issue, implement, create a PR, and perform an explicit verified Resolve.
+- `$pr-health-monitor`: check the PR's CI, conflicts, body, and Codex/Copilot reviews, and start the observation-only watcher in XDG state.
+- `$resume-pr-monitor`: re-check pending PR monitor events against fresh GitHub state and acknowledge only the follow-ups that succeeded.
+- `$handle-pr-reviews`: handle unresolved review threads through fixing, replying, and resolving.
+- `$deep-review` / `$lite-review`: review changes from multiple perspectives or from focused perspectives.
+- `$issue-pr-deep` / `$issue-pr-lite`: create a PR from a GitHub Issue, depending on the size of the change.
+- `$glitchtip-pr-deep` / `$glitchtip-pr-lite`: create a PR from a GlitchTip issue, depending on the size of the change.
+- `$pr-cleanup`: clean up after a merged PR.
+- `$wait-for-copilot-review` / `$wait-for-pr-close`: watch for a PR review or close as a durable event.
+- `$check-container-status`: check the state of Docker Compose projects.
+- `$agents-md-maintainer`: maintain the agent guidance in `AGENTS.md`.
+- `$rtk`: refer to the RTK usage instructions.
+- `$trilium`: run the Trilium integration procedure.
+- `$i-have-adhd`: switch to output that puts actions first, with numbered steps and explicit progress, for readers with ADHD.
+- If an updated skill does not appear in the list, restart Codex.

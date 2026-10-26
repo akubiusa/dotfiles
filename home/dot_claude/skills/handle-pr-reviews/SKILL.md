@@ -1,6 +1,6 @@
 ---
 name: handle-pr-reviews
-description: Process all PR review threads in bulk. Fetches all unresolved threads and systematically applies code fixes, replies, and resolves. Auto-triggered by background script on Copilot review detection.
+description: Process all PR review threads in bulk. Fetches all unresolved threads and systematically applies code fixes, replies, and resolves. Called automatically by the wait-for-copilot-review Monitor when a Copilot review is detected.
 argument-hint: "[PR URL or PR number]"
 disable-model-invocation: false
 ---
@@ -198,7 +198,7 @@ Only when `CHANGES_MADE=true`:
 git -C "$LOCAL_REPO_PATH" status
 
 # Commit following Conventional Commits
-# description language: follow the project CLAUDE.md if specified; otherwise Japanese
+# description language: follow the target repository's language convention (ask the user if there is none; defer if non-interactive)
 # Explicitly stage edited files instead of using interactive add
 git -C "$LOCAL_REPO_PATH" add <list edited file paths>
 git -C "$LOCAL_REPO_PATH" commit -m "fix: <description in the project language>"

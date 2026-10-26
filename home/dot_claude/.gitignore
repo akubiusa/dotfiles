@@ -7,6 +7,7 @@
 !agents/
 !scripts/
 !rules/
+!docs/
 !plugins/
 !commands/
 !skills/

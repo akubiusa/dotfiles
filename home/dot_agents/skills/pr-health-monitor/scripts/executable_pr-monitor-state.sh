@@ -264,7 +264,7 @@ event_path() {
     if [[ "$EVENT" == "close" ]]; then
         [[ "$ACTION" == "cleanup" || "$ACTION" == "glitchtip-resolve" ]] || usage
         printf '.events.close.actions["%s"]' "$ACTION"
-    elif [[ "$EVENT" == "ci_failure" || "$EVENT" == "conflict" || "$EVENT" == "copilot_review" ]]; then
+    elif [[ "$EVENT" == "ci_failure" || "$EVENT" == "conflict" || "$EVENT" == "copilot_review" || "$EVENT" == "review_feedback" ]]; then
         printf '.events.%s' "$EVENT"
     else
         usage
@@ -277,6 +277,7 @@ event_root_path_from_id() {
         ci_failure:*) printf '.events.ci_failure' ;;
         conflict:*) printf '.events.conflict' ;;
         copilot_review:*) printf '.events.copilot_review' ;;
+        review_feedback:*) printf '.events.review_feedback' ;;
         *) usage ;;
     esac
 }
@@ -288,7 +289,7 @@ case "$COMMAND" in
             temp_file=$(mktemp "$STATE_DIR/.${STATE_ID}.XXXXXX")
             chmod 600 "$temp_file"
             jq -n --arg url "$CANONICAL_PR_URL" --arg owner "$OWNER" --arg repo "$REPO" --argjson number "$PR_NUMBER" \
-                '{version: 3, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none"}, generations: {close: 0, ci_failure: 0, conflict: 0, copilot_review: 0}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}, runtime: {pane: null, nonce: null, session_id: null, status: "unregistered", updated_at: null}}' > "$temp_file"
+                '{version: 3, pr: {url: $url, owner: $owner, repo: $repo, number: $number}, observed: {state: "OPEN", ci: "unknown", conflict: "unknown", copilot: "none", feedback_count: 0}, generations: {close: 0, ci_failure: 0, conflict: 0, copilot_review: 0, review_feedback: 0}, events: {close: null, ci_failure: null, conflict: null, copilot_review: null, review_feedback: null}, watcher: {pid: null, failures: 0, updated_at: null, last_error: null}, runtime: {pane: null, nonce: null, session_id: null, status: "unregistered", updated_at: null}}' > "$temp_file"
             mv "$temp_file" "$STATE_FILE"
         else
             verify_state
@@ -329,6 +330,10 @@ case "$COMMAND" in
                 [[ "$VALUE" == "detected" || "$VALUE" == "none" ]] || { echo "Error: Invalid Copilot value" >&2; exit 1; }
                 write_state 'if .observed.copilot == $value then . else .observed.copilot = $value | (if $value == "detected" then .generations.copilot_review = ((.generations.copilot_review // 0) + 1) | .events.copilot_review = {id: ("copilot_review:" + (.generations.copilot_review | tostring)), status: "pending", value: $value, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, lease: null} else . end) end' --arg value "$VALUE" --arg now "$NOW"
                 ;;
+            review-feedback)
+                [[ "$VALUE" =~ ^[0-9]+$ ]] || { echo "Error: Invalid review feedback count" >&2; exit 1; }
+                write_state '(.observed.feedback_count // 0) as $previous | ($value | tonumber) as $current | .observed.feedback_count = $current | if $current > $previous then if (.events.review_feedback == null or .events.review_feedback.status == "acknowledged") then .generations.review_feedback = ((.generations.review_feedback // 0) + 1) | .events.review_feedback = {id: ("review_feedback:" + (.generations.review_feedback | tostring)), status: "pending", value: $current, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, lease: null, follow_up: false} else .events.review_feedback.value = $current | .events.review_feedback.follow_up = true end else . end' --arg value "$VALUE" --arg now "$NOW"
+                ;;
             *) usage ;;
         esac
         ;;
@@ -338,10 +343,10 @@ case "$COMMAND" in
         PATH_EXPR=$(event_path)
         ROOT_PATH="null"
         if [[ -n "$EVENT_ID" ]]; then
-            [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ ]] || usage
+            [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review|review_feedback):[1-9][0-9]*$ ]] || usage
             ROOT_PATH=$(event_root_path_from_id)
             case "$EVENT:$EVENT_ID" in
-                close:close:*|ci_failure:ci_failure:*|conflict:conflict:*|copilot_review:copilot_review:*) ;;
+                close:close:*|ci_failure:ci_failure:*|conflict:conflict:*|copilot_review:copilot_review:*|review_feedback:review_feedback:*) ;;
                 *) usage ;;
             esac
         fi
@@ -381,7 +386,11 @@ case "$COMMAND" in
             exit 3
         fi
         if [[ "$COMMAND" == "ack" ]]; then
-            write_state "$PATH_EXPR.status = \"acknowledged\" | $PATH_EXPR.lease = null | if .events.close != null and (.events.close.actions | all(.status != \"pending\")) then .events.close.status = \"acknowledged\" else . end"
+            if [[ "$EVENT" == "review_feedback" ]]; then
+                write_state '.events.review_feedback.lease = null | if .events.review_feedback.follow_up == true then .generations.review_feedback = ((.generations.review_feedback // 0) + 1) | .events.review_feedback = {id: ("review_feedback:" + (.generations.review_feedback | tostring)), status: "pending", value: .observed.feedback_count, detected_at: $now, delivery: {status: "pending", pane: null, sent_at: null}, lease: null, follow_up: false} else .events.review_feedback.status = "acknowledged" | .events.review_feedback.follow_up = false end' --arg now "$(date -Iseconds)"
+            else
+                write_state "$PATH_EXPR.status = \"acknowledged\" | $PATH_EXPR.lease = null | if .events.close != null and (.events.close.actions | all(.status != \"pending\")) then .events.close.status = \"acknowledged\" else . end"
+            fi
         else
             write_state "$PATH_EXPR.lease = null"
         fi
@@ -435,7 +444,7 @@ case "$COMMAND" in
         ;;
     claim-delivery)
         verify_state
-        [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review):[1-9][0-9]*$ && "$TMUX_PANE" =~ ^%[0-9]+$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || usage
+        [[ "$EVENT_ID" =~ ^(close|ci_failure|conflict|copilot_review|review_feedback):[1-9][0-9]*$ && "$TMUX_PANE" =~ ^%[0-9]+$ && "$SESSION_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || usage
         ROOT_PATH=$(event_root_path_from_id)
         acquire_lock
         verify_state

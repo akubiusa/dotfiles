@@ -281,7 +281,8 @@ case "$1 $2" in
         exit 1
         ;;
     "api graphql")
-        printf '%s\n' '1'
+        printf '{"data":{"repository":{"pullRequest":{"comments":{"totalCount":%s},"reviews":{"totalCount":%s},"reviewThreads":{"nodes":[{"comments":{"totalCount":%s}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}\n' \
+            "${GH_STUB_CONVERSATION_COMMENTS:-0}" "${GH_STUB_REVIEWS:-0}" "${GH_STUB_REVIEW_COMMENTS:-0}"
         ;;
     *) exit 1 ;;
 esac
@@ -798,9 +799,23 @@ if rg -n 'nohup|systemd-run|setsid' "$WATCH_SCRIPT" >/dev/null; then
     exit 1
 fi
 
-"$WATCH_SCRIPT" once --pr-url "$PR_URL"
-if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.events.ci_failure.run_url == "https://github.com/example/repo/actions/runs/123" and .events.copilot_review.status == "pending"' >/dev/null; then
-    echo "❌ Reconciliation did not atomically retain actionable CI and Copilot events" >&2
+GH_STUB_CONVERSATION_COMMENTS=1 GH_STUB_REVIEWS=1 GH_STUB_REVIEW_COMMENTS=1 "$WATCH_SCRIPT" once --pr-url "$PR_URL"
+if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.events.ci_failure.run_url == "https://github.com/example/repo/actions/runs/123" and .events.review_feedback.status == "pending" and .events.review_feedback.value == 3' >/dev/null; then
+    echo "❌ Reconciliation did not atomically retain actionable CI and review feedback events" >&2
+    exit 1
+fi
+echo "Testing feedback arriving during handling produces one settling follow-up..."
+"$STATE_SCRIPT" claim --pr-url "$PR_URL" --event review_feedback --event-id review_feedback:1 --lease-id feedback-one
+"$STATE_SCRIPT" transition --pr-url "$PR_URL" --event review-feedback --value 4
+"$STATE_SCRIPT" ack --pr-url "$PR_URL" --event review_feedback --lease-id feedback-one
+if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.events.review_feedback.id == "review_feedback:2" and .events.review_feedback.status == "pending" and .events.review_feedback.value == 4' >/dev/null; then
+    echo "❌ New feedback during handling was not retained as a follow-up event" >&2
+    exit 1
+fi
+"$STATE_SCRIPT" claim --pr-url "$PR_URL" --event review_feedback --event-id review_feedback:2 --lease-id feedback-two
+"$STATE_SCRIPT" ack --pr-url "$PR_URL" --event review_feedback --lease-id feedback-two
+if ! "$STATE_SCRIPT" show --pr-url "$PR_URL" | jq -e '.generations.review_feedback == 2 and .events.review_feedback.status == "acknowledged" and .events.review_feedback.follow_up == false' >/dev/null; then
+    echo "❌ Review feedback follow-up did not settle after acknowledgement" >&2
     exit 1
 fi
 if PR_MONITOR_INTERVAL=0 "$WATCH_SCRIPT" watch --pr-url "$PR_URL"; then

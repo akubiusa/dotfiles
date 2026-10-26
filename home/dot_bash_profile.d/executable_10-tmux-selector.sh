@@ -17,7 +17,6 @@ tmux_session_selector() {
   TMUX_FZF_HEIGHT=${TMUX_FZF_HEIGHT:-60}           # fzf 高さ
   TMUX_PREVIEW_HEIGHT=${TMUX_PREVIEW_HEIGHT:-80%}  # プレビュー領域高さ（up:）
   TMUX_SESSION_DELAY=${TMUX_SESSION_DELAY:-1}      # NEW選択後の待ち（秒）
-  TMUX_MIN_WIDTH=${TMUX_MIN_WIDTH:-80}             # プレビュー有効化の最小幅（cols）
   TMUX_PATH_MAX=${TMUX_PATH_MAX:-60}               # cwd 表示の最大長（文字数）
 
   export TMUX_FZF_PREVIEW_LINES="$TMUX_PREVIEW_LINES"
@@ -25,10 +24,6 @@ tmux_session_selector() {
   # --- Dependency checks ---
   command -v tmux >/dev/null 2>&1 || { echo "tmux not found in PATH." >&2; return 1; }
   command -v fzf  >/dev/null 2>&1 || { echo "fzf not found in PATH."  >&2; return 1; }
-  command -v tput >/dev/null 2>&1 || { echo "tput not found in PATH." >&2; return 1; }
-
-  local terminal_width
-  terminal_width="$(tput cols 2>/dev/null || echo 80)"
 
   # --- Extensibility: load extra action providers ---
   _tmux_load_action_providers() {
@@ -88,9 +83,36 @@ tmux_session_selector() {
   if [[ -n "$sessions" ]]; then
     local sname sattached swindows screated
     local attach_status pane_id cwd cmd display
+    local session_record numeric_check_name numeric_session_record sorted_numeric_sessions
+    local numeric_session_index=0
+    local -a session_records=() numeric_session_records=() sorted_numeric_session_records=()
 
-    while IFS='|' read -r sname sattached swindows screated; do
+    while IFS= read -r session_record; do
+      [[ -n "$session_record" ]] || continue
+      session_records+=("$session_record")
+      IFS='|' read -r numeric_check_name _ <<< "$session_record"
+      if [[ "$numeric_check_name" =~ ^[0-9]+$ ]]; then
+        numeric_session_records+=("$session_record")
+      fi
+    done <<< "$sessions"
+
+    if (( ${#numeric_session_records[@]} > 0 )); then
+      # tmux の数字名は辞書順で返るため、名前付きセッションを動かさず数字名だけを数値順にする。
+      sorted_numeric_sessions="$(printf '%s\n' "${numeric_session_records[@]}" | LC_ALL=C sort -s -t '|' -k1,1n)"
+      while IFS= read -r numeric_session_record; do
+        [[ -n "$numeric_session_record" ]] && sorted_numeric_session_records+=("$numeric_session_record")
+      done <<< "$sorted_numeric_sessions"
+    fi
+
+    for session_record in "${session_records[@]}"; do
+      IFS='|' read -r sname sattached swindows screated <<< "$session_record"
       [[ -n "$sname" ]] || continue
+
+      if [[ "$sname" =~ ^[0-9]+$ ]]; then
+        session_record="${sorted_numeric_session_records[$numeric_session_index]}"
+        numeric_session_index=$((numeric_session_index + 1))
+        IFS='|' read -r sname sattached swindows screated <<< "$session_record"
+      fi
 
       # 経過時間を短縮形で算出（例: 5s, 3m, 2h, 1d）
       # 行末ではなくコマンドの直後に配置することでモバイル幅でも見切れを防ぐ
@@ -146,7 +168,7 @@ tmux_session_selector() {
       # KEY は session_name。tmux のターゲット指定は "${session_name}:" で厳密に扱う
       # フィールド順: DISPLAY<TAB>TYPE<TAB>KEY<TAB>PANE_ID
       detailed_options+="$display"$'\t'"SESSION"$'\t'"$sname"$'\t'"$pane_id"$'\n'
-    done <<< "$sessions"
+    done
   fi
 
   # セッション0件でも必ず NEW を出す（即 new-session はしない）
@@ -197,30 +219,17 @@ tmux_session_selector() {
   # インタラクティブモードでは --no-sort の有無に関わらず選択結果は全フィールドを含む。
   # クエリ未入力時は全アイテムのスコアが 0 で安定ソートされ入力順が保たれる。
   local selected
-  if [[ "$terminal_width" -ge "$TMUX_MIN_WIDTH" ]]; then
-    selected="$(
-      printf "%s\n" "$detailed_options" | fzf \
-        --height="$TMUX_FZF_HEIGHT" \
-        --reverse \
-        --border \
-        --delimiter=$'\t' \
-        --with-nth=1 \
-        --prompt='Select session/action: ' \
-        --preview-window=up:"$TMUX_PREVIEW_HEIGHT":follow:wrap \
-        --preview "$preview_cmd"
-    )" || return 1
-  else
-    echo "Terminal width: ${terminal_width} (min: ${TMUX_MIN_WIDTH}) - Preview disabled" >&2
-    selected="$(
-      printf "%s\n" "$detailed_options" | fzf \
-        --height="$TMUX_FZF_HEIGHT" \
-        --reverse \
-        --border \
-        --delimiter=$'\t' \
-        --with-nth=1 \
-        --prompt='Select session/action: '
-    )" || return 1
-  fi
+  selected="$(
+    printf "%s\n" "$detailed_options" | fzf \
+      --height="$TMUX_FZF_HEIGHT" \
+      --reverse \
+      --border \
+      --delimiter=$'\t' \
+      --with-nth=1 \
+      --prompt='Select session/action: ' \
+      --preview-window=up:"$TMUX_PREVIEW_HEIGHT":follow:wrap \
+      --preview "$preview_cmd"
+  )" || return 1
 
   [[ -z "$selected" ]] && return 1
 

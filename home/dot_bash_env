@@ -1,0 +1,9 @@
+# 非対話の Bash でもログイン環境と mise のディレクトリ環境を読み込む
+if [ -f "$HOME/.profile" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.profile"
+fi
+
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise env -s bash)"
+fi

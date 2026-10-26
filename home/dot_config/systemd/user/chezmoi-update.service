@@ -1,0 +1,5 @@
+[Unit]
+Description=Update chezmoi-managed dotfiles
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mkr wrap -n chezmoi-update -d -a -w -- %h/.local/share/chezmoi/update.sh --force

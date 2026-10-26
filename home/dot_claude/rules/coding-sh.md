@@ -8,7 +8,7 @@ paths:
 
 ## Documentation
 
-- Write function description comments. Language: follow the project CLAUDE.md if it specifies one; otherwise English
+- Write a function description comment only when it adds contract value (usage, side effects, exit status); omit it when it would only restate the function name. Language: follow the repository language convention
 
 ## Error Messages
 

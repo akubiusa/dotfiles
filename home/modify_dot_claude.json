@@ -1,0 +1,7 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- $config := dict -}}
+{{- if and (hasKey .chezmoi "stdin") (ne (trim .chezmoi.stdin) "") -}}
+{{- $config = fromJson .chezmoi.stdin -}}
+{{- end -}}
+{{- $config = $config | setValueAtPath "diffSidebarOpen" false -}}
+{{- $config | toPrettyJson -}}

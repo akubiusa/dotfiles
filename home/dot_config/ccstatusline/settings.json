@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "lines": [
     [
       {
@@ -22,7 +22,7 @@
         "rawValue": true,
         "merge": "no-padding",
         "metadata": {
-          "abbreviateHome": "true"
+          "segments": "4"
         }
       },
       {
@@ -30,18 +30,19 @@
         "type": "git-branch",
         "color": "brightGreen",
         "rawValue": false,
+        "merge": "no-padding",
         "metadata": {
-          "hideNoGit": "true",
-          "linkToRepo": "true"
-        },
-        "merge": "no-padding"
+          "linkToRepo": "true",
+          "hide": "no-git"
+        }
       },
       {
         "id": "d208cab4-5994-4622-a0ac-3303e0b04100",
         "type": "git-worktree",
         "metadata": {
-          "hideNoGit": "true"
-        }
+          "hide": "no-git"
+        },
+        "rawValue": false
       }
     ],
     [
@@ -94,11 +95,6 @@
         "rawValue": false
       },
       {
-        "id": "4d8adf32-a8b1-4eee-b390-0f1b6f742c27",
-        "type": "weekly-sonnet-usage",
-        "rawValue": true
-      },
-      {
         "id": "2dea4c81-054c-4b4c-a829-2af490205d8e",
         "type": "weekly-reset-timer",
         "rawValue": true,
@@ -108,13 +104,16 @@
       }
     ]
   ],
-  "flexMode": "full-minus-40",
+  "flexMode": "full",
   "compactThreshold": 60,
   "colorLevel": 2,
   "defaultPadding": " ",
+  "defaultPaddingSide": "both",
   "inheritSeparatorColors": false,
   "globalBold": false,
   "gitCacheTtlSeconds": 5,
+  "terminalWidthCacheTtlSeconds": 5,
+  "customCommandCacheTtlSeconds": 0,
   "minimalistMode": false,
   "powerline": {
     "enabled": false,
@@ -129,5 +128,6 @@
     "theme": "nord-aurora",
     "autoAlign": false,
     "continueThemeAcrossLines": false
-  }
+  },
+  "exportedBy": "2.2.32"
 }

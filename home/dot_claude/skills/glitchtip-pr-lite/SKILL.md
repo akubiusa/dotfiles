@@ -16,6 +16,8 @@ This is the lightweight counterpart to `glitchtip-pr-deep`: no spec, no
 plan, no approval gates. Implementation proceeds directly from the fetched
 issue/event data.
 
+Before Phase 3, Read `~/.claude/docs/design-workflow.md` (not auto-loaded); its Final Evidence Gate section is cited below.
+
 ## Progress Tracking
 
 Before Phase 3, create one Todo task per phase in this file (Phase 3
@@ -55,7 +57,7 @@ to proceed.
 
 ## Phase 5: Verify
 
-Follow `rules/design-workflow.md`'s Final Evidence Gate (Prompt-Only
+Follow `~/.claude/docs/design-workflow.md`'s Final Evidence Gate (Prompt-Only
 Contract) before creating the PR: record snapshot `S` (`HEAD`, staged
 state, tracked working-tree diff, untracked files, and the identity of the
 verification evidence collected so far), then run a fresh full
@@ -66,9 +68,19 @@ sub-agent's own "done" or "tests pass" self-report as completion evidence.
 
 ## Phase 6: Lite Review
 
-Run `/lite-review` (no arguments — local diff mode). Fix every finding
-scored ≥ 50 before moving on to Phase 7. This replaces `glitchtip-pr-deep`'s
-Phase 13 `/deep-review` gate — the lite path always uses `/lite-review`.
+Run `/lite-review` (no arguments — local diff mode). Resolve every
+verified merge-blocker finding before moving on to Phase 7. In local diff
+mode `/lite-review` uses the ledger in review mode, so the hooks do not
+block on open merge-blockers and `ledger.sh count-open-blockers` always
+returns 0; the gate is therefore explicit. After `/lite-review` returns,
+count the open merge-blocker findings in its ledger by running
+`~/.agents/skills/deep-review/scripts/ledger.sh show "${CLAUDE_SESSION_ID}" | jq '[.findings[] | select(.class == "merge-blocker" and .status == "open")] | length'`.
+Do not proceed to Phase 7 while the count is non-zero: fix the findings and
+re-run `/lite-review` (it creates a fresh ledger) until the count is 0. If
+the count cannot be read, stop and report to the user. This replaces
+`glitchtip-pr-deep`'s Phase 13 `/deep-review` gate — the lite path always uses
+`/lite-review`. This is a deliberate, user-approved exception to the global
+pre-PR rule of running `/deep-review --fix`.
 
 ## Phase 7: Create PR
 
@@ -81,9 +93,13 @@ git push -u origin "$(git branch --show-current)"
 REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
 ```
 
+book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
+`--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
+
 ```bash
 PR_TITLE="<derived from the GlitchTip issue title>"
-gh pr create ${REPO:+--repo "$REPO"} --title "$PR_TITLE" --body "$(cat <<'EOF'
+REVIEWER=${REPO:+$(gh-pr-reviewer.sh "$REPO")}
+gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body — summarize the fix; include `GlitchTip Issue: <permalink URL>`; no Spec/Plan lines. Do not use GitHub's `Closes #<number>` syntax — a GlitchTip issue is not a GitHub Issue.>
 EOF
 )"

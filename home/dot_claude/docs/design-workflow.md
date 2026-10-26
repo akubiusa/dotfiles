@@ -36,7 +36,7 @@ An empty Decision frontier does not by itself mean the spec is done. Synthesize 
 
 ## Spec Review Contract
 
-Dispatch the existing `spec-reviewer` sub-agent (`Agent` tool, `subagent_type: spec-reviewer`) against the spec file before asking the user to approve it. This rule owns who calls the reviewer and when; the agent's own checklist owns what it checks.
+Dispatch the existing `spec-reviewer` sub-agent (`Agent` tool, `subagent_type: spec-reviewer`) against the spec file before asking the user to approve it (when approval is required) or proceeding. This rule owns who calls the reviewer and when; the agent's own checklist owns what it checks.
 
 Review dimensions: requirement coverage, internal consistency, architecture/contract consistency, invariants, concurrency/ordering/idempotency, persistence/migration/data-loss risk, failure/retry/recovery, security/trust boundaries, performance/production scale, external API/cross-repository contracts, rollout/rollback/observability, acceptance-criteria testability, and assumptions/unknowns.
 
@@ -47,11 +47,11 @@ Split findings into:
 
 Never block approval on NON-BLOCKING findings alone.
 
-Completion condition: **fresh-context executability** — could an implementing agent with no memory of this conversation start safely from just the repository and this spec, with no further user-intent questions needed? If yes, the spec is ready for human approval.
+Completion condition: **fresh-context executability** — could an implementing agent with no memory of this conversation start safely from just the repository and this spec, with no further user-intent questions needed? If yes, the spec is ready for human approval (if a significant choice requires it) or for planning.
 
 ## Human Approval
 
-The normal flow has exactly one human design gate: the completed spec. (Issue path: spec review → post to the Issue → `AskUserQuestion` approval. GlitchTip path: spec review → upload to Trilium → `AskUserQuestion` approval.)
+The normal flow has at most one human design gate: the completed spec, and only when it contains a significant choice — a real Decision with materially different options, or an irreversible or scope-affecting trade-off. Otherwise proceed without asking for approval. Spec review by `spec-reviewer` always runs regardless. (Issue path: spec review → post to the Issue → `AskUserQuestion` approval when required. GlitchTip path: spec review → upload to Trilium → `AskUserQuestion` approval when required.)
 
 Do not add extra gates: no approval to start discovery, no per-section approval, no "may I proceed" gate before the spec exists, no plan approval, no execution-mode choice, and no per-task approval.
 
@@ -71,7 +71,7 @@ The spec is authority; the plan is its implementation argument. There is no plan
 
 ## Implementation Execution
 
-Whether execution runs on the main agent directly or via a sub-agent follows the existing decision framework in `rules/workflow-sub-agents.md` as-is. Do not invent a new selection mechanism for this, and never ask the user to choose the execution approach.
+Whether execution runs on the main agent directly or via a sub-agent follows the existing decision framework in `~/.claude/docs/workflow-sub-agents.md` as-is. Do not invent a new selection mechanism for this, and never ask the user to choose the execution approach.
 
 ## Stop Conditions
 
@@ -80,7 +80,7 @@ Stop and ask the user only for one of these six reasons:
 1. A new user-intent Decision is needed (see Fact / Decision Separation).
 2. A destructive or irreversible operation.
 3. A security-sensitive action that needs explicit approval.
-4. A side effect outside the repository that would normally need approval — e.g. disabling or uninstalling a plugin on the live, running Claude Code installation, since that reaches outside the repo and affects sessions beyond this one.
+4. A side effect outside the repository that would normally need approval — e.g. disabling or uninstalling a plugin on the live, running Claude Code installation, since that reaches outside the repo and affects sessions beyond this one; or uploading a document to Trilium (via the `trilium` skill, which asks for confirmation first) unless the user explicitly asked for that upload.
 5. The plan is fundamentally broken and every path forward would be a guess.
 6. A required tool or sub-agent invocation fails with no safe automatic recovery, and only a human can decide how to proceed — e.g. a credential/permission blocker, or a review sub-agent (spec-reviewer/plan-reviewer) that cannot be dispatched at all.
 
@@ -99,10 +99,8 @@ Before creating a PR:
 3. If anything changes partway through this sequence, restart the whole gate from scratch rather than patching around the drift.
 4. A sub-agent's own "done" or "tests pass" self-report is never itself completion evidence — the gate above must be run and its evidence inspected directly.
 
-This gate is not automated with a helper script in this iteration; a helper script is the natural upgrade path via a follow-up Issue if manual comparison proves error-prone in practice.
+This gate is a manual, prompt-only procedure.
 
 ## Local-Only Artifacts
 
-Specs and plans are written to `.agent-work/specs/` and `.agent-work/plans/` (moved from the old `docs/superpowers/specs|plans/`). `.agent-work/` is excluded via the global `.gitignore`. Never `git add -f` these files, even after review — the durable record is the Issue comment or Trilium note, not the git history.
-
-The old `docs/superpowers/` and `.superpowers/` `.gitignore` entries stay in place for now as a migration-period leftover.
+Specs and plans are written to `.agent-work/specs/` and `.agent-work/plans/`. `.agent-work/` is excluded via the global `.gitignore`. Never `git add -f` these files, even after review — the durable record is the Issue comment or Trilium note, not the git history.

@@ -37,6 +37,16 @@ STALE_TARGETS=(
   "$HOME/.claude/commands/issue-pr.md"
   "$HOME/.codex/hooks/tmux-ipc-check.sh"
   "$HOME/bin/tmux-ipc-send.sh"
+  "$HOME/.claude/rules/workflow.md"
+  "$HOME/.claude/rules/workflow-sub-agents.md"
+  "$HOME/.claude/rules/design-workflow.md"
+  "$HOME/.claude/rules/issue-comment-docs.md"
+  "$HOME/.claude/skills/deep-review/reviewers/g-performance.md"
+  "$HOME/.claude/skills/deep-review/reviewers/h-error-handling.md"
+  "$HOME/.claude/skills/deep-review/reviewers/i-type-design-tests.md"
+  "$HOME/.agents/skills/deep-review/reviewers/g-performance.md"
+  "$HOME/.agents/skills/deep-review/reviewers/h-error-handling.md"
+  "$HOME/.agents/skills/deep-review/reviewers/i-type-design-tests.md"
 )
 for target in "${STALE_TARGETS[@]}"; do
   mkdir -p "$(dirname "$target")"
@@ -45,12 +55,15 @@ done
 LOCAL_RUNTIME_FILE="$HOME/.claude/local-runtime-state.keep"
 printf 'keep\n' > "$LOCAL_RUNTIME_FILE"
 
-# dotfiles 管理から外した chezmoi updater unit は既存 target を保持する。
-SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-mkdir -p "$SYSTEMD_USER_DIR/timers.target.wants"
-printf 'local-service\n' > "$SYSTEMD_USER_DIR/chezmoi-update.service"
-printf 'local-timer\n' > "$SYSTEMD_USER_DIR/chezmoi-update.timer"
-ln -s ../chezmoi-update.timer "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
+# Claude Code のグローバル runtime state を保持しつつ、管理対象キーだけ更新されることを検証する。
+CLAUDE_GLOBAL_CONFIG="$HOME/.claude.json"
+cat > "$CLAUDE_GLOBAL_CONFIG" <<'JSON'
+{
+  "oauthAccount": {"accountUuid": "keep-me"},
+  "projects": {"/tmp/example": {"hasTrustDialogAccepted": true}},
+  "diffSidebarOpen": true
+}
+JSON
 
 # chezmoi apply を実行 (dry-run)
 if ! "$CHEZMOI_BIN" apply --dry-run --source="$SOURCE_DIR"; then
@@ -67,6 +80,33 @@ if ! "$CHEZMOI_BIN" apply --source="$SOURCE_DIR"; then
 fi
 
 echo "✅ chezmoi apply passed"
+
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+if ! grep -Fq '/usr/bin/mkr wrap -n chezmoi-update -d -a -w -- %h/.local/share/chezmoi/update.sh --force' "$SYSTEMD_USER_DIR/chezmoi-update.service"; then
+  echo "❌ chezmoi-update.service was not deployed with the scheduled updater command"
+  exit 1
+fi
+if ! grep -Fq 'Persistent=true' "$SYSTEMD_USER_DIR/chezmoi-update.timer"; then
+  echo "❌ chezmoi-update.timer was not deployed as a persistent timer"
+  exit 1
+fi
+if [ ! -L "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer" ] \
+  || [ "$(readlink "$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer")" != "../chezmoi-update.timer" ]; then
+  echo "❌ chezmoi-update.timer was not enabled by the expected symlink"
+  exit 1
+fi
+echo "✅ chezmoi updater systemd units deployed"
+
+if ! grep -Fq '"diffSidebarOpen": false' "$CLAUDE_GLOBAL_CONFIG"; then
+  echo "❌ Claude diff sidebar setting was not disabled"
+  exit 1
+fi
+if ! grep -Fq '"accountUuid": "keep-me"' "$CLAUDE_GLOBAL_CONFIG" \
+  || ! grep -Fq '"hasTrustDialogAccepted": true' "$CLAUDE_GLOBAL_CONFIG"; then
+  echo "❌ Claude global runtime state was not preserved"
+  exit 1
+fi
+echo "✅ Claude diff sidebar disabled while global runtime state was preserved"
 
 for target in "${STALE_TARGETS[@]}"; do
   if [ -e "$target" ] || [ -L "$target" ]; then
@@ -103,6 +143,11 @@ if ! grep -Fq 'mise activate bash --shims' "$HOME/.profile"; then
   exit 1
 fi
 
+if [ ! -f "$HOME/.bash_env" ] || ! grep -Fq 'mise env -s bash' "$HOME/.bash_env"; then
+  echo "❌ .bash_env does not initialize mise environments"
+  exit 1
+fi
+
 if ! grep -Fq ". \"\$HOME/.profile\"" "$HOME/.bash_profile"; then
   echo "❌ .bash_profile does not load .profile"
   exit 1
@@ -124,6 +169,19 @@ if [ "$PROFILE_LOCAL_BIN_COUNT" -ne 1 ]; then
   exit 1
 fi
 
+PROFILE_HOME_BIN_COUNT=$(printf '%s\n' "$PROFILE_PATH" | tr ':' '\n' | grep -Fxc "$HOME/bin" || true)
+if [ "$PROFILE_HOME_BIN_COUNT" -ne 1 ]; then
+  echo "❌ .profile must add ~/bin to PATH exactly once (found $PROFILE_HOME_BIN_COUNT)"
+  exit 1
+fi
+case "$PROFILE_PATH" in
+  *":$HOME/bin") ;;
+  *)
+    echo "❌ .profile must append ~/bin to the end of PATH so it cannot shadow system commands"
+    exit 1
+    ;;
+esac
+
 BASHRC_PATH=$(env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" bash -c ". \"\$HOME/.bashrc.d/00-path.sh\"; printf '%s\n' \"\$PATH\"")
 BASHRC_LOCAL_BIN_COUNT=$(printf '%s\n' "$BASHRC_PATH" | tr ':' '\n' | grep -Fxc "$HOME/.local/bin" || true)
 if [ "$BASHRC_LOCAL_BIN_COUNT" -ne 1 ]; then
@@ -132,15 +190,24 @@ if [ "$BASHRC_LOCAL_BIN_COUNT" -ne 1 ]; then
 fi
 echo "✅ ~/.local/bin PATH setup is idempotent"
 
-TIMER_WANTS_LINK="$SYSTEMD_USER_DIR/timers.target.wants/chezmoi-update.timer"
-if [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.service")" != "local-service" ] \
-  || [ "$(cat "$SYSTEMD_USER_DIR/chezmoi-update.timer")" != "local-timer" ] \
-  || [ ! -L "$TIMER_WANTS_LINK" ] \
-  || [ "$(readlink "$TIMER_WANTS_LINK")" != "../chezmoi-update.timer" ]; then
-  echo "❌ existing unmanaged chezmoi updater systemd files were changed or removed"
+FAKE_MISE="$HOME/.local/bin/mise"
+mkdir -p "$HOME/.local/bin" "$HOME/.local/share/mise/shims"
+cat > "$FAKE_MISE" <<'FAKE_MISE'
+#!/bin/sh
+case "$*" in
+  "activate bash --shims") printf 'export PATH="%s/.local/share/mise/shims:$PATH"\n' "$HOME" ;;
+  "env -s bash") printf 'export MISE_CODEX_ENV=enabled\n' ;;
+esac
+FAKE_MISE
+chmod +x "$FAKE_MISE"
+# shellcheck disable=SC2016
+NON_INTERACTIVE_ENV=$(env -i HOME="$HOME" PATH="/usr/bin:/bin" BASH_ENV="$HOME/.bash_env" bash -c 'printf "%s\n" "$MISE_CODEX_ENV"; printf "%s\n" "$PATH"')
+if ! grep -Fxq 'enabled' <<< "$NON_INTERACTIVE_ENV" \
+  || ! grep -Fq "$HOME/.local/share/mise/shims" <<< "$NON_INTERACTIVE_ENV"; then
+  echo "❌ non-interactive Bash does not load mise environment"
   exit 1
 fi
-echo "✅ existing unmanaged chezmoi updater systemd files were preserved"
+echo "✅ non-interactive Bash loads mise environment"
 
 if [ ! -f "$HOME/.agents/skills/issue-pr/SKILL.md" ]; then
   echo "❌ Codex issue-pr skill not generated"
@@ -149,6 +216,11 @@ fi
 
 if [ ! -x "$HOME/bin/gh-pr-target-repo.sh" ]; then
   echo "❌ gh-pr-target-repo helper not generated"
+  exit 1
+fi
+
+if [ ! -x "$HOME/bin/gh-pr-reviewer.sh" ]; then
+  echo "❌ gh-pr-reviewer helper not generated"
   exit 1
 fi
 
@@ -169,6 +241,21 @@ if [ ! -x "$HOME/.agents/skills/pr-health-monitor/scripts/pr-monitor-state.sh" ]
   exit 1
 fi
 
+if [ ! -x "$HOME/.agents/skills/deep-review/scripts/ledger.sh" ] \
+  || [ ! -x "$HOME/.agents/skills/deep-review/scripts/render-comment.sh" ] \
+  || [ ! -x "$HOME/.agents/skills/deep-review/scripts/validate-comment.sh" ]; then
+  echo "❌ deep-review helper scripts not generated or not executable"
+  exit 1
+fi
+
+# Claude 側 deep-review スキルが ZIP インポート可能な自己完結構成で展開されることを確認する。
+for f in scripts/ledger.sh scripts/render-comment.sh scripts/validate-comment.sh scripts/measure-usage.sh references/regression-cases.md; do
+  if [ ! -f "$HOME/.claude/skills/deep-review/$f" ]; then
+    echo "❌ Claude deep-review skill file not generated: $f"
+    exit 1
+  fi
+done
+
 echo "✅ Codex files generated successfully"
 
 # PR 後フローの skill 契約が chezmoi 展開後も保持されることを確認する。
@@ -186,16 +273,16 @@ GLITCHTIP_PR_SKILLS=(
 if ! grep -Fq 'watch-pr.sh watch --pr-url' "$PR_HEALTH_SKILL" \
   || ! grep -Fq 'foreground_required' "$PR_HEALTH_SKILL" \
   || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'watcher は観測専用' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq '連続 5 回の API failure で停止する' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'GlitchTip callback descriptor は state に保存しない' "$PR_HEALTH_SKILL"; then
+  || ! grep -Fq 'The watcher is observation-only' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'stops on 5 consecutive API failures' "$PR_HEALTH_SKILL" \
+  || ! grep -Fq 'GlitchTip callback descriptor is not stored in state' "$PR_HEALTH_SKILL"; then
   echo "❌ Durable PR health monitor contract not generated"
   exit 1
 fi
 
-if ! grep -Fq 'watcher は PR state、checks、conflict、Copilot review を poll' "$PR_CLOSE_SKILL" \
+if ! grep -Fq 'watcher polls PR state, checks, conflict, and review feedback regardless of actor' "$PR_CLOSE_SKILL" \
   || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_CLOSE_SKILL" \
-  || ! grep -Fq 'durable state に保存しない' "$PR_CLOSE_SKILL" \
+  || ! grep -Fq 'not stored in durable state' "$PR_CLOSE_SKILL" \
   || ! grep -Fq 'CLOSED' "$PR_CLOSE_SKILL"; then
   echo "❌ Durable PR close monitor contract not generated"
   exit 1
@@ -210,7 +297,7 @@ done
 
 for skill in "${GLITCHTIP_PR_SKILLS[@]}"; do
   if ! grep -Fq "\$pr-health-monitor <PR URL>" "$skill" \
-    || ! grep -Fq "この flow で \`get_issue\` により取得した issue ID" "$skill" \
+    || ! grep -Fq "the issue ID retrieved via \`get_issue\` in this flow" "$skill" \
     || ! grep -Fq 'GlitchTip Issue: <permalink URL>' "$skill" \
     || ! grep -Fq "\$resume-pr-monitor <PR URL>" "$skill" \
     || ! grep -Fq "\`CLOSED\`" "$skill"; then
@@ -241,46 +328,67 @@ assert_ordered_policy() {
   done
 }
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
   assert_ordered_policy "$policy" "PR monitoring precondition" \
-    'canonical PR URL を取得するまで pane の登録、state/window の作成、watcher の起動をしない' \
-    '永続的な terminal または resume fallback を選択できない場合は PR を作成せず停止する'
+    'Do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+    'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
 done
 
+# Codex グローバル指示は英語で書かれているため、スキルとは別に英語の文言で検証する。
+assert_ordered_policy "$CODEX_AGENTS" "PR monitoring precondition" \
+  'do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
+  'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
+
 for skill in "${ISSUE_PR_SKILLS[@]}"; do
+  case "$skill" in
+    */issue-pr-deep/SKILL.md) review_gate='Stop if unresolved merge-blocker findings remain' ;;
+    *) review_gate='Stop if any unresolved finding with confidence 50 or higher remains' ;;
+  esac
   assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
-    'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録する' \
-    '最新の全検証を実行し' \
-    '直後にシークレット確認を実行し' \
-    '50 以上、P1、P2 の未解決指摘があれば停止する' \
-    'diff、status、evidence を確認する' \
-    'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-    '差分、status、evidence のいずれかが変われば最終ゲート全体を最初からやり直す'
+    'snapshot containing HEAD, the index, the tracked, staged, and untracked state of the worktree, and evidence IDs' \
+    'Never re-capture or update the snapshot' \
+    'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
+    'Run the latest full verification' \
+    'Run the secret check immediately afterward' \
+    "$review_gate" \
+    'Check the diff, status, and evidence' \
+    'Compare against the same snapshot after the final evidence check, right before commit/PR creation' \
+    'If any of the diff, status, or evidence changes, restart the entire final gate from the beginning'
 done
 
 assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
-  'tracked、staged、untracked と evidence ID を含む snapshot を 1 回記録' \
-  '各 substep 後と final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-  'deployment assertion は、この reviewed snapshot に対して final evidence を確認した直後に限って行う' \
-  'snapshot を再取得・更新してはならず' \
-  '最終ゲート全体を最初からやり直す'
+  'record one reviewed snapshot' \
+  'never re-capture or update it' \
+  'restart the entire final gate from the beginning' \
+  'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
+  'Stop if there are unresolved findings of 50 or more, P1, or P2, a verification failure, a secret, or an unintended diff'
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$CODEX_AGENTS"; do
-  if ! grep -Fq 'すべての Issue が一意、open、target repository 所属であることを検証する' "$policy" \
-    || ! grep -Fq 'scope と acceptance criteria' "$policy" \
-    || ! grep -Fq '文書' "$policy" \
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
+  if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$policy" \
+    || ! grep -Fq 'scope and acceptance criteria' "$policy" \
+    || ! grep -Fq 'documents' "$policy" \
     || ! grep -Fq 'review evidence' "$policy" \
     || ! grep -Fq 'closing keyword' "$policy" \
-    || ! grep -Fq 'aggregate 最終ゲート' "$policy"; then
+    || ! grep -Fq 'aggregate final gate' "$policy"; then
     echo "❌ Aggregate Issue evidence contract missing in $policy"
     exit 1
   fi
 done
 
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" "$CODEX_AGENTS"; do
+if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$CODEX_AGENTS" \
+  || ! grep -Fq 'scope and acceptance criteria' "$CODEX_AGENTS" \
+  || ! grep -Fq 'required documents' "$CODEX_AGENTS" \
+  || ! grep -Fq 'review evidence' "$CODEX_AGENTS" \
+  || ! grep -Fq 'closing keyword' "$CODEX_AGENTS" \
+  || ! grep -Fq 'aggregate final gate' "$CODEX_AGENTS"; then
+  echo "❌ Aggregate Issue evidence contract missing in $CODEX_AGENTS"
+  exit 1
+fi
+
+for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL"; do
   # shellcheck disable=SC2016
   if ! grep -Fq 'canonical PR URL' "$policy" \
-    || ! grep -Fq '失敗した stage' "$policy" \
+    || ! grep -Fq 'the failed stage' "$policy" \
     || ! grep -Eq 'fresh.*evidence' "$policy" \
     || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$policy"; then
     echo "❌ PR failure-report contract missing in $policy"
@@ -289,24 +397,33 @@ for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL" 
 done
 
 # shellcheck disable=SC2016
+if ! grep -Fq 'canonical PR URL' "$CODEX_AGENTS" \
+  || ! grep -Fq 'the failed stage' "$CODEX_AGENTS" \
+  || ! grep -Eq 'fresh.*evidence' "$CODEX_AGENTS" \
+  || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$CODEX_AGENTS"; then
+  echo "❌ PR failure-report contract missing in $CODEX_AGENTS"
+  exit 1
+fi
+
+# shellcheck disable=SC2016
 assert_ordered_policy "$PR_HEALTH_SKILL" "post-create monitor recovery" \
   'canonical `PR_URL`' \
   'pr-monitor-state.sh init --pr-url "$PR_URL"' \
   'register-pane --pr-url "$PR_URL"' \
   'watch-pr.sh start --pr-url "$PR_URL"' \
-  'start が成功した後の initial CI/review observation が失敗しても watcher は active と報告する' \
-  '初期観測の失敗は active な watcher と区別して報告する' \
+  'Report the watcher as active even if the initial CI/review observation fails after start succeeds' \
+  'Report an initial observation failure separately from the active watcher' \
   '$resume-pr-monitor <PR_URL>'
 
 assert_ordered_policy "$DEEP_REVIEW_SKILL" "deep-review final-gate handoff" \
-  'tracked、staged、untracked と evidence ID を含む snapshot を返す' \
-  'final evidence 確認後かつ commit/PR 作成直前に同じ snapshot と比較する' \
-  '差分、status、evidence のいずれかが変われば review を含む最終ゲート全体を最初からやり直す'
+  'tracked, staged, and untracked state, and evidence IDs' \
+  'after final evidence confirmation and immediately before commit/PR creation, compare against the same snapshot' \
+  'If any of the diff, status, or evidence changes, restart the entire final gate, including review, from the beginning'
 
 # shellcheck disable=SC2016
-if ! grep -Fq '$issue-pr <Issue 番号または URL> [<Issue 番号または URL> ...]' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'すべての入力を順序を保った `ISSUE_REFERENCES` 配列として解析する' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq '各 `ISSUE_REFERENCE` を `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"` で取得する' "$ISSUE_PR_DISPATCHER" \
+if ! grep -Fq '$issue-pr <Issue number or URL> [<Issue number or URL> ...]' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'parse all inputs into an order-preserving `ISSUE_REFERENCES` array' "$ISSUE_PR_DISPATCHER" \
+  || ! grep -Fq 'Fetch each `ISSUE_REFERENCE` with `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"`' "$ISSUE_PR_DISPATCHER" \
   || ! grep -Fq 'issue-pr-deep "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER" \
   || ! grep -Fq 'issue-pr-lite "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER"; then
   echo "❌ Issue PR dispatcher routing contract missing"
@@ -345,7 +462,7 @@ for skill in "${CLAUDE_WORKFLOW_SKILLS[@]}"; do
   done
 done
 
-for rule in "$HOME/.claude/rules/"*.md; do
+for rule in "$HOME/.claude/rules/"*.md "$HOME/.claude/docs/"*.md; do
   for invocation in "${SUPERPOWERS_INVOCATIONS[@]}"; do
     if grep -Fq "$invocation" "$rule"; then
       echo "❌ Stale $invocation invocation still present in $rule"
@@ -360,6 +477,30 @@ if [ -f "$HOME/.claude/rules/superpowers.md" ]; then
 fi
 
 echo "✅ No superpowers: invocation remains in active Claude workflow"
+
+# オンデマンド参照の workflow 系文書は docs/ にのみ展開され、常時ロードされる rules/ に残らないこと。
+for doc in workflow workflow-sub-agents design-workflow issue-comment-docs; do
+  if [ ! -f "$HOME/.claude/docs/$doc.md" ] || [ -f "$HOME/.claude/rules/$doc.md" ]; then
+    echo "❌ $doc.md must be deployed under docs/ and not under rules/"
+    exit 1
+  fi
+done
+
+# 旧レビュアーは STALE_TARGETS で事前配置済みのため、ここで残っていれば .chezmoiremove の登録漏れを意味する。
+for reviewer in g-performance h-error-handling i-type-design-tests; do
+  if [ -f "$HOME/.claude/skills/deep-review/reviewers/$reviewer.md" ] \
+    || [ -f "$HOME/.agents/skills/deep-review/reviewers/$reviewer.md" ]; then
+    echo "❌ merged reviewer $reviewer.md still deployed"
+    exit 1
+  fi
+done
+if [ ! -f "$HOME/.claude/skills/deep-review/reviewers/g-performance-errors-types.md" ] \
+  || [ ! -f "$HOME/.agents/skills/deep-review/reviewers/g-performance-errors-types.md" ]; then
+  echo "❌ merged reviewer g-performance-errors-types.md not deployed"
+  exit 1
+fi
+
+echo "✅ On-demand docs and merged reviewers deployed at their new paths"
 
 # Superpowers plugin が展開後 settings.json (private_settings.json から生成) で
 # enabled でないこと。
@@ -397,9 +538,9 @@ for skill in "${DEEP_WORKFLOW_SKILLS[@]}"; do
   # shellcheck disable=SC2016
   assert_ordered_policy "$skill" "self-hosted design-workflow contract order" \
     '## Phase 4: Review the Spec' \
-    'Use **AskUserQuestion** to get explicit spec approval before Phase 7' \
+    'Ask for approval via **AskUserQuestion** only when there is a significant' \
     '## Phase 8: Review the Plan' \
-    'Decide the execution approach yourself, per `rules/design-workflow.md`' \
+    'Decide the execution approach yourself, per `~/.claude/docs/design-workflow.md`' \
     'Final Evidence Gate (Prompt-Only Contract)' \
     '## Phase 13: Deep Review'
 done
@@ -450,6 +591,7 @@ if ! grep -Fq 'web_search = "live"' "$CODEX_CONFIG" \
   || ! grep -Fq 'hooks = true' "$CODEX_CONFIG" \
   || grep -Fq 'codex_hooks =' "$CODEX_CONFIG" \
   || ! grep -Fq 'remote_control = true' "$CODEX_CONFIG" \
+  || ! grep -Fq 'BASH_ENV = "'"$HOME"'/.bash_env"' "$CODEX_CONFIG" \
   || ! grep -Fq 'trust_level = "trusted"' "$CODEX_CONFIG" \
   || ! grep -Fq 'trusted_hash = "sha256:test"' "$CODEX_CONFIG" \
   || ! grep -Fq 'gpt_5_4 = "gpt-5.6"' "$CODEX_CONFIG"; then
@@ -556,8 +698,8 @@ echo "✅ Idempotency test passed"
 # シンボリックリンクの整合性確認 (Claude Code フックのシンボリックリンク)
 HOOKS_DIR="$HOME/.claude/hooks"
 SYMLINKS=(
-  "code-review-immediate-fix.sh"
-  "require-code-review-fixes.sh"
+  "deep-review-immediate-fix.sh"
+  "deep-review-require-fixes.sh"
   "require-review-thread-fixes.sh"
 )
 

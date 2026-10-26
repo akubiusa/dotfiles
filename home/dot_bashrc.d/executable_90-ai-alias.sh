@@ -46,7 +46,9 @@ _claude_warn_remote_settings() {
   fi
 }
 
-claude() {
+_claude_launch() {
+  local mode="$1"
+  shift
   _claude_warn_remote_settings
   [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only claude
   ~/.local/share/chezmoi/update.sh
@@ -55,8 +57,23 @@ claude() {
       command claude "$@" ;;
     *)
       _claude_trust_cwd
-      command claude --permission-mode auto "$@" ;;
+      case "$mode" in
+        skip) command claude --dangerously-skip-permissions "$@" ;;
+        auto) command claude --permission-mode auto "$@" ;;
+        *)
+          echo "_claude_launch: unknown mode \"$mode\"" >&2
+          return 1 ;;
+      esac ;;
   esac
+}
+
+claude() {
+  _claude_launch auto "$@"
+}
+
+unalias clauded 2>/dev/null
+clauded() {
+  _claude_launch skip "$@"
 }
 # Codex のラッパー関数。managed app-server が稼働中なら TUI を同じ app-server へ接続する。
 # 管理・非対話サブコマンドは remote 接続せず、従来どおり直接実行する。
@@ -75,14 +92,47 @@ _codex_is_direct_invocation() {
   esac
 }
 
+_codex_has_cd() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "--" ]] && return 1
+    case "$arg" in
+      --cd|-C|--cd=*|-C?*)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+_codex_is_resume_invocation() {
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "resume" ]] && return 0
+  done
+  return 1
+}
+
 codex() {
-  [ -x ~/bin/update-ai-agents.sh ] && ~/bin/update-ai-agents.sh --quick --only codex
+  # Codex CLI 自体は standalone installer が自前で自動更新するため update-ai-agents.sh の対象外
   ~/.local/share/chezmoi/update.sh
 
-  if _codex_is_direct_invocation "$@"; then
+  if [[ "${1:-}" == "agents" ]]; then
+    command codex "$@"
+  elif _codex_is_direct_invocation "$@"; then
     command codex --yolo "$@"
   elif _codex_app_server_running; then
-    command codex --remote unix:// --yolo "$@"
+    if _codex_is_resume_invocation "$@"; then
+      # リモートタスクの resume では --yolo などの明示的な権限上書きが拒否される。
+      if _codex_has_cd "$@"; then
+        command codex --remote unix:// "$@"
+      else
+        command codex --remote unix:// --cd "$PWD" "$@"
+      fi
+    elif _codex_has_cd "$@"; then
+      command codex --remote unix:// --yolo "$@"
+    else
+      command codex --remote unix:// --yolo --cd "$PWD" "$@"
+    fi
   else
     command codex --yolo "$@"
   fi

@@ -21,4 +21,4 @@ paths:
 
 ## Documentation
 
-- Write docstrings for all functions and classes. Language: follow the repository language convention
+- Write a docstring when it adds contract value (preconditions, meaning of arguments and return values, side effects, exceptions, units); omit it when it would only restate the name or type. Language: follow the repository language convention

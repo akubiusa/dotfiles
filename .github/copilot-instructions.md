@@ -35,6 +35,10 @@ During code review, prioritize checking the points below.
 - CLI tools such as `gh`, `ghq`, `roots`, and `gitleaks` are installed via `mise` based on the declarations in `home/dot_config/mise/config.toml`. gitleaks uses a verified exact version and is updated by Renovate's mise manager. Check that no direct install logic has been added to `install.sh`.
 - When changing the mise version hard-coded in `install.sh` (`MISE_VERSION`), check that it does not conflict with the corresponding `regexManagers` entry in `renovate.json`.
 
+### Code comments
+
+- Code comments are zero by default; keep only a non-obvious reason, constraint, or why-not. The canonical source is `home/dot_claude/rules/coding-common.md` and the root `AGENTS.md`.
+
 ### Agent definitions
 
 - For newly added agent definitions (`home/dot_claude/agents/*.md`), check that the `tools` field restricts the allowed tools to the minimum necessary (for example, that a read-only status-check agent is not needlessly granted write tools).

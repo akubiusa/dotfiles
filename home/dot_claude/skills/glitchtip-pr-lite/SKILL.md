@@ -93,13 +93,16 @@ git push -u origin "$(git branch --show-current)"
 REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
 ```
 
+Draft or regular: apply the same criterion as `glitchtip-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor` or `/handle-pr-reviews`.
+
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
 
 ```bash
 PR_TITLE="<derived from the GlitchTip issue title>"
 REVIEWER=${REPO:+$(gh-pr-reviewer.sh "$REPO")}
-gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
+DRAFT=1  # set to empty for a regular (non-draft) PR
+gh pr create ${REPO:+--repo "$REPO"} ${DRAFT:+--draft} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body — summarize the fix; include `GlitchTip Issue: <permalink URL>`; no Spec/Plan lines. Do not use GitHub's `Closes #<number>` syntax — a GlitchTip issue is not a GitHub Issue.>
 EOF
 )"

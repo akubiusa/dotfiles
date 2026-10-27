@@ -63,6 +63,7 @@ Run `/pr-health-monitor <PR number>` to automate, or manually:
 3. `gh pr checks <PR number> --watch` — confirm CI passes.
 4. Request Copilot review, wait (`/wait-for-copilot-review`).
 5. Address review comments (`/handle-pr-reviews`).
+6. If the PR was created as a draft (`gh pr create --draft`, used when further edits are expected), mark it ready with `gh pr ready <PR> --repo <owner/repo>` once all hold: it is still a draft and the user has not asked to keep it as a draft; all CI checks passed (zero checks counts as passed); no merge conflict; all review threads resolved and any requested Copilot review handled (waived if the request failed or Copilot is unavailable); no further edits needed. If `gh pr ready` fails, leave it as a draft and report the reason. `gh pr ready --undo` may be used before further edits. No-op if already ready. Never merge.
 
 ---
 

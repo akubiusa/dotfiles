@@ -102,6 +102,11 @@ check "denied: push --mirror is always denied (equivalent to force-push)" deny "
 
 check "allowed: gh pr create --repo OWNER/REPO" allow "$POLICY" -- gh pr create --repo acme/widgets --title t --body b
 check "denied: gh pr create without --repo" deny "$POLICY" -- gh pr create --title t --body b
+check "allowed: gh pr create --draft --repo OWNER/REPO" allow "$POLICY" -- gh pr create --draft --repo acme/widgets --title t --body b
+check "allowed: gh pr ready --repo OWNER/REPO" allow "$POLICY" -- gh pr ready 1 --repo acme/widgets
+check "allowed: gh pr ready --undo --repo OWNER/REPO" allow "$POLICY" -- gh pr ready 1 --undo --repo acme/widgets
+check "denied: gh pr ready without --repo" deny "$POLICY" -- gh pr ready 1
+check "denied: gh pr ready --repo (create_pr=false)" deny "$POLICY_DENY" -- gh pr ready 1 --repo acme/widgets
 check "denied: gh pr merge --repo (permission=false)" deny "$POLICY_DENY" -- gh pr merge --repo acme/widgets --squash
 check "allowed: gh pr merge -R OWNER/REPO" allow "$POLICY" -- gh pr merge -R acme/widgets --squash
 check "denied: gh mutation with --hostname is outside the canonical GitHub identity" deny "$POLICY" -- gh --hostname evil.example pr merge --repo acme/widgets --squash

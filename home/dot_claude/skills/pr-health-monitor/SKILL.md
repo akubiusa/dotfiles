@@ -182,6 +182,10 @@ Report the result of each task in the following format:
    → /handle-pr-reviews will be called directly in this conversation on detection
 ```
 
+### Release draft (ready evaluation)
+
+If no Copilot review Monitor is running (the request failed or Copilot is unavailable), do not evaluate at Step 2 start, when CI is still pending; evaluate whether to release draft status when the CI Monitor emits `ci_complete` and CI passed. If `isDraft` is already false, this is a no-op. When the Copilot Monitor is running, `/handle-pr-reviews` performs this evaluation after its final CI check instead. Mark the PR ready (`gh pr ready <PR> --repo <owner/repo>`) only when all hold: (1) the PR is a draft (`gh pr view --json isDraft`) and the user has not asked to keep it as a draft; (2) all CI checks passed, with zero checks counted as passed; (3) no merge conflict (`mergeable` is `MERGEABLE`); (4) all review threads are resolved, and a requested Copilot review has been received and handled (waived if the request failed or Copilot is unavailable); (5) no further edits are needed (no uncommitted changes, no unpushed commits, no pending follow-ups). If `gh pr ready` fails, leave the PR as a draft and report the reason. If edits become necessary after marking ready, `gh pr ready --undo` may be used before editing. Never merge. Include the result in the report.
+
 ---
 
 ## Phase 2: After Copilot Review Detection (auto-triggered)

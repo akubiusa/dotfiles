@@ -89,13 +89,16 @@ document exists for this path).
 git push -u origin "$(git branch --show-current)"
 ```
 
+Draft or regular: apply the same criterion as `issue-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor` or `/handle-pr-reviews`.
+
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
 
 ```bash
 PR_TITLE="<derived from the issue title>"
 REVIEWER=$(gh-pr-reviewer.sh "$ISSUE_OWNER/$ISSUE_REPO")
-gh pr create --repo "$ISSUE_OWNER/$ISSUE_REPO" ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'PRBODY'
+DRAFT=1  # set to empty for a regular (non-draft) PR
+gh pr create --repo "$ISSUE_OWNER/$ISSUE_REPO" ${DRAFT:+--draft} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'PRBODY'
 <PR body — summarize from the Issue body; include `Closes #<issue number>`; no Spec/Plan lines>
 PRBODY
 )"

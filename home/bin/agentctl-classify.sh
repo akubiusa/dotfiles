@@ -335,7 +335,7 @@ agentctl_classify_git() {
 # --- gh 処理 -----------------------------------------------------------
 
 # gh の既知 read-only (not_privileged) subcommand/second-arg allowlist。
-# ここに無い gh <sub> <sub2> の組み合わせは (pr create/merge を除き)
+# ここに無い gh <sub> <sub2> の組み合わせは (pr create/merge/ready を除き)
 # unknown_privileged とする (fail closed; gh api 等の任意 mutation や
 # issue close 等の未分類 mutation を暗黙 allow しない)。
 agentctl_classify_gh_is_known_read_only() {
@@ -388,7 +388,7 @@ agentctl_classify_gh() {
   done
 
   local sub="${filtered[0]:-}" sub2="${filtered[1]:-}"
-  if [ "$sub" = "pr" ] && { [ "$sub2" = "create" ] || [ "$sub2" = "merge" ]; }; then
+  if [ "$sub" = "pr" ] && { [ "$sub2" = "create" ] || [ "$sub2" = "merge" ] || [ "$sub2" = "ready" ]; }; then
     : # 下の privileged 経路へ進む
   elif agentctl_classify_gh_is_known_read_only "$sub" "$sub2"; then
     echo "not_privileged"; return 0
@@ -400,7 +400,7 @@ agentctl_classify_gh() {
   [ "$repo_count" -eq 1 ] && [ -n "$repo" ] || { echo "deny"; return 0; }
 
   local perm_key
-  [ "$sub2" = "create" ] && perm_key="create_pr" || perm_key="merge"
+  case "$sub2" in create|ready) perm_key="create_pr" ;; *) perm_key="merge" ;; esac
   local perm_val
   perm_val=$(echo "$policy_json" | jq -r --arg k "$perm_key" '.permissions[$k] // false')
   [ "$perm_val" = "true" ] || { echo "deny"; return 0; }

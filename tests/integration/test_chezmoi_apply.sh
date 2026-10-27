@@ -306,6 +306,23 @@ for skill in "${GLITCHTIP_PR_SKILLS[@]}"; do
   fi
 done
 
+# ドラフト PR 運用: 作成側は --draft の判断基準、解除側は gh pr ready を持つこと。
+for skill in "$HOME/.agents/skills"/{issue-pr-deep,issue-pr-lite,ticket-pr,glitchtip-pr-deep,glitchtip-pr-lite}/SKILL.md \
+  "$HOME/.claude/skills"/{issue-pr-deep,issue-pr-lite,ticket-pr,glitchtip-pr-deep,glitchtip-pr-lite}/SKILL.md; do
+  if ! grep -Fq -- '--draft' "$skill"; then
+    echo "❌ Draft PR creation criterion missing in $skill"
+    exit 1
+  fi
+done
+
+for skill in "$HOME/.agents/skills"/{pr-health-monitor,resume-pr-monitor}/SKILL.md \
+  "$HOME/.claude/skills"/{pr-health-monitor,handle-pr-reviews}/SKILL.md; do
+  if ! grep -Fq 'gh pr ready' "$skill"; then
+    echo "❌ Draft release (gh pr ready) missing in $skill"
+    exit 1
+  fi
+done
+
 echo "✅ PR post-creation skill contracts generated successfully"
 
 # PR 品質ゲート契約が chezmoi 展開後も保持されることを確認する。

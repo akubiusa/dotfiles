@@ -245,6 +245,10 @@ gh pr checks "$PR_NUMBER" --watch
 
 If CI fails: check logs, fix the issue, re-push, and re-verify.
 
+### Release draft (ready evaluation)
+
+After the final CI check, evaluate whether to release draft status. If `isDraft` is already false, this is a no-op. Mark the PR ready (`gh pr ready <PR> --repo <owner/repo>`) only when all hold: (1) the PR is a draft (`gh pr view --json isDraft`) and the user has not asked to keep it as a draft; (2) all CI checks passed, with zero checks counted as passed; (3) no merge conflict (`mergeable` is `MERGEABLE`); (4) all review threads are resolved, and a requested Copilot review has been received and handled (waived if the request failed or Copilot is unavailable); (5) no further edits are needed (no uncommitted changes, no unpushed commits, no pending follow-ups). If `gh pr ready` fails, leave the PR as a draft and report the reason. If edits become necessary after marking ready, `gh pr ready --undo` may be used before editing. Never merge. Include the result (marked ready / kept as draft with reason / already ready) in the Step 7 report.
+
 ---
 
 ## Step 7: Completion Report
@@ -257,6 +261,7 @@ Report in the following format:
    Code changes: yes / no
    CI: all checks passed
    Remaining unresolved threads: 0
+   Draft status: marked ready / kept as draft (<reason>) / already ready
 ```
 
 ---

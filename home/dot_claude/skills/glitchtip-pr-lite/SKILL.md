@@ -134,7 +134,7 @@ chmod 600 ~/.claude/data/session-state.json
 
 ## Phase 9: After PR Creation
 
-Same as `glitchtip-pr-deep`'s Phase 16: resolve `PR_NUMBER` and run `/pr-health-monitor <PR number>` immediately, without asking the user whether to run it. Do not pause to ask the user whether to keep waiting for a Copilot review.
+Same as `glitchtip-pr-deep`'s Phase 16: use the `PR_URL` resolved above and run `/pr-health-monitor "$PR_URL"` immediately, without asking the user whether to run it. Do not pause to ask the user whether to keep waiting for a Copilot review.
 
 ## Phase 10: Auto-Resolve on Merge
 

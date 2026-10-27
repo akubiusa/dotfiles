@@ -42,13 +42,14 @@ REVIEWS_QUERY='query($owner: String!, $repo: String!, $number: Int!) {
       reviewThreads(first: 100) {
         nodes {
           isResolved
-          comments(first: 100) { nodes { author { login } } }
+          comments(first: 100) { nodes { id } }
         }
       }
     }
   }
 }'
 
+# PR 作者自身のアカウントがレビューする運用もあるため、作者を除外せず全員分の review とスレッドコメントの総数を署名にする
 last_sig=0
 last_failed=""
 ci_success_sha=""
@@ -68,11 +69,10 @@ while true; do
     cycle_failed=0
     : >"$errf"
 
-    if view=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json state,mergeable,headRefOid,author 2>>"$errf") && [[ -n "$view" ]]; then
+    if view=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json state,mergeable,headRefOid 2>>"$errf") && [[ -n "$view" ]]; then
         state=$(jq -r '.state' <<<"$view")
         mergeable=$(jq -r '.mergeable' <<<"$view")
         head=$(jq -r '.headRefOid' <<<"$view")
-        pr_author=$(jq -r '.author.login' <<<"$view")
 
         if [[ "$state" != "OPEN" ]]; then
             emit "pr_closed state=$state" "PR $state" 3447003
@@ -131,12 +131,12 @@ while true; do
         cycle_failed=1
     fi
 
-    if [[ -n "${pr_author:-}" ]] && gql=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" -f query="$REVIEWS_QUERY" 2>>"$errf") && [[ -n "$gql" ]]; then
-        summary=$(jq -r --arg author "$pr_author" '
+    if gql=$(gh api graphql -f owner="$OWNER" -f repo="$REPO" -F number="$PR_NUMBER" -f query="$REVIEWS_QUERY" 2>>"$errf") && [[ -n "$gql" ]]; then
+        summary=$(jq -r '
             .data.repository.pullRequest as $pr
             | [
-                ([$pr.reviews.nodes[] | select(.submittedAt != null and .author.login != $author)] | length)
-                + ([$pr.reviewThreads.nodes[].comments.nodes[] | select(.author.login != $author)] | length),
+                ([$pr.reviews.nodes[] | select(.submittedAt != null)] | length)
+                + ([$pr.reviewThreads.nodes[].comments.nodes[]] | length),
                 ([$pr.reviewThreads.nodes[] | select(.isResolved == false)] | length),
                 ([$pr.reviews.nodes[] | select(.author.__typename == "Bot"
                     and (.author.login | ascii_downcase | contains("copilot"))

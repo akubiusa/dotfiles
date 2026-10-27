@@ -356,13 +356,9 @@ instead of leaving a stale/empty state file.
 
 ## Phase 16: After PR Creation
 
-Resolve `PR_NUMBER`, passing `--repo "$REPO"` explicitly if `$REPO` was resolved (non-empty) in Phase 14 (a non-default PR destination is possible via `gh-pr-target-repo.sh`, same as `ticket-pr`):
+Pass the full `PR_URL` from Phase 15 to the monitor (not a bare number): a non-default PR destination is possible via `gh-pr-target-repo.sh`, and a number alone would be re-resolved there and can pick the wrong repository.
 
-```bash
-PR_NUMBER=$(gh pr view ${REPO:+--repo "$REPO"} --json number -q .number)
-```
-
-Run `/pr-health-monitor <PR number>` immediately, without asking first. Its unified Monitor handles review feedback, CI, conflicts and `pr_closed` in this conversation; do not pause here to ask the user whether to keep waiting for a Copilot review.
+Run `/pr-health-monitor "$PR_URL"` immediately, without asking first. Its unified Monitor handles review feedback, CI, conflicts and `pr_closed` in this conversation; do not pause here to ask the user whether to keep waiting for a Copilot review.
 
 ## Phase 17: Auto-Resolve on Merge
 

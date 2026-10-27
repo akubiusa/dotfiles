@@ -129,10 +129,6 @@ chmod 600 ~/.claude/data/session-state.json
 
 ## Phase 9: After PR Creation
 
-Same as `issue-pr-deep`'s Phase 16: resolve `PR_NUMBER` (passing `--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — fork scenario safety) and run `/pr-health-monitor <PR number>` immediately, without asking the user whether to run it. Its unified Monitor handles review feedback, CI, conflicts and `pr_closed` (running `/pr-cleanup`) in this conversation; do not pause to ask the user whether to keep waiting for a Copilot review.
-
-```bash
-PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
-```
+Same as `issue-pr-deep`'s Phase 16: pass the `PR_URL` resolved above (not a bare number, which would be re-resolved via `gh-pr-target-repo.sh` and can pick the wrong repository) and run `/pr-health-monitor "$PR_URL"` immediately, without asking the user whether to run it. Its unified Monitor handles review feedback, CI, conflicts and `pr_closed` (running `/pr-cleanup`) in this conversation; do not pause to ask the user whether to keep waiting for a Copilot review.
 
 The `issue-pr-lite` flow is considered complete once `pr-health-monitor` has started the Monitor.

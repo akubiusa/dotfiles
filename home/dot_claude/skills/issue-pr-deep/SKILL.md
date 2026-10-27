@@ -378,15 +378,11 @@ instead of leaving a stale/empty state file.
 
 ## Phase 16: After PR Creation
 
-Run `/pr-health-monitor <PR number>` immediately, without asking first.
+Run `/pr-health-monitor "$PR_URL"` immediately, without asking first.
 
 `pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the PR body, and handles review feedback — none of that is "merging," so the merge guardrail doesn't apply. No separate confirmation is needed; the plan was already reviewed via Phase 8's dispatched `plan-reviewer` sub-agent and posted for the record (Phase 9).
 
-`pr-health-monitor` starts one unified `Monitor` in this same session that watches review feedback (Copilot and human), CI, merge/close and conflicts at the same time, independent of whether a Copilot review ever arrives. Resolve `PR_NUMBER` and pass it explicitly with the repository `$ISSUE_OWNER/$ISSUE_REPO` — this matters even in the non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not necessarily the local `origin`:
-
-```bash
-PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
-```
+`pr-health-monitor` starts one unified `Monitor` in this same session that watches review feedback (Copilot and human), CI, merge/close and conflicts at the same time, independent of whether a Copilot review ever arrives. Pass the full `PR_URL` from Phase 15 (not a bare number): the PR lives in `ISSUE_OWNER/ISSUE_REPO`, and a number alone would be re-resolved via `gh-pr-target-repo.sh`, which can pick a different repository.
 
 Do not pause to ask the user whether to keep waiting for a Copilot review. When the monitor emits `pr_closed`, `pr-health-monitor` runs `/pr-cleanup` in this same conversation. If this session ends before the PR is merged or closed, the monitor is lost and the user must run `/pr-cleanup <PR number or URL>` manually later.
 

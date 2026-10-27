@@ -38,7 +38,7 @@ chmod +x "$TEST_BIN/gh"
 
 reset() { rm -rf "$STUB_DIR"; mkdir -p "$STUB_DIR"; }
 # view N STATE MERGEABLE HEAD
-view() { jq -nc --arg s "$2" --arg m "$3" --arg h "$4" '{state:$s,mergeable:$m,headRefOid:$h,author:{login:"alice"}}' > "$STUB_DIR/view.$1"; }
+view() { jq -nc --arg s "$2" --arg m "$3" --arg h "$4" '{state:$s,mergeable:$m,headRefOid:$h}' > "$STUB_DIR/view.$1"; }
 # checks N JSON
 checks() { printf '%s\n' "$2" > "$STUB_DIR/checks.$1"; }
 # graphql N REVIEWS_JSON THREADS_JSON
@@ -92,14 +92,23 @@ view 3 OPEN MERGEABLE h2
 view 5 MERGED MERGEABLE h2
 check "ci_all_success per head" $'ci_all_success\nci_all_success\npr_closed state=MERGED' "$(run_watch)"
 
-# 4. review_feedback: 他者の review / スレッドコメントで出る。作者自身では出ない
+# 4. review_feedback: 作者自身を含む全員の review / スレッドコメントで出る
 init_defaults
 view 1 OPEN MERGEABLE h1
 graphql 2 "[$BOB]" '[]'
 graphql 3 "[$BOB]" '[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice"}}]}}]'
 graphql 4 "[$BOB]" '[{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice"}},{"author":{"login":"bob"}}]}}]'
 view 5 MERGED MERGEABLE h1
-check "review_feedback excludes author" $'review_feedback unresolved=0 copilot_reviews=0\nreview_feedback unresolved=1 copilot_reviews=0\npr_closed state=MERGED' "$(run_watch)"
+check "review_feedback includes author comments" $'review_feedback unresolved=0 copilot_reviews=0\nreview_feedback unresolved=1 copilot_reviews=0\nreview_feedback unresolved=1 copilot_reviews=0\npr_closed state=MERGED' "$(run_watch)"
+
+# 4a. 作者本人 (alice) の COMMENTED review と未解決スレッド 2 件だけでも発火する
+ALICE='{"author":{"login":"alice","__typename":"User"},"state":"COMMENTED","submittedAt":"2026-01-01T00:00:00Z"}'
+THR='{"isResolved":false,"comments":{"nodes":[{"author":{"login":"alice"}}]}}'
+init_defaults
+view 1 OPEN MERGEABLE h1
+graphql 2 "[$ALICE]" "[$THR,$THR]"
+view 3 MERGED MERGEABLE h1
+check "author-only review fires review_feedback" $'review_feedback unresolved=2 copilot_reviews=0\npr_closed state=MERGED' "$(run_watch)"
 
 # 4b. unresolved=0 の Copilot 承認でも出る
 init_defaults

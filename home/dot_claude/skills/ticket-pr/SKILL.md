@@ -326,7 +326,7 @@ parsing the transcript, so a silently broken write here breaks them too.
 
 ### After PR Creation
 
-Immediately run `/pr-health-monitor <PR number>` when done. Its unified Monitor handles review feedback, CI, conflicts and PR close (`/pr-cleanup`) in this conversation; the flow is complete once the Monitor is running.
+Immediately run `/pr-health-monitor "$PR_URL"` when done (the full URL from above, so the PR's repository is not re-resolved). Its unified Monitor handles review feedback, CI, conflicts and PR close (`/pr-cleanup`) in this conversation; the flow is complete once the Monitor is running.
 
 ## Notes
 

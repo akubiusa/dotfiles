@@ -104,7 +104,7 @@ fi
 
 If extraction fails, stop and report it to the user — every later phase
 that targets a specific repository (`gh issue comment`, `gh pr create`,
-`gh pr view`, `wait-for-pr-close`) depends on
+`gh pr view`, `pr-health-monitor`) depends on
 `ISSUE_OWNER`/`ISSUE_REPO` being correct. **`ISSUE_OWNER`/`ISSUE_REPO` is
 the repository the Issue actually lives in — this is what determines the PR
 destination in every later phase, regardless of whether the local checkout

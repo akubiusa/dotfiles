@@ -36,3 +36,6 @@ bin/tmux-ipc-send.sh
 .agents/skills/deep-review/reviewers/g-performance.md
 .agents/skills/deep-review/reviewers/h-error-handling.md
 .agents/skills/deep-review/reviewers/i-type-design-tests.md
+.claude/skills/handle-pr-reviews
+.claude/skills/wait-for-copilot-review
+.claude/skills/wait-for-pr-close

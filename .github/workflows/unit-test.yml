@@ -76,6 +76,11 @@ jobs:
         background: true
         run: bash tests/unit/test_pr_monitor.sh
 
+      - name: Run PR watch events unit test
+        id: run-pr-watch-events-unit-test
+        background: true
+        run: bash tests/unit/test_pr_watch_events.sh
+
       - name: Run trilium validation unit test
         id: run-trilium-validation-unit-test
         background: true
@@ -104,6 +109,7 @@ jobs:
           - run-deep-review-comment-unit-test
           - run-powerline-daemon-launch-unit-test
           - run-pr-monitor-unit-test
+          - run-pr-watch-events-unit-test
           - run-trilium-validation-unit-test
           - run-tmux-selector-preview-unit-test
           - run-language-policy-unit-test

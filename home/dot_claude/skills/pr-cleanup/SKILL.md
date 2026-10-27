@@ -1,6 +1,6 @@
 ---
 name: pr-cleanup
-description: Cleans up after a pull request is merged or closed — removes the worktree/branch, updates the local default branch, and syncs a fork if applicable. Called directly by wait-for-pr-close on detection, or run manually with /pr-cleanup <PR number or URL>.
+description: Cleans up after a pull request is merged or closed — removes the worktree/branch, updates the local default branch, and syncs a fork if applicable. Called directly by the pr-health-monitor Monitor on `pr_closed`, or run manually with /pr-cleanup <PR number or URL>.
 argument-hint: "[PR number or URL]"
 disable-model-invocation: false
 ---
@@ -11,7 +11,7 @@ Cleans up local state after a pull request has been merged or closed —
 including the case where the user merged/closed it outside this session
 (manually, or via another tool), which Claude Code has no way to observe
 directly. This is a generic cleanup skill, not specific to `issue-pr`: it
-can be invoked manually for any PR, or automatically by `wait-for-pr-close`.
+can be invoked manually for any PR, or automatically by the `pr-health-monitor` Monitor.
 
 ## Usage
 
@@ -66,8 +66,8 @@ skill was invoked manually or by mistake.
 
 `ExitWorktree` only operates on a worktree created by `EnterWorktree` **in
 the current session**, and is a no-op otherwise. `pr-cleanup` is called
-either directly in the same conversation as `wait-for-pr-close` (its
-`Monitor` detected the PR closing while this session was still alive) or in
+either directly in the same conversation as the `pr-health-monitor`
+`Monitor` (it detected the PR closing while this session was still alive) or in
 a genuinely fresh session (a manual run days later, or after the original
 session ended before detection). Check whether the current session actually
 owns a matching worktree before deciding which removal path to use:
@@ -77,7 +77,7 @@ HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefName -q .
 ```
 
 - **If this session's `EnterWorktree` created the worktree for `HEAD_REF`**
-  (i.e. you got here from the `wait-for-pr-close` monitor started by
+  (i.e. you got here from the `pr-health-monitor` Monitor started by
   `issue-pr-deep`/`issue-pr-lite` in the same session, without a session
   break): call
   `ExitWorktree(action: "remove", discard_changes: true)`. Passing
@@ -88,8 +88,8 @@ HEAD_REF=$(gh pr view "$PR_NUMBER" --repo "$OWNER/$REPO" --json headRefName -q .
   local branch looks like it has "uncommitted" changes relative to the
   squashed commit even though nothing is actually lost.
 
-- **Otherwise (a fresh session — e.g. this session's `wait-for-pr-close`
-  monitor never fired before it ended, or this is a manual run in a new
+- **Otherwise (a fresh session — e.g. this session's `pr-health-monitor`
+  Monitor never fired before it ended, or this is a manual run in a new
   session)**: `ExitWorktree` cannot see a worktree it did not create, so
   fall back to raw `git worktree` commands:
 
@@ -148,5 +148,5 @@ resolution — see the comment in Step 0 for why.
 
 Report to the user that cleanup completed (worktree/branch removed, default
 branch updated, fork synced if applicable). Do not send a duplicate Discord
-notification here — `wait-for-pr-close` already sent one on detection when
+notification here — the `pr-health-monitor` Monitor already sent one on detection when
 this skill was triggered automatically.

@@ -93,7 +93,7 @@ git push -u origin "$(git branch --show-current)"
 REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
 ```
 
-Draft or regular: apply the same criterion as `glitchtip-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor` or `/handle-pr-reviews`.
+Draft or regular: apply the same criterion as `glitchtip-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor`.
 
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
@@ -134,19 +134,8 @@ chmod 600 ~/.claude/data/session-state.json
 
 ## Phase 9: After PR Creation
 
-Same as `glitchtip-pr-deep`'s Phase 16: run `/pr-health-monitor <PR number>`
-immediately, without asking the user whether to run it.
+Same as `glitchtip-pr-deep`'s Phase 16: resolve `PR_NUMBER` and run `/pr-health-monitor <PR number>` immediately, without asking the user whether to run it. Do not pause to ask the user whether to keep waiting for a Copilot review.
 
-Same as `glitchtip-pr-deep`'s Phase 16→17 transition: if requesting or
-obtaining a Copilot review fails or looks unlikely to ever arrive, do not
-pause to ask the user whether to keep waiting or give up — move on to
-Phase 10 unconditionally and immediately.
+## Phase 10: Auto-Resolve on Merge
 
-## Phase 10: Start the PR Close Monitor and Auto-Resolve on Merge
-
-Same as `glitchtip-pr-deep`'s Phase 17, verbatim: resolve `PR_NUMBER`,
-follow `wait-for-pr-close`'s SKILL.md, and on the `pr_closed` event (or an
-already-closed Step 0 result), call
-`mcp__glitchtip__update_issue(issue_id, status: "resolved")` only if
-`state` is `MERGED` (never based on the issue's own content), then call
-`/pr-cleanup` regardless of `MERGED`/`CLOSED`.
+Same as `glitchtip-pr-deep`'s Phase 17, verbatim: this phase only defines the extra pre-cleanup step. On the unified Monitor's `pr_closed` event (or if the PR was already closed), call `mcp__glitchtip__update_issue(issue_id, status: "resolved")` only if `state` is `MERGED` (never based on the issue's own content). `pr-health-monitor`'s `pr_closed` handling then calls `/pr-cleanup` exactly once regardless of `MERGED`/`CLOSED`; this skill never calls it itself.

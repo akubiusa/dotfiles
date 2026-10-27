@@ -312,9 +312,9 @@ git push -u origin "$(git branch --show-current)"
 Set `PR_TITLE` explicitly before calling `gh pr create` — derive it from the
 issue title / spec summary, e.g.:
 
-Create the PR as a draft (`gh pr create --draft`) when further edits to it are expected after creation, i.e. when any of the following is planned: CI-driven fix pushes, a Copilot review whose comments will be addressed, review-thread handling via `/handle-pr-reviews`, or Jira/GlitchTip follow-up commits. Create a regular PR only when none of these is planned or the user explicitly asks for a non-draft PR. An explicit user instruction always takes precedence.
+Create the PR as a draft (`gh pr create --draft`) when further edits to it are expected after creation, i.e. when any of the following is planned: CI-driven fix pushes, a Copilot review whose comments will be addressed, review-thread handling by `/pr-health-monitor`, or Jira/GlitchTip follow-up commits. Create a regular PR only when none of these is planned or the user explicitly asks for a non-draft PR. An explicit user instruction always takes precedence.
 
-Set `DRAFT=1` when the PR is to be a draft (leave it empty otherwise) and pass `${DRAFT:+--draft}` to `gh pr create`. A draft PR is marked ready later by `/pr-health-monitor` or `/handle-pr-reviews`, never merged by this skill.
+Set `DRAFT=1` when the PR is to be a draft (leave it empty otherwise) and pass `${DRAFT:+--draft}` to `gh pr create`. A draft PR is marked ready later by `/pr-health-monitor`, never merged by this skill.
 
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
@@ -380,42 +380,17 @@ instead of leaving a stale/empty state file.
 
 Run `/pr-health-monitor <PR number>` immediately, without asking first.
 
-`pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the
-PR body, and can trigger `/handle-pr-reviews` — none of that is "merging,"
-so the merge guardrail doesn't apply. No separate confirmation is needed;
-the plan was already reviewed via Phase 8's dispatched `plan-reviewer`
-sub-agent and posted for the record (Phase 9).
+`pr-health-monitor` commits/pushes CI fixes, merges in conflicts, edits the PR body, and handles review feedback — none of that is "merging," so the merge guardrail doesn't apply. No separate confirmation is needed; the plan was already reviewed via Phase 8's dispatched `plan-reviewer` sub-agent and posted for the record (Phase 9).
 
-`pr-health-monitor` starts the Copilot review wait as a `Monitor(persistent:
-true)` instance in this same session (see `wait-for-copilot-review`'s
-SKILL.md) — there is no separate background process or log file to verify.
-Report the monitor as running; `/handle-pr-reviews` is called directly in
-this conversation when the monitor detects a review.
-
-If requesting or obtaining a Copilot review fails or looks unlikely to ever arrive (e.g. `request-review-copilot` missing, a permissions error, Copilot not enabled on the target repository), do not pause here to ask the user whether to keep waiting or give up. The Copilot review `Monitor` keeps running independently regardless, so move on to Phase 17 unconditionally and immediately.
-
-## Phase 17: Start the PR Close Monitor
-
-Immediately after Phase 16, start the merge/close monitor so cleanup
-happens automatically once the PR closes, as long as this session stays
-alive:
+`pr-health-monitor` starts one unified `Monitor` in this same session that watches review feedback (Copilot and human), CI, merge/close and conflicts at the same time, independent of whether a Copilot review ever arrives. Resolve `PR_NUMBER` and pass it explicitly with the repository `$ISSUE_OWNER/$ISSUE_REPO` — this matters even in the non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not necessarily the local `origin`:
 
 ```bash
 PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
 ```
 
-Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed
-state check, then `Monitor(..., persistent: true)`), always passing
-`--repo "$ISSUE_OWNER/$ISSUE_REPO"` explicitly — this matters even in the
-non-fork case, since the PR lives in `ISSUE_OWNER/ISSUE_REPO`, not
-necessarily the local `origin`.
+Do not pause to ask the user whether to keep waiting for a Copilot review. When the monitor emits `pr_closed`, `pr-health-monitor` runs `/pr-cleanup` in this same conversation. If this session ends before the PR is merged or closed, the monitor is lost and the user must run `/pr-cleanup <PR number or URL>` manually later.
 
-The monitor runs in this session: when it emits a `pr_closed` event, call
-`/pr-cleanup` directly in this same conversation. If this session ends
-before the PR is merged or closed, the wait is lost and the user must run
-`/pr-cleanup <PR number or URL>` manually later.
-
-The `issue-pr-deep` flow is considered complete once this monitor is running.
+The `issue-pr-deep` flow is considered complete once `pr-health-monitor` has started the Monitor.
 
 ## Notes
 

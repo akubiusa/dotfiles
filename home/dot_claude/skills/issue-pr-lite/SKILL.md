@@ -89,7 +89,7 @@ document exists for this path).
 git push -u origin "$(git branch --show-current)"
 ```
 
-Draft or regular: apply the same criterion as `issue-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor` or `/handle-pr-reviews`.
+Draft or regular: apply the same criterion as `issue-pr-deep`'s Phase 14 (set `DRAFT=1` for a draft, empty otherwise) and pass `${DRAFT:+--draft}`; the ready decision is made later by `/pr-health-monitor`.
 
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
@@ -129,21 +129,6 @@ chmod 600 ~/.claude/data/session-state.json
 
 ## Phase 9: After PR Creation
 
-Same as `issue-pr-deep`'s Phase 16: run `/pr-health-monitor <PR number>`
-immediately, without asking the user whether to run it.
+Same as `issue-pr-deep`'s Phase 16: pass the `PR_URL` resolved above (not a bare number, which would be re-resolved via `gh-pr-target-repo.sh` and can pick the wrong repository) and run `/pr-health-monitor "$PR_URL"` immediately, without asking the user whether to run it. Its unified Monitor handles review feedback, CI, conflicts and `pr_closed` (running `/pr-cleanup`) in this conversation; do not pause to ask the user whether to keep waiting for a Copilot review.
 
-Same as `issue-pr-deep`'s Phase 16→17 transition: if requesting or obtaining a Copilot review fails or looks unlikely to ever arrive, do not pause to ask the user whether to keep waiting or give up — move on to Phase 10 unconditionally and immediately.
-
-## Phase 10: Start the PR Close Monitor
-
-Same as `issue-pr-deep`'s Phase 17:
-
-```bash
-PR_NUMBER=$(gh pr view --repo "$ISSUE_OWNER/$ISSUE_REPO" --json number -q .number)
-```
-
-Then follow `wait-for-pr-close`'s own SKILL.md (Step 0 already-closed state
-check, then `Monitor(..., persistent: true)`), always passing `--repo
-"$ISSUE_OWNER/$ISSUE_REPO"` explicitly (fork scenario safety — see
-`issue-pr-deep`'s Phase 17 for the full rationale). When the monitor emits a
-`pr_closed` event, call `/pr-cleanup` directly in this same conversation.
+The `issue-pr-lite` flow is considered complete once `pr-health-monitor` has started the Monitor.

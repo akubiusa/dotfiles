@@ -47,6 +47,9 @@ STALE_TARGETS=(
   "$HOME/.agents/skills/deep-review/reviewers/g-performance.md"
   "$HOME/.agents/skills/deep-review/reviewers/h-error-handling.md"
   "$HOME/.agents/skills/deep-review/reviewers/i-type-design-tests.md"
+  "$HOME/.claude/skills/handle-pr-reviews/SKILL.md"
+  "$HOME/.claude/skills/wait-for-copilot-review/SKILL.md"
+  "$HOME/.claude/skills/wait-for-pr-close/SKILL.md"
 )
 for target in "${STALE_TARGETS[@]}"; do
   mkdir -p "$(dirname "$target")"
@@ -316,12 +319,24 @@ for skill in "$HOME/.agents/skills"/{issue-pr-deep,issue-pr-lite,ticket-pr,glitc
 done
 
 for skill in "$HOME/.agents/skills"/{pr-health-monitor,resume-pr-monitor}/SKILL.md \
-  "$HOME/.claude/skills"/{pr-health-monitor,handle-pr-reviews}/SKILL.md; do
+  "$HOME/.claude/skills/pr-health-monitor/SKILL.md"; do
   if ! grep -Fq 'gh pr ready' "$skill"; then
     echo "❌ Draft release (gh pr ready) missing in $skill"
     exit 1
   fi
 done
+
+# Claude 側は pr-health-monitor に統合済み。旧 3 スキルが残らず、統合 Monitor スクリプトが配置されること。
+for removed in handle-pr-reviews wait-for-copilot-review wait-for-pr-close; do
+  if [ -e "$HOME/.claude/skills/$removed" ]; then
+    echo "❌ Removed Claude skill still deployed: $HOME/.claude/skills/$removed"
+    exit 1
+  fi
+done
+if [ ! -f "$HOME/.claude/skills/pr-health-monitor/scripts/watch-pr-events.sh" ]; then
+  echo "❌ Unified monitor script missing: ~/.claude/skills/pr-health-monitor/scripts/watch-pr-events.sh"
+  exit 1
+fi
 
 echo "✅ PR post-creation skill contracts generated successfully"
 

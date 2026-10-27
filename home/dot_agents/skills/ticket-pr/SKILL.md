@@ -69,6 +69,8 @@ Determine the branch type from the Jira issue type:
    - Resolve the PR target repository with `gh-pr-target-repo.sh`
    - If an `upstream` remote exists, make it the default PR target
    - Resolve the reviewer with `gh-pr-reviewer.sh <owner/repo>`, and if book000 is output, specify it with `--reviewer` on `gh pr create` (do not specify one if the output is empty). If it exits non-zero, do not create the PR; stop and report
+   - Create the PR as a draft (`gh pr create --draft`) when further edits to it are expected after creation, i.e. when any of the following is planned: CI-driven fix pushes, a Copilot review whose comments will be addressed, review-thread handling via `$handle-pr-reviews`, or Jira follow-up commits. Create a regular PR only when none of these is planned or the user explicitly asks for a non-draft PR. An explicit user instruction always takes precedence
+   - The ready decision is made by `$pr-health-monitor` / `$resume-pr-monitor`, not by this skill
    - The language of the PR body follows the repository's language convention (`AGENTS.md` / `CLAUDE.md`, etc.); if there is none, ask the user (if non-interactive, leave the language undecided, defer, and report). Describe only the latest state
    - Do not include a list of update history
    - **Important**: do not include the Jira ticket key or any mention of Jira in the PR title or body

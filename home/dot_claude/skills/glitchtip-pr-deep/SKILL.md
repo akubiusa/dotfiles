@@ -289,13 +289,18 @@ REPO=$(gh-pr-target-repo.sh 2>/dev/null || echo "")
 Set `PR_TITLE` explicitly before calling `gh pr create` — derive it from the
 GlitchTip issue title / spec summary:
 
+Create the PR as a draft (`gh pr create --draft`) when further edits to it are expected after creation, i.e. when any of the following is planned: CI-driven fix pushes, a Copilot review whose comments will be addressed, review-thread handling via `/handle-pr-reviews`, or Jira/GlitchTip follow-up commits. Create a regular PR only when none of these is planned or the user explicitly asks for a non-draft PR. An explicit user instruction always takes precedence.
+
+Set `DRAFT=1` when the PR is to be a draft (leave it empty otherwise) and pass `${DRAFT:+--draft}` to `gh pr create`. A draft PR is marked ready later by `/pr-health-monitor` or `/handle-pr-reviews`, never merged by this skill.
+
 book000 is requested as the PR reviewer via `gh-pr-reviewer.sh` (empty output means skip the
 `--reviewer` flag). If the helper exits non-zero, stop before creating the PR and report the failure.
 
 ```bash
 PR_TITLE="<derived from the GlitchTip issue title / spec summary>"
 REVIEWER=${REPO:+$(gh-pr-reviewer.sh "$REPO")}
-gh pr create ${REPO:+--repo "$REPO"} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
+DRAFT=1  # set to empty for a regular (non-draft) PR
+gh pr create ${REPO:+--repo "$REPO"} ${DRAFT:+--draft} ${REVIEWER:+--reviewer "$REVIEWER"} --title "$PR_TITLE" --body "$(cat <<'EOF'
 <PR body>
 EOF
 )"

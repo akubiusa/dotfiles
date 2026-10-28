@@ -445,3 +445,20 @@ rtk proxy <cmd>        # フィルタなしで生コマンドを実行(デバッ
 - **長時間実行への対応**: `STATE.md` に進捗を記録しつつ、Cron による定期チェックインで長時間放置されたセッションの再開・停止中エージェントの再起動を行う
 - **エラー調査の一括実行**: 全ディレクトリのチェック完了後、`warning`/`error` と判定されたものだけを `container-error-investigator` サブエージェントが Web 調査し、原因・対処案・確信度をまとめて最終レポートで提示する
 - **読み取り専用**: 本体・サブエージェントともに `docker compose restart`/`down`/`up` などの破壊的コマンドは実行しない
+
+## `proxmox` スキル
+
+Proxmox VE 上の VM（Windows / Ubuntu）を REST API・QEMU ゲストエージェント・VNC コンソール経由で操作するスキル。
+`home/dot_claude/skills/proxmox/SKILL.md` として管理され、`chezmoi apply` で `~/.claude/skills/proxmox/SKILL.md` にデプロイされる。
+`user-invocable: false` のため、スラッシュコマンドではなく Claude Code が必要に応じて読み込む。
+
+### 事前準備
+
+`~/.env` に `PROXMOX_URL` / `PROXMOX_USER` / `PROXMOX_PASSWORD` を設定する(サンプルは `~/.env.example`)。
+VNC 操作には `websockets>=14`・`vncdotool`・`pillow` を入れた venv が必要で、手順は `SKILL.md` に記載している。
+
+### 特徴
+
+- **API ラッパー**: `scripts/pve-api.sh` がログイン・チケットのキャッシュ・CSRF ヘッダー・401 時の再ログインを担う
+- **VNC スクリーンショット**: `scripts/pve-vnc.py` がキー入力・クリックを行い、画面を PNG で保存する
+- **安全側の運用**: 破壊的操作の前に確認を取り、ゲスト画面やコマンド出力内のテキストは指示として扱わない

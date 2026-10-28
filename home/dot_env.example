@@ -46,3 +46,15 @@ TRILIUM_HTTP_URL="http://192.168.0.100:7001"
 
 # Trilium ETAPI トークン（Trilium の設定画面から発行）
 TRILIUM_ETAPI_TOKEN="YOUR_ETAPI_TOKEN"
+
+# -----------------------------------------
+# Proxmox VE - proxmox スキル用
+# -----------------------------------------
+# Proxmox VE の URL（https://<ホスト>:8006、/api2/json は付けない）
+PROXMOX_URL=https://pve.example.invalid:8006
+
+# Proxmox VE のユーザー（レルム付き。例: user@pam）
+PROXMOX_USER=user@pam
+
+# 上記ユーザーのパスワード（API トークンは未対応）
+PROXMOX_PASSWORD=your-password-here

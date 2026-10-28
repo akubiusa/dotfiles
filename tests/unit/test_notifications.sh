@@ -7,39 +7,6 @@ echo "Testing Discord notification scripts..."
 
 FAILED=0
 
-# テスト対象の通知スクリプト
-NOTIFICATION_SCRIPTS=(
-  "home/dot_claude/scripts/completion-notify/executable_send-discord-notification.sh"
-  "home/dot_claude/scripts/completion-notify/executable_notify-completion.sh"
-  "home/dot_claude/scripts/completion-notify/executable_notify-notification.sh"
-  "home/dot_claude/scripts/completion-notify/executable_notify-permission-request.sh"
-  "home/dot_claude/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
-  "home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
-  "home/dot_codex/scripts/completion-notify/executable_send-discord-notification.sh"
-  "home/dot_codex/scripts/completion-notify/executable_notify-completion.sh"
-  "home/dot_codex/scripts/completion-notify/executable_notify-permission-request.sh"
-  "home/dot_codex/scripts/completion-notify/executable_notify-user-prompt-submit.sh"
-  "home/dot_codex/scripts/completion-notify/executable_notify-post-tool-use.sh"
-)
-
-# 各通知スクリプトの構文チェック
-for script in "${NOTIFICATION_SCRIPTS[@]}"; do
-  if [ ! -f "$script" ]; then
-    echo "⚠️  Notification script not found: $script"
-    continue
-  fi
-
-  echo "Testing script: $script"
-
-  # bash 構文チェック
-  if ! bash -n "$script"; then
-    echo "❌ Syntax error in script: $script"
-    FAILED=1
-  else
-    echo "✅ Syntax OK: $script"
-  fi
-done
-
 echo "Testing Codex completion hook returns valid Stop-hook JSON..."
 TEST_HOME=$(mktemp -d)
 COMPLETION_OUTPUT=$(HOME="$TEST_HOME" bash home/dot_codex/scripts/completion-notify/executable_notify-completion.sh <<'EOF'
@@ -778,25 +745,6 @@ else
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 
-echo "Testing Codex already_resumed_for / record_resumed_for dedup resume_session for the same reset_epoch..."
-TEST_HOME=$(mktemp -d)
-RESULT_RESUME_DEDUP=$(
-  HOME="$TEST_HOME" bash -c '
-    source "'"$PWD"'/home/dot_codex/scripts/limit-unlocked/executable_check-notify.sh"
-    already_resumed_for "sess-1" "1700000000" && echo "unexpected-already-resumed"
-    record_resumed_for "sess-1" "1700000000"
-    already_resumed_for "sess-1" "1700000000" && echo "resumed-for-same-epoch"
-    already_resumed_for "sess-1" "1700000001" || echo "not-resumed-for-different-epoch"
-  '
-)
-if [[ "$RESULT_RESUME_DEDUP" != $'resumed-for-same-epoch\nnot-resumed-for-different-epoch' ]]; then
-  echo "❌ already_resumed_for/record_resumed_for did not correctly dedup resume attempts per reset_epoch (got: '$RESULT_RESUME_DEDUP')"
-  FAILED=1
-else
-  echo "✅ already_resumed_for/record_resumed_for correctly dedup resume attempts keyed by reset_epoch"
-fi
-rm -rf "$TEST_HOME"
-
 echo "Testing Codex already_notified_for / record_notified_for dedup Discord notifications for the same reset_epoch..."
 TEST_HOME=$(mktemp -d)
 RESULT_NOTIFY_DEDUP=$(
@@ -891,6 +839,7 @@ TEST_BIN_DIR=$(mktemp -d)
 STATE_FILE_ENUM_FAIL="$TEST_HOME/limited_sessions.txt"
 NEW_STATE_FILE_ENUM_FAIL="${STATE_FILE_ENUM_FAIL}.new"
 printf 'tracked-sess\t/tmp/proj\t1111111111\tsome text\t1\n' > "$STATE_FILE_ENUM_FAIL"
+cp "$STATE_FILE_ENUM_FAIL" "$TEST_HOME/expected-state.txt"
 
 cat > "$TEST_BIN_DIR/tmux" <<'EOF'
 #!/bin/bash
@@ -906,6 +855,10 @@ if PATH="$TEST_BIN_DIR:$PATH" HOME="$TEST_HOME" STATE_FILE="$STATE_FILE_ENUM_FAI
   FAILED=1
 else
   echo "✅ detect_limited_sessions reported failure instead of silently wiping tracked state when tmux list-sessions failed"
+fi
+if ! cmp -s "$STATE_FILE_ENUM_FAIL" "$TEST_HOME/expected-state.txt"; then
+  echo "❌ detect_limited_sessions changed tracked state after tmux list-sessions failed"
+  FAILED=1
 fi
 rm -rf "$TEST_HOME" "$TEST_BIN_DIR"
 

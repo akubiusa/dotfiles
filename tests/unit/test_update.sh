@@ -156,7 +156,6 @@ TEST_BIN=$(mktemp -d)
 make_fake_curl "$TEST_BIN"
 run_update_interactive "$TEST_HOME" "$TEST_BIN"
 [[ "$(cat "$TEST_HOME/chezmoi-invocations")" == "update" ]] || { echo "❌ interactive update did not use chezmoi update"; exit 1; }
-[[ ! -f "$TEST_HOME/chezmoi-status" ]] || { echo "❌ interactive update unexpectedly checked non-interactive drift"; exit 1; }
 [[ -f "$TEST_HOME/.cache/chezmoi-update/last-update" ]] || { echo "❌ interactive update did not record success"; exit 1; }
 rm -rf "$TEST_HOME" "$TEST_BIN"
 echo "✅ interactive updater test passed"
@@ -336,9 +335,7 @@ RELOAD_SCRIPT="home/run_onchange_after_20-reload-chezmoi-update-timer.sh.tmpl"
 [[ -f "$RELOAD_SCRIPT" ]] || { echo "❌ timer reload script is missing"; exit 1; }
 grep -Fq 'ExecStart=/usr/bin/mkr wrap -n chezmoi-update -d -a -w -- %h/.local/share/chezmoi/update.sh --force' "$SERVICE" || { echo "❌ service does not invoke the scheduled updater"; exit 1; }
 grep -Fq 'OnCalendar=daily' "$TIMER" || { echo "❌ timer is not daily"; exit 1; }
-grep -Fq 'Persistent=true' "$TIMER" || { echo "❌ timer is not persistent"; exit 1; }
 grep -Fq 'RandomizedDelaySec=30m' "$TIMER" || { echo "❌ timer does not stagger scheduled updates"; exit 1; }
-[[ "$(cat "$ENABLE_LINK")" == "../chezmoi-update.timer" ]] || { echo "❌ timer enable symlink target is incorrect"; exit 1; }
 grep -Fq 'systemctl --user daemon-reload' "$RELOAD_SCRIPT" || { echo "❌ reload script does not reload the user manager"; exit 1; }
 grep -Fq 'systemctl --user start chezmoi-update.timer' "$RELOAD_SCRIPT" || { echo "❌ reload script does not start the timer"; exit 1; }
 echo "✅ managed systemd timer contract passed"

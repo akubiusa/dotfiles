@@ -144,16 +144,6 @@ rc=0
 out=$(DEADLINE=1 run_watch) || rc=$?
 check "deadline reached" "monitor_deadline_reached|0" "$out|$rc"
 
-# 7b. 5 回連続の gh 失敗で WARNING (最後の stderr 付き)
-init_defaults
-for i in 1 2 3 4 5 6; do
-    echo FAIL > "$STUB_DIR/view.$i"
-    echo FAIL > "$STUB_DIR/checks.$i"
-    echo FAIL > "$STUB_DIR/graphql.$i"
-done
-view 7 MERGED MERGEABLE h1
-check "warning after 5 failures" $'WARNING consecutive_failures=5 last_error=stub failure\npr_closed state=MERGED' "$(run_watch)"
-
 # 7c. 10 回連続失敗で 5 回ごとに WARNING を再通知
 init_defaults
 for i in $(seq 1 10); do

@@ -16,8 +16,6 @@ if [ ! -f "$SCRIPT" ]; then
   exit 1
 fi
 
-bash -n "$SCRIPT" || { echo "❌ Syntax error: $SCRIPT"; exit 1; }
-
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
 

@@ -31,6 +31,7 @@
 - Do not modify `GH_CONFIG_DIR`, `GIT_*`, or `GIT_SSH_COMMAND` env vars without permission.
 - No `git config` username/email changes.
 - No commits to Renovate-created PRs.
+- Before editing, committing, or pushing to the branch of a PR that is marked ready for review, you MUST first run `gh pr ready <PR> --undo --repo <owner/repo>` to return it to draft. Mark it ready again only when the existing ready conditions hold.
 - Clone repos to a temp dir for research.
 
 ## Skills

@@ -181,10 +181,12 @@ threading.Thread(target=serve, daemon=True).start()
 if not ready.wait(timeout=10):
     die("local bridge did not start within 10s")
 
+VNC_TIMEOUT = 30
 rc = 0
 c = None
 try:
-    c = api.connect(f"127.0.0.1::{port}", password=p["password"])
+    # timeout 未指定だと VNC が止まったときに永久に待つ。各呼び出しと切断を 30 秒で打ち切る
+    c = api.connect(f"127.0.0.1::{port}", password=p["password"], timeout=VNC_TIMEOUT)
     for name, *args in acts:
         if name == "key":
             c.keyPress(args[0])
@@ -203,7 +205,13 @@ try:
     print("captured", c.screen.size if c.screen else None)
 except Exception as e:
     time.sleep(0.2)  # ブリッジ側のエラー記録が先に済むのを待つ
-    print("pve-vnc: " + (bridge_error[0] if bridge_error else f"{type(e).__name__}: {e}"), file=sys.stderr)
+    if bridge_error:
+        msg = bridge_error[0]
+    elif isinstance(e, TimeoutError):
+        msg = f"VNC did not respond within {VNC_TIMEOUT}s (rerun to get a fresh ticket)"
+    else:
+        msg = f"{type(e).__name__}: {e}"
+    print("pve-vnc: " + msg, file=sys.stderr)
     rc = 1
 finally:
     try:

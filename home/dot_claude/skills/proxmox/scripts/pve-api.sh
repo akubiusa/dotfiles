@@ -10,7 +10,7 @@ Usage: bash pve-api.sh METHOD PATH [curl args...]
        bash pve-api.sh POST "/nodes/<node>/qemu/<vmid>/monitor" --data-urlencode "command=sendkey alt-grave_accent"
 Reads PROXMOX_URL / PROXMOX_USER / PROXMOX_PASSWORD from ~/.env (never sourced).
 PROXMOX_URL is https://<host>:8006 (no /api2/json).
-The login ticket is cached (mode 0600) in a private 0700 dir under ${XDG_RUNTIME_DIR:-$HOME/.cache}/pve-api.
+The login ticket is cached (mode 0600) in a private 0700 dir under ${XDG_RUNTIME_DIR:-$HOME/.cache}/pve-api, keyed by a hash of PROXMOX_URL + PROXMOX_USER.
 TLS verification is disabled (self-signed certificate; trusted LAN only).
 USAGE
 }
@@ -51,7 +51,9 @@ CACHE_DIR="${XDG_RUNTIME_DIR:-$HOME/.cache}/pve-api"
   echo "pve-api: unsafe cache directory $CACHE_DIR" >&2
   exit 1
 }
-CACHE="$CACHE_DIR/ticket"
+# 接続先とユーザーごとにキャッシュを分ける (~/.env を変えても前のサーバー/ユーザーのチケットを再利用しない)。値自体はファイル名に出さない
+CACHE_KEY=$(printf '%s\n%s' "$URL" "$USER_NAME" | sha256sum | cut -c1-16)
+CACHE="$CACHE_DIR/ticket-$CACHE_KEY"
 MAX_AGE=7000 # PVE のチケット有効期限 (2 時間) より短くする
 
 login() {

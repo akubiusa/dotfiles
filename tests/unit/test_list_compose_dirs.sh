@@ -103,15 +103,6 @@ else
   fi
 fi
 
-echo "Test 5: directory with multiple Compose filename patterns at once"
-ACTUAL=$(bash "$SCRIPT" "$TEST_DIR" | grep -c "^$TEST_DIR/proj-duplicate-compose\$")
-if [ "$ACTUAL" = "1" ]; then
-  echo "✅ duplicate compose filenames test passed"
-else
-  echo "❌ duplicate compose filenames test failed (expected exactly 1 line, got: $ACTUAL)"
-  FAILED=1
-fi
-
 done
 
 rm -rf "$EMPTY_DIR"

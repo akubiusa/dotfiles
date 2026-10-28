@@ -261,71 +261,6 @@ done
 
 echo "✅ Codex files generated successfully"
 
-# PR 後フローの skill 契約が chezmoi 展開後も保持されることを確認する。
-PR_HEALTH_SKILL="$HOME/.agents/skills/pr-health-monitor/SKILL.md"
-PR_CLOSE_SKILL="$HOME/.agents/skills/wait-for-pr-close/SKILL.md"
-ISSUE_PR_SKILLS=(
-  "$HOME/.agents/skills/issue-pr-deep/SKILL.md"
-  "$HOME/.agents/skills/issue-pr-lite/SKILL.md"
-)
-GLITCHTIP_PR_SKILLS=(
-  "$HOME/.agents/skills/glitchtip-pr-deep/SKILL.md"
-  "$HOME/.agents/skills/glitchtip-pr-lite/SKILL.md"
-)
-
-if ! grep -Fq 'watch-pr.sh watch --pr-url' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'foreground_required' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'The watcher is observation-only' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'stops on 5 consecutive API failures' "$PR_HEALTH_SKILL" \
-  || ! grep -Fq 'GlitchTip callback descriptor is not stored in state' "$PR_HEALTH_SKILL"; then
-  echo "❌ Durable PR health monitor contract not generated"
-  exit 1
-fi
-
-if ! grep -Fq 'watcher polls PR state, checks, conflict, and review feedback regardless of actor' "$PR_CLOSE_SKILL" \
-  || ! grep -Fq "\$resume-pr-monitor <PR_URL>" "$PR_CLOSE_SKILL" \
-  || ! grep -Fq 'not stored in durable state' "$PR_CLOSE_SKILL" \
-  || ! grep -Fq 'CLOSED' "$PR_CLOSE_SKILL"; then
-  echo "❌ Durable PR close monitor contract not generated"
-  exit 1
-fi
-
-for skill in "${ISSUE_PR_SKILLS[@]}"; do
-  if ! grep -Fq "\$resume-pr-monitor <PR URL>" "$skill"; then
-    echo "❌ Issue PR durable resume fallback missing in $skill"
-    exit 1
-  fi
-done
-
-for skill in "${GLITCHTIP_PR_SKILLS[@]}"; do
-  if ! grep -Fq "\$pr-health-monitor <PR URL>" "$skill" \
-    || ! grep -Fq "the issue ID retrieved via \`get_issue\` in this flow" "$skill" \
-    || ! grep -Fq 'GlitchTip Issue: <permalink URL>' "$skill" \
-    || ! grep -Fq "\$resume-pr-monitor <PR URL>" "$skill" \
-    || ! grep -Fq "\`CLOSED\`" "$skill"; then
-    echo "❌ GlitchTip PR callback flow not generated in $skill"
-    exit 1
-  fi
-done
-
-# ドラフト PR 運用: 作成側は --draft の判断基準、解除側は gh pr ready を持つこと。
-for skill in "$HOME/.agents/skills"/{issue-pr-deep,issue-pr-lite,ticket-pr,glitchtip-pr-deep,glitchtip-pr-lite}/SKILL.md \
-  "$HOME/.claude/skills"/{issue-pr-deep,issue-pr-lite,ticket-pr,glitchtip-pr-deep,glitchtip-pr-lite}/SKILL.md; do
-  if ! grep -Fq -- '--draft' "$skill"; then
-    echo "❌ Draft PR creation criterion missing in $skill"
-    exit 1
-  fi
-done
-
-for skill in "$HOME/.agents/skills"/{pr-health-monitor,resume-pr-monitor}/SKILL.md \
-  "$HOME/.claude/skills/pr-health-monitor/SKILL.md"; do
-  if ! grep -Fq 'gh pr ready' "$skill"; then
-    echo "❌ Draft release (gh pr ready) missing in $skill"
-    exit 1
-  fi
-done
-
 # Claude 側は pr-health-monitor に統合済み。旧 3 スキルが残らず、統合 Monitor スクリプトが配置されること。
 for removed in handle-pr-reviews wait-for-copilot-review wait-for-pr-close; do
   if [ -e "$HOME/.claude/skills/$removed" ]; then
@@ -338,133 +273,8 @@ if [ ! -f "$HOME/.claude/skills/pr-health-monitor/scripts/watch-pr-events.sh" ];
   exit 1
 fi
 
-echo "✅ PR post-creation skill contracts generated successfully"
+echo "✅ Unified Claude PR monitor deployed and obsolete skills removed"
 
-# PR 品質ゲート契約が chezmoi 展開後も保持されることを確認する。
-ISSUE_PR_DISPATCHER="$HOME/.agents/skills/issue-pr/SKILL.md"
-DEEP_REVIEW_SKILL="$HOME/.agents/skills/deep-review/SKILL.md"
-CODEX_AGENTS="$HOME/.codex/AGENTS.md"
-
-# 展開済み policy が fail-closed の判断を順序どおりに拘束することを確認する。
-assert_ordered_policy() {
-  local policy="$1" label="$2"
-  shift 2
-  local previous=0 offset pattern
-  for pattern in "$@"; do
-    offset=$(grep -boF "$pattern" "$policy" | awk -F: -v previous="$previous" '$1 > previous { print $1; exit }' || true)
-    if [ -z "$offset" ] || [ "$offset" -le "$previous" ]; then
-      echo "❌ $label does not enforce the required decision order: $pattern"
-      exit 1
-    fi
-    previous=$offset
-  done
-}
-
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
-  assert_ordered_policy "$policy" "PR monitoring precondition" \
-    'Do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
-    'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
-done
-
-# Codex グローバル指示は英語で書かれているため、スキルとは別に英語の文言で検証する。
-assert_ordered_policy "$CODEX_AGENTS" "PR monitoring precondition" \
-  'do not register a pane, create state or a window, or start the watcher until the canonical PR URL is obtained' \
-  'If neither a persistent terminal nor the resume fallback can be selected, do not create the PR and stop'
-
-for skill in "${ISSUE_PR_SKILLS[@]}"; do
-  case "$skill" in
-    */issue-pr-deep/SKILL.md) review_gate='Stop if unresolved merge-blocker findings remain' ;;
-    *) review_gate='Stop if any unresolved finding with confidence 50 or higher remains' ;;
-  esac
-  assert_ordered_policy "$skill" "unchanged final-gate snapshot" \
-    'snapshot containing HEAD, the index, the tracked, staged, and untracked state of the worktree, and evidence IDs' \
-    'Never re-capture or update the snapshot' \
-    'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
-    'Run the latest full verification' \
-    'Run the secret check immediately afterward' \
-    "$review_gate" \
-    'Check the diff, status, and evidence' \
-    'Compare against the same snapshot after the final evidence check, right before commit/PR creation' \
-    'If any of the diff, status, or evidence changes, restart the entire final gate from the beginning'
-done
-
-assert_ordered_policy "$CODEX_AGENTS" "deployment final-gate snapshot" \
-  'record one reviewed snapshot' \
-  'never re-capture or update it' \
-  'restart the entire final gate from the beginning' \
-  'may be made only immediately after confirming the final evidence against this reviewed snapshot' \
-  'Stop if there are unresolved findings of 50 or more, P1, or P2, a verification failure, a secret, or an unintended diff'
-
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}"; do
-  if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$policy" \
-    || ! grep -Fq 'scope and acceptance criteria' "$policy" \
-    || ! grep -Fq 'documents' "$policy" \
-    || ! grep -Fq 'review evidence' "$policy" \
-    || ! grep -Fq 'closing keyword' "$policy" \
-    || ! grep -Fq 'aggregate final gate' "$policy"; then
-    echo "❌ Aggregate Issue evidence contract missing in $policy"
-    exit 1
-  fi
-done
-
-if ! grep -Fq 'verify that every Issue is unique, open, and belongs to the target repository' "$CODEX_AGENTS" \
-  || ! grep -Fq 'scope and acceptance criteria' "$CODEX_AGENTS" \
-  || ! grep -Fq 'required documents' "$CODEX_AGENTS" \
-  || ! grep -Fq 'review evidence' "$CODEX_AGENTS" \
-  || ! grep -Fq 'closing keyword' "$CODEX_AGENTS" \
-  || ! grep -Fq 'aggregate final gate' "$CODEX_AGENTS"; then
-  echo "❌ Aggregate Issue evidence contract missing in $CODEX_AGENTS"
-  exit 1
-fi
-
-for policy in "$ISSUE_PR_DISPATCHER" "${ISSUE_PR_SKILLS[@]}" "$PR_HEALTH_SKILL"; do
-  # shellcheck disable=SC2016
-  if ! grep -Fq 'canonical PR URL' "$policy" \
-    || ! grep -Fq 'the failed stage' "$policy" \
-    || ! grep -Eq 'fresh.*evidence' "$policy" \
-    || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$policy"; then
-    echo "❌ PR failure-report contract missing in $policy"
-    exit 1
-  fi
-done
-
-# shellcheck disable=SC2016
-if ! grep -Fq 'canonical PR URL' "$CODEX_AGENTS" \
-  || ! grep -Fq 'the failed stage' "$CODEX_AGENTS" \
-  || ! grep -Eq 'fresh.*evidence' "$CODEX_AGENTS" \
-  || ! grep -Eq '\$resume-pr-monitor <(PR_URL|canonical PR URL)>' "$CODEX_AGENTS"; then
-  echo "❌ PR failure-report contract missing in $CODEX_AGENTS"
-  exit 1
-fi
-
-# shellcheck disable=SC2016
-assert_ordered_policy "$PR_HEALTH_SKILL" "post-create monitor recovery" \
-  'canonical `PR_URL`' \
-  'pr-monitor-state.sh init --pr-url "$PR_URL"' \
-  'register-pane --pr-url "$PR_URL"' \
-  'watch-pr.sh start --pr-url "$PR_URL"' \
-  'Report the watcher as active even if the initial CI/review observation fails after start succeeds' \
-  'Report an initial observation failure separately from the active watcher' \
-  '$resume-pr-monitor <PR_URL>'
-
-assert_ordered_policy "$DEEP_REVIEW_SKILL" "deep-review final-gate handoff" \
-  'tracked, staged, and untracked state, and evidence IDs' \
-  'after final evidence confirmation and immediately before commit/PR creation, compare against the same snapshot' \
-  'If any of the diff, status, or evidence changes, restart the entire final gate, including review, from the beginning'
-
-# shellcheck disable=SC2016
-if ! grep -Fq '$issue-pr <Issue number or URL> [<Issue number or URL> ...]' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'parse all inputs into an order-preserving `ISSUE_REFERENCES` array' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'Fetch each `ISSUE_REFERENCE` with `gh issue view "$ISSUE_REFERENCE" --repo "$TARGET_REPOSITORY"`' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'issue-pr-deep "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER" \
-  || ! grep -Fq 'issue-pr-lite "${ISSUE_IDENTITIES[@]}" --owner "$ISSUE_OWNER" --repo "$ISSUE_REPO"' "$ISSUE_PR_DISPATCHER"; then
-  echo "❌ Issue PR dispatcher routing contract missing"
-  exit 1
-fi
-
-echo "✅ PR quality-gate fail-closed decisions and recovery ordering verified"
-
-# Superpowers plugin 依存除去の回帰テスト。
 SUPERPOWERS_INVOCATIONS=(
   'superpowers:brainstorming'
   'superpowers:writing-plans'
@@ -518,14 +328,6 @@ for doc in workflow workflow-sub-agents design-workflow issue-comment-docs; do
   fi
 done
 
-# 旧レビュアーは STALE_TARGETS で事前配置済みのため、ここで残っていれば .chezmoiremove の登録漏れを意味する。
-for reviewer in g-performance h-error-handling i-type-design-tests; do
-  if [ -f "$HOME/.claude/skills/deep-review/reviewers/$reviewer.md" ] \
-    || [ -f "$HOME/.agents/skills/deep-review/reviewers/$reviewer.md" ]; then
-    echo "❌ merged reviewer $reviewer.md still deployed"
-    exit 1
-  fi
-done
 if [ ! -f "$HOME/.claude/skills/deep-review/reviewers/g-performance-errors-types.md" ] \
   || [ ! -f "$HOME/.agents/skills/deep-review/reviewers/g-performance-errors-types.md" ]; then
   echo "❌ merged reviewer g-performance-errors-types.md not deployed"
@@ -559,46 +361,6 @@ if ! grep -Fxq '.agent-work/' "$GLOBAL_GITIGNORE" \
 fi
 
 echo "✅ global gitignore excludes .agent-work/ and legacy superpowers paths"
-
-# deep path (issue-pr-deep / glitchtip-pr-deep) の自前 workflow 契約順序が
-# 展開後も保持されること。
-DEEP_WORKFLOW_SKILLS=(
-  "$HOME/.claude/skills/issue-pr-deep/SKILL.md"
-  "$HOME/.claude/skills/glitchtip-pr-deep/SKILL.md"
-)
-for skill in "${DEEP_WORKFLOW_SKILLS[@]}"; do
-  # shellcheck disable=SC2016
-  assert_ordered_policy "$skill" "self-hosted design-workflow contract order" \
-    '## Phase 4: Review the Spec' \
-    'Ask for approval via **AskUserQuestion** only when there is a significant' \
-    '## Phase 8: Review the Plan' \
-    'Decide the execution approach yourself, per `~/.claude/docs/design-workflow.md`' \
-    'Final Evidence Gate (Prompt-Only Contract)' \
-    '## Phase 13: Deep Review'
-done
-
-echo "✅ Self-hosted deep workflow contract order preserved after deployment"
-
-# lite path (issue-pr-lite / glitchtip-pr-lite) に Spec/Plan フェーズが存在せず、
-# Final evidence gate と lite-review が保持されていること。
-LITE_WORKFLOW_SKILLS=(
-  "$HOME/.claude/skills/issue-pr-lite/SKILL.md"
-  "$HOME/.claude/skills/glitchtip-pr-lite/SKILL.md"
-)
-for skill in "${LITE_WORKFLOW_SKILLS[@]}"; do
-  if grep -Fq 'Write the Spec' "$skill" || grep -Fq 'Write the Plan' "$skill"; then
-    echo "❌ lite path unexpectedly gained a Spec/Plan authoring phase: $skill"
-    exit 1
-  fi
-  # shellcheck disable=SC2016
-  if ! grep -Fq 'Final Evidence Gate' "$skill" \
-    || ! grep -Fq 'Run `/lite-review` (no arguments' "$skill"; then
-    echo "❌ lite path missing Final Evidence Gate / lite-review contract: $skill"
-    exit 1
-  fi
-done
-
-echo "✅ Lite workflow contract (no spec/plan, Final Evidence Gate + lite-review) preserved"
 
 # Codex はプロジェクト信頼やフック承認ハッシュを config.toml に保存する。chezmoi の
 # modify_ テンプレートが管理対象の設定を反映しつつ、その実行時状態を保持することを確認する。

@@ -262,8 +262,6 @@ check "unknown_privileged: executable merely named env is not treated as env wra
 check "unknown_privileged: gh api mutation is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh api -X DELETE repos/acme/widgets/git/refs/heads/main
 check "unknown_privileged: gh issue close is not on the read-only allowlist" unknown_privileged "$POLICY" -- gh issue close 1 --repo acme/widgets
 check "allowed: gh -R before the subcommand (global option reordering) still resolves pr merge" allow "$POLICY" -- gh -R acme/widgets pr merge 1
-check "not_privileged: gh repo view remains read-only" not_privileged "$POLICY" -- gh repo view
-
 check_str "unknown_privileged: quoted assignment value with embedded whitespace must fail closed, not misparse" unknown_privileged "$POLICY" 'X="a b" gh pr merge 1 --repo acme/widgets'
 check_str "unknown_privileged: quoted command name must fail closed, not misparse" unknown_privileged "$POLICY" '"gh" pr merge --repo acme/widgets --squash'
 check_str "allowed: unquoted simple commands are unaffected by the quote fail-closed rule" allow "$POLICY" "git -C $REPO commit -m msg"

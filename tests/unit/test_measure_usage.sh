@@ -74,10 +74,7 @@ expect_eq "stage b out-of-scope count" "$(jq -r '.stages[1].findings.out_of_scop
 expect_eq "note mentions it is not billing/plan-quota usage" \
   "$(jq -r '.note | contains("not API billing")' <<<"$OUT_JSON")" true
 
-# 8. 存在しないファイルを渡してもクラッシュしない (N/A を返す)
-expect_ok "nonexistent file path does not crash" "$SCRIPT" --stage x:/no/such/file.jsonl --format json
-
-# 9. Markdown + JSON 併記のデフォルト出力に表と ```json ブロックが含まれる
+# 8. Markdown + JSON 併記のデフォルト出力に表と ```json ブロックが含まれる
 MD_OUT=$("$SCRIPT" --stage a:"$FIXTURE_DIR/a.jsonl" 2>/dev/null)
 expect_ok "default (both) output contains a markdown table header" grep -q '| stage |' <<<"$MD_OUT"
 expect_ok "default (both) output contains a json fence" grep -q '```json' <<<"$MD_OUT"

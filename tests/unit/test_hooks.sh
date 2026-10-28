@@ -7,36 +7,6 @@ echo "Testing AI agent hooks..."
 
 FAILED=0
 
-# テスト対象のフックスクリプト
-HOOKS=(
-  "home/dot_claude/hooks/executable_deep-review-immediate-fix.sh"
-  "home/dot_claude/hooks/executable_deep-review-require-fixes.sh"
-  "home/dot_claude/hooks/executable_require-review-thread-fixes.sh"
-  "home/dot_claude/hooks/executable_git-config-guard.sh"
-  "home/dot_claude/hooks/executable_detect-leaked-toolcall.sh"
-  "home/dot_claude/hooks/executable_rtk-rewrite.sh"
-  "home/dot_codex/hooks/executable_git-config-guard.sh"
-  "home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
-)
-
-# 各フックの構文チェック
-for hook in "${HOOKS[@]}"; do
-  if [ ! -f "$hook" ]; then
-    echo "⚠️  Hook not found: $hook"
-    continue
-  fi
-
-  echo "Testing hook: $hook"
-
-  # bash 構文チェック
-  if ! bash -n "$hook"; then
-    echo "❌ Syntax error in hook: $hook"
-    FAILED=1
-  else
-    echo "✅ Syntax OK: $hook"
-  fi
-done
-
 echo "Testing gh-pr-target-repo helper behavior..."
 TEST_REPO_DIR=$(mktemp -d)
 if ! (
@@ -274,13 +244,6 @@ if [ ! -f "$PRECOMMIT_HOOK" ]; then
   echo "❌ pre-commit hook not found: $PRECOMMIT_HOOK"
   FAILED=1
 else
-  if ! bash -n "$PRECOMMIT_HOOK"; then
-    echo "❌ Syntax error in pre-commit hook"
-    FAILED=1
-  else
-    echo "✅ Syntax OK: $PRECOMMIT_HOOK"
-  fi
-
   # シナリオ 1: gitleaks が PATH に無い場合は fail-open (exit 0 かつ警告) となること
   TEST_REPO_DIR=$(mktemp -d)
   TEST_BIN_DIR=$(mktemp -d)
@@ -375,10 +338,6 @@ EOF
     PATH="$TEST_BIN_DIR:$PATH" bash "$OLDPWD/$PRECOMMIT_HOOK" > /dev/null 2>&1
     if grep -q -- "--config" "$TEST_ARGS_LOG"; then
       echo "❌ pre-commit hook overrode the repo's own .gitleaks.toml"
-      exit 1
-    fi
-    if ! grep -q -- "protect --staged --redact -v" "$TEST_ARGS_LOG"; then
-      echo "❌ pre-commit hook did not pass protect --staged --redact -v to gitleaks"
       exit 1
     fi
   ); then

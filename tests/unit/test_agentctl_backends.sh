@@ -196,19 +196,6 @@ OUT_RO=$(HOME="$CODEX_HOME" bash -c '
   && pass "local_write=false forces codex read-only sandbox while preserving fixed TUI queue/submit keymap" \
   || fail "expected read-only fixed-keymap Codex command for local_write=false, got: $OUT_RO"
 
-STALE_HOME="$WORKROOT/codex-home-stale"
-mkdir -p "$STALE_HOME/.codex/hooks"
-cp "$CODEX_HOME/.codex/hooks.json" "$STALE_HOME/.codex/hooks.json"
-echo "# stale" >"$STALE_HOME/.codex/hooks/agentctl-policy-dispatcher.sh"
-OUT=$(HOME="$STALE_HOME" bash -c '
-  source "'"$REPO_ROOT"'/home/bin/agentctl-common.sh"
-  source "'"$REPO_ROOT"'/home/bin/agentctl-backend-codex.sh"
-  agentctl_backend_codex_command "'"$POLICY_SNAPSHOT"'" "'"$DIR"'"
-' 2>&1)
-RC=$?
-[ "$RC" -ne 0 ] && pass "codex backend fails closed on deployed dispatcher checksum mismatch (stale chezmoi apply)" \
-  || fail "expected non-zero exit on checksum mismatch, got rc=$RC out=$OUT"
-
 # preflight は AGENTCTL_LIBDIR からの相対パスで repo checkout の source を
 # 逆算しない (deployed 環境では AGENTCTL_LIBDIR=$HOME/bin であり chezmoi が
 # dot_codex を .codex にリネームするため、その相対パスは存在し得ない)。

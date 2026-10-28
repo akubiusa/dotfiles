@@ -135,6 +135,9 @@ expect_ok "body with ### in quote validates" bash "$VALIDATE" "$WORK/h1.md" $S "
 S=c5
 L init $S review pr o/r 5 true "$SHA" >/dev/null
 L add $S "$(f e1 follow-up 'Bad range' 1 1)" >/dev/null
+cp "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json" "$WORK/valid-ledger.json"
+bash "$RENDER" $S "$REPO" > "$WORK/c5-body.md"
+expect_ok "valid c5 body validates" bash "$VALIDATE" "$WORK/c5-body.md" $S "$REPO"
 jq '.findings[0].line = "1;e"' "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json" > "$WORK/t.json" \
   && mv "$WORK/t.json" "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json"
 expect_fail "render rejects non-integer line" bash "$RENDER" $S "$REPO"
@@ -147,10 +150,17 @@ expect_fail "render rejects non-integer line_end" bash "$RENDER" $S "$REPO"
 jq 'del(.findings)' "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json" > "$WORK/t.json" \
   && mv "$WORK/t.json" "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json"
 expect_fail "render rejects ledger without findings array" bash "$RENDER" $S "$REPO"
-jq '.baseline.head_sha = "abc"' "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json" > "$WORK/t.json" \
+jq '.baseline.head_sha = "abc"' "$WORK/valid-ledger.json" > "$WORK/t.json" \
   && mv "$WORK/t.json" "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json"
-expect_fail "validate rejects non-40-hex head SHA" bash "$VALIDATE" "$BODY" $S "$REPO"
+if bash "$VALIDATE" "$WORK/c5-body.md" $S "$REPO" > /dev/null 2> "$WORK/sha-error"; then
+  ng "validate accepts non-40-hex head SHA"
+elif grep -q 'ledger head_sha must be a full 40-char SHA' "$WORK/sha-error"; then
+  ok "validate rejects non-40-hex head SHA"
+else
+  ng "validate rejected non-40-hex head SHA for an unexpected reason"
+fi
 
+cp "$WORK/valid-ledger.json" "$DEEP_REVIEW_DATA_DIR/deep-review-ledger-$S.json"
 printf 'no marker here\n' > "$WORK/nomarker.md"
 expect_fail "existing body without marker is not updatable" bash "$RENDER" --update $S "$REPO" "$WORK/nomarker.md"
 

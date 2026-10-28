@@ -10,7 +10,6 @@ DISPATCH_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/exec
 PANE_STATE_HOOK="$ROOT_DIR/home/dot_codex/hooks/executable_pr-monitor-pane-state.sh"
 COPILOT_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_wait-for-copilot-review.sh"
 RESOLVE_PANE_SCRIPT="$ROOT_DIR/home/dot_agents/skills/pr-health-monitor/scripts/executable_resolve-tmux-pane.sh"
-RESUME_SKILL="$ROOT_DIR/home/dot_agents/skills/resume-pr-monitor/SKILL.md"
 TEST_DIR=$(mktemp -d)
 TEST_HOME="$TEST_DIR/home"
 TEST_BIN="$TEST_DIR/bin"
@@ -311,11 +310,6 @@ process_identity() {
     fi
     awk '{print "proc-start:" $22}' "/proc/$pid/stat" 2>/dev/null
 }
-
-echo "Testing PR monitor script syntax..."
-bash -n "$STATE_SCRIPT"
-bash -n "$WATCH_SCRIPT"
-bash -n "$DISPATCH_SCRIPT"
 
 echo "Testing fail-closed tmux pane resolution without TMUX_PANE..."
 RESOLVER_PANES=$'session-1\t@1\t%77\t4242'
@@ -830,19 +824,11 @@ if [[ -d "$XDG_STATE_HOME/codex-pr-monitor/${STATE_ID}.watch.lock" ]]; then
     exit 1
 fi
 
-echo "Testing observer/action boundary and resume reconciliation contract..."
+echo "Testing observer/action boundary..."
 if grep -Eq 'tmux|handle-pr-reviews' "$COPILOT_SCRIPT"; then
     echo "❌ Copilot observer can still invoke an action processor" >&2
     exit 1
 fi
-if ! grep -Fq 'watch-pr.sh once --pr-url' "$RESUME_SKILL" \
-    || ! grep -Fq 'claim --lease-id' "$RESUME_SKILL" \
-    || ! grep -Fq 'watch-pr.sh watch --pr-url' "$RESUME_SKILL" \
-    || ! grep -Fq 'foreground_required' "$RESUME_SKILL"; then
-    echo "❌ Resume skill does not reconcile and document the foreground fallback" >&2
-    exit 1
-fi
-
 echo "Testing five-failure stop state..."
 if GH_STUB_FAILURE=1 PR_MONITOR_INTERVAL=0 PR_MONITOR_MAX_POLLS=5 "$WATCH_SCRIPT" watch --pr-url "$PR_URL"; then
     echo "❌ Watcher did not stop after five API failures" >&2

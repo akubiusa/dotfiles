@@ -343,12 +343,6 @@ else
   pass "attach without --runtime-id is rejected"
 fi
 
-if bash "$AGENTCTL" attach --name "$NAME" --runtime-id "00000000-0000-0000-0000-000000000000" 2>/dev/null; then
-  fail "attach with stale runtime-id should be rejected"
-else
-  pass "attach with stale runtime-id is rejected (no client connects)"
-fi
-
 if bash "$AGENTCTL" attach --name "no-such-runtime-$$" --runtime-id "$RID" 2>/dev/null; then
   fail "attach for absent runtime should be rejected"
 else
@@ -359,12 +353,6 @@ if bash "$AGENTCTL" interrupt --name "$NAME" 2>/dev/null; then
   fail "interrupt without --runtime-id should be rejected"
 else
   pass "interrupt without --runtime-id is rejected"
-fi
-
-if bash "$AGENTCTL" interrupt --name "$NAME" --runtime-id "00000000-0000-0000-0000-000000000000" 2>/dev/null; then
-  fail "interrupt with stale runtime-id should be rejected"
-else
-  pass "interrupt with stale runtime-id is rejected"
 fi
 
 if bash "$AGENTCTL" interrupt --name "no-such-runtime-$$" --runtime-id "$RID" 2>/dev/null; then

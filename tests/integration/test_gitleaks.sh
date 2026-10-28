@@ -1,5 +1,5 @@
 #!/bin/bash
-# mise で固定した gitleaks が実際に既知形式のシークレットを検出できることを確認する
+# 固定した gitleaks と pre-commit hook が既知形式のシークレットを検出できることを確認する
 set -euo pipefail
 
 CONFIG="home/dot_config/mise/config.toml"
@@ -25,23 +25,6 @@ tar -xzf "$ARCHIVE" -C "$TMP_DIR" gitleaks
 FIXTURE="$TMP_DIR/fixture.txt"
 # gitleaks 8.30 以降は連番に近い文字列を除外するため、連番を含まない文字列を使う
 printf 'token = "ghp_%s%s"\n' 'R8x2KpQ7mZ4vN1cB9t' 'Lw3YdF6hJ0sGaE5uXo' > "$FIXTURE"
-set +e
-"$TMP_DIR/gitleaks" detect --no-git --source "$FIXTURE" --no-banner --redact > "$TMP_DIR/output" 2>&1
-RC=$?
-set -e
-if [[ $RC -eq 0 ]]; then
-  cat "$TMP_DIR/output"
-  echo "❌ gitleaks $VERSION failed to detect the regression fixture"
-  exit 1
-fi
-if ! grep -qi 'leaks found' "$TMP_DIR/output"; then
-  cat "$TMP_DIR/output"
-  echo "❌ gitleaks $VERSION failed for an unexpected reason"
-  exit 1
-fi
-
-echo "✅ gitleaks $VERSION detects the regression fixture"
-
 # 実際の pre-commit hook と固定バージョンの組み合わせでもコミットをブロックできることを確認する。
 TEST_REPO="$TMP_DIR/repo"
 TEST_HOME="$TMP_DIR/home"
@@ -63,6 +46,11 @@ cp home/dot_gitleaks.toml "$TEST_HOME/.gitleaks.toml"
   if [[ $HOOK_RC -eq 0 ]]; then
     cat "$TMP_DIR/hook-output"
     echo "❌ pre-commit hook did not block the regression fixture with gitleaks $VERSION"
+    exit 1
+  fi
+  if ! grep -qi 'leaks found' "$TMP_DIR/hook-output"; then
+    cat "$TMP_DIR/hook-output"
+    echo "❌ pre-commit hook failed for an unexpected reason"
     exit 1
   fi
 )

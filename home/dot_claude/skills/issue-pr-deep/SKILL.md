@@ -284,6 +284,7 @@ Give the sub-agent's dispatch prompt:
   parent's cwd and git state).
 - It must run `/deep-review --fix` (local diff mode; fix mode edits the
   working tree and does not commit) per `~/.claude/docs/workflow.md` ADR-003.
+- It must run `/deep-review --fix` exactly as its SKILL.md procedure states, launching the reviewers in parallel with the `Agent` tool. It must not skip the parallel reviewers and report results after merely reading the diff itself.
 - Its final report to the parent must include: the `$CLAUDE_SESSION_ID` it
   ran under, and the output of
   `~/.agents/skills/deep-review/scripts/ledger.sh

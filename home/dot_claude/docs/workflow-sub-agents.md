@@ -81,9 +81,9 @@ For features spanning 5+ files or with security-critical paths:
 
 ## Handling Idle Notifications from Background Sub-Agents
 
-The `Agent` tool runs sub-agents in the background by default and returns their final message to the parent session when they stop, including when they become idle. Read that message to determine whether the task is complete; an idle notification alone does not mean the task is unfinished.
+Whether an `Agent` call runs in the background is set by `run_in_background` (the behavior when it is omitted depends on the harness), so always pass `run_in_background: false` explicitly when you need the result before continuing. A background sub-agent's final message is returned to the parent session when it stops, including when it becomes idle. Read that message to determine whether the task is complete; an idle notification alone does not mean the task is unfinished.
 
-This applies whenever a background-mode sub-agent (the `Agent` tool's default, or explicit `run_in_background: true`) sends an idle notification. It does not apply to sync-mode (`run_in_background: false`) dispatches, since those block the calling turn until the sub-agent returns.
+This applies whenever a background-mode sub-agent (explicit `run_in_background: true`, or a harness default of background) sends an idle notification. It does not apply to sync-mode (`run_in_background: false`) dispatches, since those block the calling turn until the sub-agent returns. The `deep-review` and `lite-review` reviewers are launched in sync mode, so this section does not apply to them.
 
 **Follow-up procedure:**
 
@@ -118,4 +118,4 @@ This applies whenever a background-mode sub-agent (the `Agent` tool's default, o
   sub-agent progress (a state file like `STATE.md`, or the `Todo`/`Task`
   tools) may reuse that instead of inventing a new one.
 
-An explicit `SendMessage` is still useful for progress updates or when a sub-agent needs a response before it can continue. It is not required as a final report when the sub-agent stops; use the message returned on completion or idle, and follow the recovery procedure above if that message shows incomplete or unclear status.
+The final message is the result channel: a sub-agent's findings are returned through its final message, and `SendMessage` is not used for the final report. Use `SendMessage` for progress sharing or when a sub-agent needs a response before it can continue; if the final message shows incomplete or unclear status, follow the recovery procedure above.

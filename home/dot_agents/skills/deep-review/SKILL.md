@@ -5,6 +5,8 @@ description: Use to deeply review a GitHub PR or the local diff from multiple pe
 
 # Deep Review
 
+This is the simplified version for Codex CLI only. Claude Code must use the Claude version of `deep-review` (`home/dot_claude/skills/deep-review/`).
+
 Target: with a PR argument use `gh pr view` and `gh pr diff`; without one use the merge-base diff plus working-tree changes. Default mode is **review**: no commit, push, PR body change, or working-tree change. The only writes are the ledger and, in PR mode, the developer comment. `--fix` applies only to the user's own PR or the local diff; on another author's PR downgrade to review and say so.
 
 Shared helpers: `~/.agents/skills/deep-review/scripts/{ledger,render-comment,validate-comment}.sh`. `SID` is this Codex session's identifier. Create the ledger first: `ledger.sh init "$SID" [--force] <review|fix> <pr|local> <owner/repo> <pr-number|-> <own true|false> <head_sha>`, and `git fetch` the PR head. If `init` refuses (exit 1: "ledger for this session still has N open merge-blocker findings; resolve them or re-run with --force"), report it to the user and do not pass `--force` on your own; only the user may authorize a reset.

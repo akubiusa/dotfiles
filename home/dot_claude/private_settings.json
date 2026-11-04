@@ -170,14 +170,14 @@
       "source": {
         "source": "github",
         "repo": "DietrichGebert/ponytail",
-        "ref": "v5.3.2"
+        "ref": "v5.3.3"
       }
     },
     "natural-japanese": {
       "source": {
         "source": "github",
         "repo": "coji/natural-japanese",
-        "ref": "v1.6.2"
+        "ref": "v1.6.4"
       }
     }
   },

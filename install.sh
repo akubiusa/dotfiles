@@ -433,7 +433,7 @@ install_apt_packages() {
 }
 
 # mise のバージョン (Renovate で追跡するため固定文字列として記述する)
-MISE_VERSION="v2026.11.8"
+MISE_VERSION="v2026.11.9"
 
 # mise のインストール
 install_mise() {
@@ -503,7 +503,7 @@ install_mise_tools() {
     "maven"
     "ripgrep"
     "yq"
-    "actionlint"
+    "jactionlint"
     "hadolint"
     "shfmt"
     "delta"
